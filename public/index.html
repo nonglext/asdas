@@ -4,31 +4,60 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>ChatApp</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css"/>
 </head>
 <body>
 
-<!-- ══════════════ AUTH SCREEN ══════════════ -->
+<!-- AUTH -->
 <div id="auth-screen" class="screen active">
+  <div class="auth-bg">
+    <div class="auth-blob b1"></div>
+    <div class="auth-blob b2"></div>
+  </div>
   <div class="auth-box">
-    <div class="logo">💬 ChatApp</div>
-    <p class="auth-sub">Общайся, добавляй друзей</p>
+    <div class="auth-logo">
+      <div class="auth-logo-icon">💬</div>
+      <div class="auth-logo-text">ChatApp</div>
+    </div>
 
     <div class="tabs">
       <button class="tab active" data-tab="login">Войти</button>
       <button class="tab" data-tab="register">Регистрация</button>
     </div>
 
-    <!-- Вход -->
     <div id="tab-login" class="tab-content active">
-      <input type="text" id="login-id" placeholder="Твой ID (например: cool_user)" maxlength="32"/>
+      <div class="field">
+        <label>Ваш ID</label>
+        <input type="text" id="login-id" placeholder="cool_user123" maxlength="32" autocomplete="username"/>
+      </div>
+      <div class="field">
+        <label>Пароль</label>
+        <div class="pw-wrap">
+          <input type="password" id="login-pw" placeholder="••••••••" maxlength="64" autocomplete="current-password"/>
+          <button class="pw-toggle" data-target="login-pw">👁</button>
+        </div>
+      </div>
       <button id="btn-login" class="btn-primary">Войти</button>
     </div>
 
-    <!-- Регистрация -->
     <div id="tab-register" class="tab-content">
-      <input type="text" id="reg-id" placeholder="Придумай ID (a-z, 0-9, _)" maxlength="32"/>
-      <input type="text" id="reg-nick" placeholder="Никнейм (необязательно)" maxlength="32"/>
+      <div class="field">
+        <label>Придумай ID <span class="hint">a-z, 0-9, _</span></label>
+        <input type="text" id="reg-id" placeholder="my_cool_id" maxlength="32" autocomplete="username"/>
+      </div>
+      <div class="field">
+        <label>Никнейм <span class="hint">необязательно</span></label>
+        <input type="text" id="reg-nick" placeholder="Как тебя зовут?" maxlength="32"/>
+      </div>
+      <div class="field">
+        <label>Пароль <span class="hint">мин. 4 символа</span></label>
+        <div class="pw-wrap">
+          <input type="password" id="reg-pw" placeholder="••••••••" maxlength="64" autocomplete="new-password"/>
+          <button class="pw-toggle" data-target="reg-pw">👁</button>
+        </div>
+      </div>
       <button id="btn-register" class="btn-primary">Зарегистрироваться</button>
     </div>
 
@@ -36,64 +65,67 @@
   </div>
 </div>
 
-<!-- ══════════════ MAIN APP ══════════════ -->
+<!-- APP -->
 <div id="app-screen" class="screen">
-
-  <!-- Sidebar -->
   <aside class="sidebar">
-    <div class="sidebar-header">
-      <div class="my-avatar" id="my-avatar">?</div>
-      <div class="my-info">
-        <div class="my-nick" id="my-nick">—</div>
-        <div class="my-id" id="my-id">—</div>
+    <div class="sidebar-top">
+      <div class="me-card">
+        <div class="me-avatar" id="my-avatar">?</div>
+        <div class="me-info">
+          <div class="me-nick" id="my-nick">—</div>
+          <div class="me-id" id="my-id">—</div>
+        </div>
+        <button id="btn-logout" class="logout-btn" title="Выйти">⏻</button>
       </div>
-      <button id="btn-logout" class="icon-btn" title="Выйти">⏻</button>
+
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="search-input" placeholder="Найти по ID или нику"/>
+        <div id="search-results" class="search-drop"></div>
+      </div>
     </div>
 
-    <!-- Поиск -->
-    <div class="search-wrap">
-      <input type="text" id="search-input" placeholder="🔍 Найти по ID или нику"/>
-      <div id="search-results" class="search-dropdown"></div>
-    </div>
+    <div class="sidebar-body">
+      <div id="requests-section" style="display:none">
+        <div class="list-label">Запросы <span id="req-badge" class="badge"></span></div>
+        <div id="requests-list"></div>
+      </div>
 
-    <!-- Запросы в друзья -->
-    <div id="requests-section" class="sidebar-section" style="display:none">
-      <div class="section-label">Запросы <span id="req-badge" class="badge"></span></div>
-      <div id="requests-list"></div>
-    </div>
-
-    <!-- Список друзей -->
-    <div class="sidebar-section">
-      <div class="section-label">Друзья</div>
-      <div id="friends-list" class="friends-list">
-        <div class="empty-hint">Пока нет друзей 🙁<br>Найди кого-нибудь выше!</div>
+      <div class="list-label">Друзья</div>
+      <div id="friends-list">
+        <div class="empty-state">
+          <div class="empty-icon">👥</div>
+          <div>Пока нет друзей</div>
+          <div class="empty-sub">Найди кого-нибудь через поиск</div>
+        </div>
       </div>
     </div>
   </aside>
 
-  <!-- Chat area -->
-  <main class="chat-area">
-    <!-- Placeholder -->
-    <div id="chat-placeholder" class="chat-placeholder">
-      <div class="ph-icon">💬</div>
-      <div class="ph-text">Выбери друга, чтобы начать чат</div>
+  <main class="chat-main">
+    <div id="chat-placeholder" class="chat-empty">
+      <div class="chat-empty-icon">💬</div>
+      <div class="chat-empty-title">Выбери друга</div>
+      <div class="chat-empty-sub">чтобы начать общение</div>
     </div>
 
-    <!-- Active chat -->
-    <div id="chat-window" style="display:none; height:100%; display:none; flex-direction:column">
-      <div class="chat-header">
-        <div class="chat-friend-avatar" id="chat-avatar">?</div>
-        <div class="chat-friend-info">
-          <div class="chat-friend-nick" id="chat-nick">—</div>
-          <div class="chat-friend-status" id="chat-status">офлайн</div>
+    <div id="chat-window" class="chat-window" style="display:none">
+      <div class="chat-head">
+        <div class="chat-head-avatar" id="chat-avatar">?</div>
+        <div>
+          <div class="chat-head-nick" id="chat-nick">—</div>
+          <div class="chat-head-status" id="chat-status">офлайн</div>
         </div>
       </div>
-
       <div class="messages" id="messages"></div>
-
-      <div class="input-bar">
+      <div class="msg-bar">
         <input type="text" id="msg-input" placeholder="Написать сообщение…" maxlength="1000"/>
-        <button id="btn-send" class="btn-send">➤</button>
+        <button id="btn-send" class="send-btn">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <path d="M22 2L11 13" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+            <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="white" stroke-width="2.5" stroke-linejoin="round"/>
+          </svg>
+        </button>
       </div>
     </div>
   </main>

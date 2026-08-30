@@ -1,323 +1,235 @@
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════
-// State
-// ═══════════════════════════════════════════════════════════════
-let me = null;           // { id, nickname, friends, friendRequests }
-let activeFriend = null; // id
-let friends = {};        // { id: { id, nickname, online } }
-let unread = {};         // { id: count }
+let me = null;
+let activeFriend = null;
+let friends = {};
+let unread = {};
 
 const socket = io();
-
-// ═══════════════════════════════════════════════════════════════
-// Helpers
-// ═══════════════════════════════════════════════════════════════
 const $ = id => document.getElementById(id);
-const qs = sel => document.querySelector(sel);
 
-function avatar(nick) {
-  return nick ? nick[0].toUpperCase() : '?';
+// ── Helpers ──────────────────────────────────────────────────────
+function av(nick) { return nick ? nick[0].toUpperCase() : '?'; }
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
-
 function fmtTime(iso) {
-  const d = new Date(iso);
-  return d.toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
+  return new Date(iso).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
 }
+function setErr(msg) { $('auth-error').textContent = msg || ''; }
 
-function setError(msg) {
-  $('auth-error').textContent = msg || '';
-}
+// ── Password toggle ──────────────────────────────────────────────
+document.querySelectorAll('.pw-toggle').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const input = $(btn.dataset.target);
+    input.type = input.type === 'password' ? 'text' : 'password';
+    btn.textContent = input.type === 'password' ? '👁' : '🙈';
+  });
+});
 
-function showScreen(id) {
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  $(id).classList.add('active');
-}
-
-// ═══════════════════════════════════════════════════════════════
-// Auth tabs
-// ═══════════════════════════════════════════════════════════════
+// ── Tabs ─────────────────────────────────────────────────────────
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     $('tab-' + tab.dataset.tab).classList.add('active');
-    setError('');
+    setErr('');
   });
 });
 
-// ─── Register ───────────────────────────────────────────────────
+// ── Register ─────────────────────────────────────────────────────
 $('btn-register').addEventListener('click', async () => {
+  setErr('');
   const userId   = $('reg-id').value.trim();
   const nickname = $('reg-nick').value.trim();
-  setError('');
-
+  const password = $('reg-pw').value;
   const res = await fetch('/api/register', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userId, nickname })
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, nickname, password })
   });
   const data = await res.json();
-
-  if (!res.ok) return setError(data.error);
-  loginSuccess(data.user);
+  if (!res.ok) return setErr(data.error);
+  saveAndLogin(data.user, userId, password);
 });
 
-// ─── Login ──────────────────────────────────────────────────────
+// ── Login ────────────────────────────────────────────────────────
 $('btn-login').addEventListener('click', async () => {
-  const userId = $('login-id').value.trim();
-  setError('');
-
+  setErr('');
+  const userId   = $('login-id').value.trim();
+  const password = $('login-pw').value;
   const res = await fetch('/api/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userId })
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, password })
   });
   const data = await res.json();
-
-  if (!res.ok) return setError(data.error);
-  loginSuccess(data.user);
+  if (!res.ok) return setErr(data.error);
+  saveAndLogin(data.user, userId, password);
 });
 
-// Enter key on login/register inputs
-['login-id', 'reg-id', 'reg-nick'].forEach(id => {
-  $(id).addEventListener('keydown', e => {
-    if (e.key === 'Enter') {
-      if (id.startsWith('login')) $('btn-login').click();
-      else $('btn-register').click();
-    }
-  });
-});
+['login-id','login-pw'].forEach(id => $(id).addEventListener('keydown', e => { if(e.key==='Enter') $('btn-login').click(); }));
+['reg-id','reg-nick','reg-pw'].forEach(id => $(id).addEventListener('keydown', e => { if(e.key==='Enter') $('btn-register').click(); }));
 
-// ─── After successful login ──────────────────────────────────────
-function loginSuccess(user) {
+function saveAndLogin(user, userId, password) {
   me = user;
-  localStorage.setItem('chatapp_id', user.id);
+  localStorage.setItem('chatapp_id', userId);
+  localStorage.setItem('chatapp_pw', password);
+  enterApp(user);
+}
 
-  $('my-avatar').textContent = avatar(user.nickname);
+function enterApp(user) {
+  $('my-avatar').textContent = av(user.nickname);
   $('my-nick').textContent   = user.nickname;
   $('my-id').textContent     = '@' + user.id;
-
-  showScreen('app-screen');
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  $('app-screen').classList.add('active');
   socket.emit('auth', user.id);
 }
 
-// ─── Logout ─────────────────────────────────────────────────────
+// ── Logout ───────────────────────────────────────────────────────
 $('btn-logout').addEventListener('click', () => {
   me = null; activeFriend = null; friends = {}; unread = {};
   localStorage.removeItem('chatapp_id');
-  $('friends-list').innerHTML = '<div class="empty-hint">Пока нет друзей 🙁<br>Найди кого-нибудь выше!</div>';
+  localStorage.removeItem('chatapp_pw');
+  $('friends-list').innerHTML = '<div class="empty-state"><div class="empty-icon">👥</div><div>Пока нет друзей</div><div class="empty-sub">Найди кого-нибудь через поиск</div></div>';
   $('requests-list').innerHTML = '';
   $('requests-section').style.display = 'none';
-  hideChat();
-  showScreen('auth-screen');
+  $('chat-window').style.display = 'none';
+  $('chat-placeholder').style.display = 'flex';
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  $('auth-screen').classList.add('active');
 });
 
-// ═══════════════════════════════════════════════════════════════
-// Search
-// ═══════════════════════════════════════════════════════════════
+// ── Search ───────────────────────────────────────────────────────
 let searchTimer = null;
-
 $('search-input').addEventListener('input', () => {
   clearTimeout(searchTimer);
   const q = $('search-input').value.trim();
-  if (!q) { closeSearch(); return; }
-  searchTimer = setTimeout(() => doSearch(q), 300);
+  if (!q) { closeDrop(); return; }
+  searchTimer = setTimeout(() => doSearch(q), 280);
 });
-
-$('search-input').addEventListener('blur', () => {
-  setTimeout(closeSearch, 200);
-});
+$('search-input').addEventListener('blur', () => setTimeout(closeDrop, 200));
 
 async function doSearch(q) {
   const res = await fetch('/api/search?q=' + encodeURIComponent(q));
-  const results = await res.json();
+  const list = await res.json();
+  const drop = $('search-results');
+  drop.innerHTML = '';
 
-  const dropdown = $('search-results');
-  dropdown.innerHTML = '';
-
-  if (!results.length) {
-    dropdown.innerHTML = '<div class="search-item" style="color:var(--text2)">Никого не найдено</div>';
-    dropdown.classList.add('open');
-    return;
+  if (!list.length) {
+    drop.innerHTML = '<div class="s-item" style="color:var(--text2);font-size:13px">Никого не найдено</div>';
+    drop.classList.add('open'); return;
   }
 
-  results.forEach(u => {
+  list.forEach(u => {
     if (u.id === me?.id) return;
-
     const isFriend = me?.friends?.includes(u.id);
     const el = document.createElement('div');
-    el.className = 'search-item';
+    el.className = 's-item';
     el.innerHTML = `
-      <div class="f-avatar" style="width:32px;height:32px;font-size:14px">${avatar(u.nickname)}</div>
-      <div>
+      <div class="s-mini-av">${av(u.nickname)}</div>
+      <div style="flex:1;min-width:0">
         <div class="s-nick">${esc(u.nickname)}</div>
         <div class="s-id">@${esc(u.id)}</div>
       </div>
-      <button class="btn-add s-add" ${isFriend ? 'disabled' : ''}>
-        ${isFriend ? '✓ Друг' : '+ Добавить'}
-      </button>`;
+      <button class="btn-add" ${isFriend?'disabled':''}>${isFriend?'✓ Друг':'+ Добавить'}</button>`;
 
     el.querySelector('.btn-add').addEventListener('click', e => {
       e.stopPropagation();
       if (!isFriend) {
         socket.emit('sendFriendRequest', u.id);
-        el.querySelector('.btn-add').textContent = 'Запрос отправлен';
-        el.querySelector('.btn-add').disabled = true;
+        const btn = el.querySelector('.btn-add');
+        btn.textContent = 'Отправлено'; btn.disabled = true;
       }
     });
-
-    el.addEventListener('click', () => {
-      if (isFriend) openChat(u.id);
-      closeSearch();
-    });
-
-    dropdown.appendChild(el);
+    el.addEventListener('click', () => { if (isFriend) openChat(u.id); closeDrop(); });
+    drop.appendChild(el);
   });
-
-  dropdown.classList.add('open');
+  drop.classList.add('open');
 }
+function closeDrop() { $('search-results').classList.remove('open'); }
 
-function closeSearch() {
-  $('search-results').classList.remove('open');
-}
-
-// ═══════════════════════════════════════════════════════════════
-// Socket events
-// ═══════════════════════════════════════════════════════════════
-
-// Profile (initial)
+// ── Socket events ─────────────────────────────────────────────────
 socket.on('profile', profile => {
   me = { ...me, ...profile };
-
-  // Load friends
   (profile.friends || []).forEach(fId => {
     if (!friends[fId]) friends[fId] = { id: fId, nickname: fId, online: false };
   });
-
-  // Load friend requests
   renderRequests(profile.friendRequests || []);
-
-  // Render friends from server info
   renderFriendsList();
-  fetchFriendNicknames(profile.friends || []);
+  fetchNicknames(profile.friends || []);
 });
 
-async function fetchFriendNicknames(ids) {
-  if (!ids.length) return;
-  // Search each to get nickname (quick hack using search)
+async function fetchNicknames(ids) {
   for (const id of ids) {
-    const res = await fetch('/api/search?q=' + encodeURIComponent(id));
-    const results = await res.json();
-    const found = results.find(u => u.id === id);
-    if (found) {
-      friends[id] = { id, nickname: found.nickname, online: found.online };
-    }
+    try {
+      const res = await fetch('/api/search?q=' + encodeURIComponent(id));
+      const results = await res.json();
+      const found = results.find(u => u.id === id);
+      if (found) friends[id] = { id, nickname: found.nickname, online: found.online };
+    } catch(e) {}
   }
   renderFriendsList();
 }
 
-// Friend request received
 socket.on('friendRequest', req => {
   if (!me) return;
   if (!me.friendRequests) me.friendRequests = [];
   me.friendRequests.push({ id: req.id, nickname: req.nickname });
   renderRequests(me.friendRequests);
 });
-
-// Request sent confirm
 socket.on('requestSent', () => {});
-
-// Request declined
 socket.on('requestDeclined', fromId => {
   if (me.friendRequests) {
-    me.friendRequests = me.friendRequests.filter(r => (r.id || r) !== fromId);
+    me.friendRequests = me.friendRequests.filter(r => (r.id||r) !== fromId);
     renderRequests(me.friendRequests);
   }
 });
-
-// Friend added (both sides)
 socket.on('friendAdded', user => {
   friends[user.id] = { id: user.id, nickname: user.nickname, online: user.online };
   if (!me.friends) me.friends = [];
   if (!me.friends.includes(user.id)) me.friends.push(user.id);
-
-  // Remove from requests if existed
   if (me.friendRequests) {
-    me.friendRequests = me.friendRequests.filter(r => (r.id || r) !== user.id);
+    me.friendRequests = me.friendRequests.filter(r => (r.id||r) !== user.id);
     renderRequests(me.friendRequests);
   }
   renderFriendsList();
 });
-
-// Online / offline
-socket.on('friendOnline', user => {
-  if (friends[user.id]) {
-    friends[user.id].online = true;
-    updateFriendStatus(user.id, true);
-  }
+socket.on('friendOnline', u => {
+  if (friends[u.id]) { friends[u.id].online = true; updateStatus(u.id, true); }
 });
 socket.on('friendOffline', id => {
-  if (friends[id]) {
-    friends[id].online = false;
-    updateFriendStatus(id, false);
-  }
+  if (friends[id]) { friends[id].online = false; updateStatus(id, false); }
 });
-
-// New message
 socket.on('newMessage', ({ chatWith, msg }) => {
-  if (activeFriend === chatWith) {
-    appendMessage(msg);
-    scrollMessages();
-  } else {
-    unread[chatWith] = (unread[chatWith] || 0) + 1;
-    updateUnreadBadge(chatWith);
-  }
+  if (activeFriend === chatWith) { appendMsg(msg); scrollMsgs(); }
+  else { unread[chatWith] = (unread[chatWith]||0) + 1; refreshFriendItem(chatWith); }
 });
 
-// ═══════════════════════════════════════════════════════════════
-// Render helpers
-// ═══════════════════════════════════════════════════════════════
-
-function renderRequests(requests) {
+// ── Render ───────────────────────────────────────────────────────
+function renderRequests(reqs) {
+  const sec = $('requests-section');
   const list = $('requests-list');
-  const section = $('requests-section');
-  const badge = $('req-badge');
-
-  if (!requests || !requests.length) {
-    section.style.display = 'none';
-    list.innerHTML = '';
-    return;
-  }
-
-  section.style.display = 'block';
-  badge.textContent = requests.length;
+  if (!reqs || !reqs.length) { sec.style.display = 'none'; list.innerHTML = ''; return; }
+  sec.style.display = 'block';
+  $('req-badge').textContent = reqs.length;
   list.innerHTML = '';
-
-  requests.forEach(r => {
-    const id   = r.id   || r;
-    const nick = r.nickname || id;
+  reqs.forEach(r => {
+    const id = r.id||r, nick = r.nickname||id;
     const el = document.createElement('div');
     el.className = 'req-card';
     el.innerHTML = `
-      <div class="f-avatar" style="width:32px;height:32px;font-size:14px">${avatar(nick)}</div>
-      <div>
+      <div class="f-av" style="width:32px;height:32px;font-size:13px">${av(nick)}</div>
+      <div style="flex:1;min-width:0">
         <div class="req-nick">${esc(nick)}</div>
         <div class="req-id">@${esc(id)}</div>
       </div>
-      <div class="req-actions">
-        <button class="btn-accept">✓</button>
-        <button class="btn-decline">✕</button>
+      <div class="req-btns">
+        <button class="btn-ok">✓</button>
+        <button class="btn-no">✕</button>
       </div>`;
-
-    el.querySelector('.btn-accept').addEventListener('click', () => {
-      socket.emit('acceptFriendRequest', id);
-    });
-    el.querySelector('.btn-decline').addEventListener('click', () => {
-      socket.emit('declineFriendRequest', id);
-    });
-
+    el.querySelector('.btn-ok').onclick = () => socket.emit('acceptFriendRequest', id);
+    el.querySelector('.btn-no').onclick = () => socket.emit('declineFriendRequest', id);
     list.appendChild(el);
   });
 }
@@ -325,165 +237,105 @@ function renderRequests(requests) {
 function renderFriendsList() {
   const list = $('friends-list');
   const ids = Object.keys(friends);
-
   if (!ids.length) {
-    list.innerHTML = '<div class="empty-hint">Пока нет друзей 🙁<br>Найди кого-нибудь выше!</div>';
+    list.innerHTML = '<div class="empty-state"><div class="empty-icon">👥</div><div>Пока нет друзей</div><div class="empty-sub">Найди кого-нибудь через поиск</div></div>';
     return;
   }
-
   list.innerHTML = '';
-  ids.forEach(id => addOrUpdateFriendItem(id));
+  ids.forEach(id => buildFriendEl(id));
 }
 
-function addOrUpdateFriendItem(id) {
-  const f = friends[id];
-  if (!f) return;
-
+function buildFriendEl(id) {
+  const f = friends[id]; if (!f) return;
   const list = $('friends-list');
-  const existing = list.querySelector(`[data-friend="${id}"]`);
+  const old = list.querySelector(`[data-fid="${id}"]`);
+  const u = unread[id]||0;
 
-  const el = existing || document.createElement('div');
-  el.className = 'friend-item' + (activeFriend === id ? ' active' : '');
-  el.dataset.friend = id;
-
-  const u = unread[id] || 0;
+  const el = old || document.createElement('div');
+  el.className = 'friend-item' + (activeFriend===id?' active':'');
+  el.dataset.fid = id;
   el.innerHTML = `
-    <div class="f-avatar">
-      ${avatar(f.nickname)}
-      ${f.online ? '<div class="online-dot"></div>' : ''}
-    </div>
+    <div class="f-av">${av(f.nickname)}${f.online?'<div class="f-dot"></div>':''}</div>
     <div class="f-info">
       <div class="f-nick">${esc(f.nickname)}</div>
-      <div class="f-status ${f.online ? 'online' : ''}">${f.online ? '● онлайн' : 'офлайн'}</div>
+      <div class="f-stat ${f.online?'on':''}">${f.online?'● онлайн':'офлайн'}</div>
     </div>
-    ${u ? `<div class="f-unread">${u}</div>` : ''}`;
-
-  el.addEventListener('click', () => openChat(id));
-
-  if (!existing) list.appendChild(el);
+    ${u?`<div class="f-unread">${u}</div>`:''}`;
+  el.onclick = () => openChat(id);
+  if (!old) list.appendChild(el);
 }
 
-function updateFriendStatus(id, online) {
-  const el = $('friends-list').querySelector(`[data-friend="${id}"]`);
-  if (el) {
-    el.querySelector('.f-status').className = `f-status ${online ? 'online' : ''}`;
-    el.querySelector('.f-status').textContent = online ? '● онлайн' : 'офлайн';
-    const dot = el.querySelector('.online-dot');
-    if (online && !dot) {
-      const av = el.querySelector('.f-avatar');
-      const d = document.createElement('div');
-      d.className = 'online-dot';
-      av.appendChild(d);
-    } else if (!online && dot) dot.remove();
-  }
+function refreshFriendItem(id) {
+  const list = $('friends-list');
+  const old = list.querySelector(`[data-fid="${id}"]`);
+  if (old) old.remove();
+  buildFriendEl(id);
+}
 
-  // Update chat header if open
+function updateStatus(id, online) {
+  refreshFriendItem(id);
   if (activeFriend === id) {
     $('chat-status').textContent = online ? '● онлайн' : 'офлайн';
-    $('chat-status').className = 'chat-friend-status' + (online ? ' online' : '');
+    $('chat-status').className = 'chat-head-status' + (online ? ' on' : '');
   }
 }
 
-function updateUnreadBadge(id) {
-  addOrUpdateFriendItem(id);
-}
-
-// ═══════════════════════════════════════════════════════════════
-// Chat
-// ═══════════════════════════════════════════════════════════════
-
+// ── Chat ─────────────────────────────────────────────────────────
 async function openChat(id) {
   activeFriend = id;
   unread[id] = 0;
+  document.querySelectorAll('.friend-item').forEach(el => el.classList.toggle('active', el.dataset.fid===id));
+  refreshFriendItem(id);
 
-  const f = friends[id] || { id, nickname: id, online: false };
-
-  // Mark active in sidebar
-  document.querySelectorAll('.friend-item').forEach(el => {
-    el.classList.toggle('active', el.dataset.friend === id);
-  });
-  updateUnreadBadge(id);
-
-  // Update header
-  $('chat-avatar').textContent = avatar(f.nickname);
-  $('chat-nick').textContent = f.nickname;
+  const f = friends[id]||{id,nickname:id,online:false};
+  $('chat-avatar').textContent = av(f.nickname);
+  $('chat-nick').textContent   = f.nickname;
   $('chat-status').textContent = f.online ? '● онлайн' : 'офлайн';
-  $('chat-status').className = 'chat-friend-status' + (f.online ? ' online' : '');
+  $('chat-status').className   = 'chat-head-status' + (f.online?' on':'');
 
   $('chat-placeholder').style.display = 'none';
-  const win = $('chat-window');
-  win.style.display = 'flex';
+  $('chat-window').style.display = 'flex';
 
-  // Load history
   const res = await fetch(`/api/messages/${me.id}/${id}`);
   const history = await res.json();
-
   $('messages').innerHTML = '';
-  history.forEach(msg => appendMessage(msg, false));
-  scrollMessages();
-
+  history.forEach(m => appendMsg(m, false));
+  scrollMsgs();
   $('msg-input').focus();
 }
 
-function hideChat() {
-  activeFriend = null;
-  $('chat-placeholder').style.display = 'flex';
-  $('chat-window').style.display = 'none';
-  $('messages').innerHTML = '';
-}
-
-function appendMessage(msg, scroll = true) {
+function appendMsg(msg, doScroll=true) {
   const isMine = msg.from === me.id;
   const el = document.createElement('div');
-  el.className = 'msg ' + (isMine ? 'mine' : 'theirs');
+  el.className = 'msg ' + (isMine?'mine':'theirs');
   el.innerHTML = `${esc(msg.text)}<div class="msg-time">${fmtTime(msg.time)}</div>`;
   $('messages').appendChild(el);
-  if (scroll) scrollMessages();
+  if (doScroll) scrollMsgs();
 }
 
-function scrollMessages() {
-  const m = $('messages');
-  m.scrollTop = m.scrollHeight;
-}
+function scrollMsgs() { const m=$('messages'); m.scrollTop=m.scrollHeight; }
 
-// Send message
-$('btn-send').addEventListener('click', sendMessage);
-$('msg-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-});
+$('btn-send').onclick = sendMsg;
+$('msg-input').addEventListener('keydown', e => { if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();} });
 
-function sendMessage() {
+function sendMsg() {
   const text = $('msg-input').value.trim();
   if (!text || !activeFriend) return;
   socket.emit('sendMessage', { toId: activeFriend, text });
   $('msg-input').value = '';
 }
 
-// ═══════════════════════════════════════════════════════════════
-// XSS escape
-// ═══════════════════════════════════════════════════════════════
-function esc(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-// ═══════════════════════════════════════════════════════════════
-// Auto-login from localStorage
-// ═══════════════════════════════════════════════════════════════
+// ── Auto-login ───────────────────────────────────────────────────
 (async () => {
   const savedId = localStorage.getItem('chatapp_id');
-  if (savedId) {
-    const res = await fetch('/api/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: savedId })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      loginSuccess(data.user);
-    }
+  const savedPw = localStorage.getItem('chatapp_pw');
+  if (savedId && savedPw) {
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: savedId, password: savedPw })
+      });
+      if (res.ok) { const d = await res.json(); me = d.user; enterApp(d.user); }
+    } catch(e) {}
   }
 })();
