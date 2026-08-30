@@ -44,13 +44,24 @@ $('btn-register').addEventListener('click', async () => {
   const userId   = $('reg-id').value.trim();
   const nickname = $('reg-nick').value.trim();
   const password = $('reg-pw').value;
-  const res = await fetch('/api/register', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userId, nickname, password })
-  });
-  const data = await res.json();
-  if (!res.ok) return setErr(data.error);
-  saveAndLogin(data.user, userId, password);
+  
+  // Validation
+  if (!userId || userId.length < 3) return setErr('ID должен быть минимум 3 символа');
+  if (!/^[a-z0-9_]+$/.test(userId)) return setErr('ID: только a-z, 0-9, _');
+  if (!password || password.length < 4) return setErr('Пароль минимум 4 символа');
+  
+  try {
+    const res = await fetch('/api/register', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, nickname, password })
+    });
+    const data = await res.json();
+    if (!res.ok) return setErr(data.error || 'Ошибка регистрации');
+    saveAndLogin(data.user, userId, password);
+  } catch(e) {
+    setErr('Ошибка сети при регистрации');
+    console.error('Register error:', e);
+  }
 });
 
 // ── Login ────────────────────────────────────────────────────────
@@ -58,13 +69,21 @@ $('btn-login').addEventListener('click', async () => {
   setErr('');
   const userId   = $('login-id').value.trim();
   const password = $('login-pw').value;
-  const res = await fetch('/api/login', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userId, password })
-  });
-  const data = await res.json();
-  if (!res.ok) return setErr(data.error);
-  saveAndLogin(data.user, userId, password);
+  
+  if (!userId || !password) return setErr('Введите ID и пароль');
+  
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, password })
+    });
+    const data = await res.json();
+    if (!res.ok) return setErr(data.error || 'Ошибка входа');
+    saveAndLogin(data.user, userId, password);
+  } catch(e) {
+    setErr('Ошибка сети при входе');
+    console.error('Login error:', e);
+  }
 });
 
 ['login-id','login-pw'].forEach(id => $(id).addEventListener('keydown', e => { if(e.key==='Enter') $('btn-login').click(); }));
@@ -111,41 +130,49 @@ $('search-input').addEventListener('input', () => {
 $('search-input').addEventListener('blur', () => setTimeout(closeDrop, 200));
 
 async function doSearch(q) {
-  const res = await fetch('/api/search?q=' + encodeURIComponent(q));
-  const list = await res.json();
-  const drop = $('search-results');
-  drop.innerHTML = '';
+  try {
+    const res = await fetch('/api/search?q=' + encodeURIComponent(q));
+    if (!res.ok) throw new Error('Ошибка поиска');
+    const list = await res.json();
+    const drop = $('search-results');
+    drop.innerHTML = '';
 
-  if (!list.length) {
-    drop.innerHTML = '<div class="s-item" style="color:var(--text2);font-size:13px">Никого не найдено</div>';
-    drop.classList.add('open'); return;
-  }
+    if (!list || !list.length) {
+      drop.innerHTML = '<div class="s-item" style="color:var(--text2);font-size:13px">Никого не найдено</div>';
+      drop.classList.add('open'); return;
+    }
 
-  list.forEach(u => {
-    if (u.id === me?.id) return;
-    const isFriend = me?.friends?.includes(u.id);
-    const el = document.createElement('div');
-    el.className = 's-item';
-    el.innerHTML = `
-      <div class="s-mini-av">${av(u.nickname)}</div>
-      <div style="flex:1;min-width:0">
-        <div class="s-nick">${esc(u.nickname)}</div>
-        <div class="s-id">@${esc(u.id)}</div>
-      </div>
-      <button class="btn-add" ${isFriend?'disabled':''}>${isFriend?'✓ Друг':'+ Добавить'}</button>`;
+    list.forEach(u => {
+      if (u.id === me?.id) return;
+      const isFriend = me?.friends?.includes(u.id);
+      const el = document.createElement('div');
+      el.className = 's-item';
+      el.innerHTML = `
+        <div class="s-mini-av">${av(u.nickname)}</div>
+        <div style="flex:1;min-width:0">
+          <div class="s-nick">${esc(u.nickname)}</div>
+          <div class="s-id">@${esc(u.id)}</div>
+        </div>
+        <button class="btn-add" ${isFriend?'disabled':''}>${isFriend?'✓ Друг':'+ Добавить'}</button>`;
 
-    el.querySelector('.btn-add').addEventListener('click', e => {
-      e.stopPropagation();
-      if (!isFriend) {
-        socket.emit('sendFriendRequest', u.id);
-        const btn = el.querySelector('.btn-add');
-        btn.textContent = 'Отправлено'; btn.disabled = true;
-      }
+      el.querySelector('.btn-add').addEventListener('click', e => {
+        e.stopPropagation();
+        if (!isFriend) {
+          socket.emit('sendFriendRequest', u.id);
+          const btn = el.querySelector('.btn-add');
+          btn.textContent = 'Отправлено'; btn.disabled = true;
+        }
+      });
+      el.addEventListener('click', () => { if (isFriend) openChat(u.id); closeDrop(); });
+      drop.appendChild(el);
     });
-    el.addEventListener('click', () => { if (isFriend) openChat(u.id); closeDrop(); });
-    drop.appendChild(el);
-  });
-  drop.classList.add('open');
+    drop.classList.add('open');
+  } catch(e) {
+    const drop = $('search-results');
+    drop.innerHTML = '<div class="s-item" style="color:var(--red);font-size:13px">Ошибка поиска</div>';
+    drop.classList.add('open');
+    console.error('Search error:', e);
+  }
 }
 function closeDrop() { $('search-results').classList.remove('open'); }
 
@@ -164,10 +191,14 @@ async function fetchNicknames(ids) {
   for (const id of ids) {
     try {
       const res = await fetch('/api/search?q=' + encodeURIComponent(id));
-      const results = await res.json();
-      const found = results.find(u => u.id === id);
-      if (found) friends[id] = { id, nickname: found.nickname, online: found.online };
-    } catch(e) {}
+      if (res.ok) {
+        const results = await res.json();
+        const found = results.find(u => u.id === id);
+        if (found) friends[id] = { id, nickname: found.nickname, online: found.online };
+      }
+    } catch(e) {
+      console.error('Fetch nicknames error:', e);
+    }
   }
   renderFriendsList();
 }
@@ -282,6 +313,7 @@ function updateStatus(id, online) {
 
 // ── Chat ─────────────────────────────────────────────────────────
 async function openChat(id) {
+  if (!me || !id) return;
   activeFriend = id;
   unread[id] = 0;
   document.querySelectorAll('.friend-item').forEach(el => el.classList.toggle('active', el.dataset.fid===id));
@@ -295,12 +327,23 @@ async function openChat(id) {
 
   $('chat-placeholder').style.display = 'none';
   $('chat-window').style.display = 'flex';
+  $('messages').innerHTML = '<div style="text-align:center;color:var(--text2);padding:20px;">Загрузка сообщений...</div>';
 
-  const res = await fetch(`/api/messages/${me.id}/${id}`);
-  const history = await res.json();
-  $('messages').innerHTML = '';
-  history.forEach(m => appendMsg(m, false));
-  scrollMsgs();
+  try {
+    const res = await fetch(`/api/messages/${me.id}/${id}`);
+    if (!res.ok) throw new Error('Ошибка загрузки сообщений');
+    const history = await res.json();
+    $('messages').innerHTML = '';
+    if (!history || !history.length) {
+      $('messages').innerHTML = '<div style="text-align:center;color:var(--text2);padding:20px;">Начните беседу!</div>';
+    } else {
+      history.forEach(m => appendMsg(m, false));
+    }
+    scrollMsgs();
+  } catch(e) {
+    $('messages').innerHTML = '<div style="text-align:center;color:var(--red);padding:20px;">Ошибка загрузки сообщений</div>';
+    console.error('Load messages error:', e);
+  }
   $('msg-input').focus();
 }
 
@@ -321,8 +364,30 @@ $('msg-input').addEventListener('keydown', e => { if(e.key==='Enter'&&!e.shiftKe
 function sendMsg() {
   const text = $('msg-input').value.trim();
   if (!text || !activeFriend) return;
+  
+  // Validate message length
+  if (text.length > 1000) {
+    alert('Сообщение слишком длинное (максимум 1000 символов)');
+    return;
+  }
+  
+  const btn = $('btn-send');
+  const input = $('msg-input');
+  
+  // Disable send button during sending
+  btn.disabled = true;
+  btn.style.opacity = '0.5';
+  
   socket.emit('sendMessage', { toId: activeFriend, text });
-  $('msg-input').value = '';
+  input.value = '';
+  
+  // Re-enable after short delay
+  setTimeout(() => {
+    btn.disabled = false;
+    btn.style.opacity = '1';
+  }, 300);
+  
+  input.focus();
 }
 
 // ── Auto-login ───────────────────────────────────────────────────
@@ -335,7 +400,30 @@ function sendMsg() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: savedId, password: savedPw })
       });
-      if (res.ok) { const d = await res.json(); me = d.user; enterApp(d.user); }
-    } catch(e) {}
+      if (res.ok) {
+        const d = await res.json();
+        me = d.user;
+        enterApp(d.user);
+      } else {
+        // Clear saved credentials if login fails
+        localStorage.removeItem('chatapp_id');
+        localStorage.removeItem('chatapp_pw');
+      }
+    } catch(e) {
+      console.error('Auto-login error:', e);
+    }
   }
 })();
+
+// ── Socket error handling ────────────────────────────────────────
+socket.on('connect_error', (error) => {
+  console.error('Socket connection error:', error);
+});
+
+socket.on('disconnect', (reason) => {
+  console.warn('Socket disconnected:', reason);
+});
+
+socket.on('error', (error) => {
+  console.error('Socket error:', error);
+});
