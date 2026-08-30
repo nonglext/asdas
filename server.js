@@ -14,12 +14,20 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
+// Render (и большинство PaaS) работают за обратным прокси —
+// без этого express-rate-limit будет падать с ERR_ERL_UNEXPECTED_X_FORWARDED_FOR
+app.set('trust proxy', 1);
+
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret_in_production';
 const SALT_ROUNDS = 12;
 
+if (!process.env.JWT_SECRET) {
+  console.warn('⚠️  JWT_SECRET не задан в .env — используется дефолтный небезопасный секрет!');
+}
+
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
@@ -43,14 +51,41 @@ const sequelize = new Sequelize(
     dialect: 'postgres',
     logging: false,
     dialectOptions: process.env.NODE_ENV === 'production' ? {
-      ssl: { rejectUnauthorized: false }
-    } : {}
+      ssl: {
+        require: true,
+        rejectUnauthorized: false
+      }
+    } : {},
+    pool: {
+      max: 5,
+      min: 0,
+      acquire: 30000,
+      idle: 10000
+    },
+    retry: {
+      max: 3
+    }
   }
 );
 
-sequelize.authenticate()
-  .then(() => console.log('✅ PostgreSQL подключена'))
-  .catch(err => console.error('❌ PostgreSQL:', err));
+// Пытаемся подключиться с повторными попытками, чтобы пережить
+// "холодный старт" базы данных (частая причина "Connection terminated unexpectedly")
+async function connectWithRetry(retries = 5, delayMs = 3000) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      await sequelize.authenticate();
+      console.log('✅ PostgreSQL подключена');
+      return true;
+    } catch (err) {
+      console.error(`❌ PostgreSQL (попытка ${attempt}/${retries}):`, err.message);
+      if (attempt < retries) {
+        await new Promise(res => setTimeout(res, delayMs));
+      }
+    }
+  }
+  console.error('❌ Не удалось подключиться к PostgreSQL после нескольких попыток');
+  return false;
+}
 
 // ─── Models ───────────────────────────────────────────────────────────────────
 const User = sequelize.define('User', {
@@ -145,11 +180,6 @@ const Message = sequelize.define('Message', {
     { fields: ['createdAt'] }
   ]
 });
-
-// ─── Sync Models ──────────────────────────────────────────────────────────────
-sequelize.sync({ alter: true })
-  .then(() => console.log('✅ Таблицы синхронизированы'))
-  .catch(err => console.error('❌ Sync error:', err));
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const onlineUsers = {};
@@ -255,6 +285,7 @@ app.get('/api/search', authMiddleware, searchLimiter, async (req, res) => {
     });
     res.json(results.map(u => ({ id: u.id, nickname: u.nickname, avatar: u.avatar, status: u.status, online: !!onlineUsers[u.id] })));
   } catch (err) {
+    console.error('Search error:', err);
     res.status(500).json({ error: 'Ошибка поиска' });
   }
 });
@@ -265,6 +296,7 @@ app.get('/api/profile/:userId', authMiddleware, async (req, res) => {
     if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
     res.json({ id: user.id, nickname: user.nickname, avatar: user.avatar, status: user.status, bio: user.bio, online: !!onlineUsers[user.id], createdAt: user.createdAt });
   } catch (err) {
+    console.error('Profile error:', err);
     res.status(500).json({ error: 'Ошибка профиля' });
   }
 });
@@ -285,6 +317,7 @@ app.post('/api/profile/update', authMiddleware, async (req, res) => {
 
     res.json({ success: true, user: { id: user.id, nickname: user.nickname, avatar: user.avatar, status: user.status, bio: user.bio } });
   } catch (err) {
+    console.error('Profile update error:', err);
     res.status(500).json({ error: 'Ошибка обновления профиля' });
   }
 });
@@ -301,6 +334,7 @@ app.post('/api/upload/avatar', authMiddleware, upload.single('avatar'), async (r
     await user.save();
     res.json({ success: true, avatar: user.avatar });
   } catch (err) {
+    console.error('Avatar upload error:', err);
     res.status(500).json({ error: 'Ошибка загрузки аватара' });
   }
 });
@@ -326,6 +360,7 @@ app.get('/api/messages/:userId/:friendId', authMiddleware, async (req, res) => {
 
     res.json(messages.reverse());
   } catch (err) {
+    console.error('Messages error:', err);
     res.status(500).json({ error: 'Ошибка загрузки сообщений' });
   }
 });
@@ -350,7 +385,18 @@ app.delete('/api/messages/:messageId', authMiddleware, async (req, res) => {
 
     res.json({ success: true });
   } catch (err) {
+    console.error('Delete message error:', err);
     res.status(500).json({ error: 'Ошибка удаления' });
+  }
+});
+
+// ─── Health check (полезно для мониторинга Render) ───────────────────────────
+app.get('/api/health', async (req, res) => {
+  try {
+    await sequelize.authenticate();
+    res.json({ status: 'ok', db: 'connected' });
+  } catch (err) {
+    res.status(503).json({ status: 'error', db: 'disconnected' });
   }
 });
 
@@ -472,8 +518,28 @@ io.on('connection', (socket) => {
   });
 });
 
+// ─── Запуск сервера ───────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`✅ Сервер запущен на http://localhost:${PORT}`);
-  console.log(`📦 Database: ${process.env.DATABASE_URL || 'postgresql://localhost:5432/chatapp'}`);
+
+(async () => {
+  const connected = await connectWithRetry();
+
+  if (connected) {
+    try {
+      await sequelize.sync({ alter: true });
+      console.log('✅ Таблицы синхронизированы');
+    } catch (err) {
+      console.error('❌ Sync error:', err.message);
+    }
+  } else {
+    console.warn('⚠️  Сервер запускается без подтверждённого подключения к БД. Запросы к БД будут падать, пока соединение не восстановится.');
+  }
+
+  server.listen(PORT, () => {
+    console.log(`✅ Сервер запущен на http://localhost:${PORT}`);
+  });
+})();
+
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejection:', err);
 });
