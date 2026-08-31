@@ -496,7 +496,15 @@ app.get('/api/messages/:userId/:friendId', authMiddleware, async (req, res) => {
 app.delete('/api/messages/:messageId', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
-    const msg    = await Message.findByPk(req.params.messageId);
+    const messageId = req.params.messageId;
+
+    // id сообщения — UUID. Если сюда прилетит что-то невалидное, Postgres кидает
+    // "invalid input syntax for type uuid" — раньше это гасилось в общий 500
+    // с непонятным "Ошибка удаления". Теперь отдаём внятную ошибку сразу.
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(messageId || '');
+    if (!isUuid) return res.status(400).json({ error: 'Некорректный ID сообщения' });
+
+    const msg = await Message.findByPk(messageId);
 
     if (!msg)             return res.status(404).json({ error: 'Сообщение не найдено' });
     if (msg.from !== userId) return res.status(403).json({ error: 'Нет доступа' });
@@ -507,8 +515,8 @@ app.delete('/api/messages/:messageId', authMiddleware, async (req, res) => {
     await msg.save();
 
     const otherUser = msg.chatKey.split('::').find(id => id !== userId);
-    io.to(userId).emit('messageDeleted',    { messageId: req.params.messageId, chatWith: otherUser });
-    io.to(otherUser).emit('messageDeleted', { messageId: req.params.messageId, chatWith: userId });
+    io.to(userId).emit('messageDeleted', { messageId, chatWith: otherUser || null });
+    if (otherUser) io.to(otherUser).emit('messageDeleted', { messageId, chatWith: userId });
 
     res.json({ success: true });
   } catch (err) {
