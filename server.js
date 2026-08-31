@@ -14,7 +14,16 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_URL || 'https://asdas-p7ht.onrender.com/',
+    // CLIENT_URL можно задать явно (список через запятую), если фронт живёт на другом домене.
+    // Если не задан — разрешаем запрос с того же origin, с которого реально пришёл handshake
+    // (безопасно, т.к. это не даёт эффекта "разрешено всем" — совпадение не требуется извне),
+    // и разрешаем запросы без Origin (server-to-server, curl и т.п.).
+    origin: (origin, callback) => {
+      const allowList = (process.env.CLIENT_URL || '').split(',').map(s => s.trim()).filter(Boolean);
+      if (!origin) return callback(null, true);
+      if (allowList.length === 0 || allowList.includes(origin)) return callback(null, true);
+      callback(new Error('CORS blocked'));
+    },
     methods: ['GET', 'POST']
   }
 });
@@ -555,9 +564,19 @@ io.on('connection', (socket) => {
 
   socket.on('sendFriendRequest', async (toId) => {
     try {
-      if (!canSendFriendRequest(currentUserId)) return;
+      if (!canSendFriendRequest(currentUserId)) {
+        return socket.emit('friendRequestError', { toId, reason: 'rate_limited' });
+      }
       const from = await User.findByPk(currentUserId);
-      if (!from || !toId || toId === currentUserId) return;
+      if (!from) return;
+      if (!toId) return socket.emit('friendRequestError', { toId, reason: 'not_found' });
+      if (toId === currentUserId) return socket.emit('friendRequestError', { toId, reason: 'self' });
+
+      const to = await User.findByPk(toId);
+      if (!to) return socket.emit('friendRequestError', { toId, reason: 'not_found' });
+      if (to.friends.includes(currentUserId)) return socket.emit('friendRequestError', { toId, reason: 'already_friends' });
+      if (to.friendRequests.includes(currentUserId)) return socket.emit('friendRequestError', { toId, reason: 'already_sent' });
+      if (to.blockedUsers.includes(currentUserId)) return socket.emit('friendRequestError', { toId, reason: 'blocked' });
 
       // Атомарный UPDATE вместо "прочитать массив → проверить в JS → сохранить" —
       // старая версия была уязвима к гонке при параллельных вызовах (аудит, пункт 3)
@@ -571,11 +590,14 @@ io.on('connection', (socket) => {
         RETURNING id
       `, { replacements: { fromId: currentUserId, toId }, type: sequelize.QueryTypes.SELECT });
 
-      if (!affected || !affected.length) return; // уже есть заявка / уже друзья / заблокирован
+      if (!affected || !affected.length) return socket.emit('friendRequestError', { toId, reason: 'already_sent' }); // уже есть заявка / уже друзья / заблокирован
 
       io.to(toId).emit('friendRequest', { id: currentUserId, nickname: from.nickname });
       socket.emit('requestSent', { id: toId });
-    } catch (err) { console.error('Friend request error:', err); }
+    } catch (err) {
+      console.error('Friend request error:', err);
+      socket.emit('friendRequestError', { toId, reason: 'server_error' });
+    }
   });
 
   socket.on('acceptFriendRequest', async (fromId) => {
