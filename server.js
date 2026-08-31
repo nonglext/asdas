@@ -146,7 +146,8 @@ const User = sequelize.define('User', {
   }
 }, {
   timestamps: true,
-  underscored: true
+  underscored: true,
+  tableName: 'users'
 });
 
 const Message = sequelize.define('Message', {
@@ -190,6 +191,7 @@ const Message = sequelize.define('Message', {
 }, {
   timestamps: true,
   underscored: true,
+  tableName: 'messages',
   indexes: [
     { fields: ['chat_key'] },
     { fields: ['created_at'] }
@@ -580,7 +582,7 @@ io.on('connection', (socket) => {
       // Атомарный UPDATE вместо "прочитать массив → проверить в JS → сохранить" —
       // старая версия была уязвима к гонке при параллельных вызовах (аудит, пункт 3)
       const affected = await sequelize.query(`
-        UPDATE "Users"
+        UPDATE "users"
         SET friend_requests = array_append(friend_requests, :fromId)
         WHERE id = :toId
           AND NOT (:fromId = ANY(friend_requests))

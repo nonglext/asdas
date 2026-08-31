@@ -283,18 +283,6 @@ socket.on('friendRequest', req => {
   renderRequests(me.friendRequests);
 });
 socket.on('requestSent', () => {});
-socket.on('friendRequestError', ({ reason }) => {
-  const messages = {
-    self: 'Нельзя добавить самого себя',
-    already_friends: 'Вы уже друзья',
-    already_sent: 'Заявка уже отправлена',
-    blocked: 'Невозможно отправить заявку',
-    not_found: 'Пользователь не найден',
-    rate_limited: 'Слишком много заявок, подождите немного',
-    server_error: 'Ошибка сервера'
-  };
-  alert(messages[reason] || 'Не удалось отправить заявку');
-});
 socket.on('requestDeclined', fromId => {
   if (me.friendRequests) {
     me.friendRequests = me.friendRequests.filter(r => (r.id||r) !== fromId);
