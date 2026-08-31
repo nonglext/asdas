@@ -413,6 +413,25 @@ app.post('/api/users/:id/block', authMiddleware, async (req, res) => {
       me.friendRequests = me.friendRequests.filter(id => id !== targetId);
       await me.save();
     }
+
+    // Раньше дружба разрывалась только с нашей стороны — у заблокированного
+    // пользователя мы оставались в его friends/friendRequests. Из-за этого:
+    //  1) у него список друзей молча "протухал" (не приходило обновление в реальном времени),
+    //  2) при повторной отправке заявки sendFriendRequest видел to.friends.includes(...)
+    //     и сразу отвечал already_friends, не создавая заявку заново.
+    // Разрываем дружбу симметрично и уведомляем собеседника, если он онлайн.
+    const target = await User.findByPk(targetId);
+    if (target) {
+      const hadFriend  = target.friends.includes(me.id);
+      const hadRequest = target.friendRequests.includes(me.id);
+      if (hadFriend || hadRequest) {
+        if (hadFriend)  target.friends = target.friends.filter(id => id !== me.id);
+        if (hadRequest) target.friendRequests = target.friendRequests.filter(id => id !== me.id);
+        await target.save();
+        io.to(targetId).emit('friendRemoved', { id: me.id });
+      }
+    }
+
     res.json({ success: true, blockedUsers: me.blockedUsers });
   } catch (err) {
     console.error('Block error:', err);
@@ -578,6 +597,7 @@ io.on('connection', (socket) => {
       if (to.friends.includes(currentUserId)) return socket.emit('friendRequestError', { toId, reason: 'already_friends' });
       if (to.friendRequests.includes(currentUserId)) return socket.emit('friendRequestError', { toId, reason: 'already_sent' });
       if (to.blockedUsers.includes(currentUserId)) return socket.emit('friendRequestError', { toId, reason: 'blocked' });
+      if (from.blockedUsers.includes(toId)) return socket.emit('friendRequestError', { toId, reason: 'blocked' });
 
       // Атомарный UPDATE вместо "прочитать массив → проверить в JS → сохранить" —
       // старая версия была уязвима к гонке при параллельных вызовах (аудит, пункт 3)

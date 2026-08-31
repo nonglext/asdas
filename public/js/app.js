@@ -283,6 +283,25 @@ socket.on('friendRequest', req => {
   renderRequests(me.friendRequests);
 });
 socket.on('requestSent', () => {});
+socket.on('friendRequestError', ({ reason }) => {
+  // Раньше эта ошибка вообще не обрабатывалась на клиенте — кнопка "Запрос отправлен"
+  // так и оставалась disabled, даже если сервер реально не создал заявку.
+  const addBtn = $('btn-add-friend');
+  if (addBtn && addBtn.style.display !== 'none') {
+    addBtn.textContent = 'Добавить в друзья';
+    addBtn.disabled = false;
+  }
+  const messages = {
+    rate_limited: 'Слишком много заявок, попробуйте позже',
+    not_found: 'Пользователь не найден',
+    self: 'Нельзя добавить самого себя',
+    already_friends: 'Вы уже друзья',
+    already_sent: 'Заявка уже отправлена',
+    blocked: 'Невозможно отправить заявку',
+    server_error: 'Ошибка сервера'
+  };
+  alert(messages[reason] || 'Не удалось отправить заявку');
+});
 socket.on('requestDeclined', fromId => {
   if (me.friendRequests) {
     me.friendRequests = me.friendRequests.filter(r => (r.id||r) !== fromId);
@@ -298,6 +317,20 @@ socket.on('friendAdded', user => {
     renderRequests(me.friendRequests);
   }
   renderFriendsList();
+});
+socket.on('friendRemoved', ({ id }) => {
+  // Приходит, когда собеседник нас заблокировал (или иначе разорвал дружбу) —
+  // раньше это обновлялось только на его стороне, а у нас список друзей
+  // "протухал" молча, из-за чего повторная заявка потом отклонялась как already_friends.
+  if (me?.friends) me.friends = me.friends.filter(fid => fid !== id);
+  delete friends[id];
+  delete unread[id];
+  renderFriendsList();
+  if (activeFriend === id) {
+    activeFriend = null;
+    $('chat-placeholder').style.display = 'flex';
+    $('chat-window').style.display = 'none';
+  }
 });
 socket.on('friendOnline', u => {
   if (friends[u.id]) { friends[u.id].online = true; updateStatus(u.id, true); }
@@ -567,6 +600,12 @@ async function showUserProfile(userId) {
     const addBtn = $('btn-add-friend');
     const isFriend = me?.friends?.includes(userId);
     const isMe = userId === me?.id;
+    // Кнопка — один и тот же DOM-элемент для всех профилей, поэтому её текст/disabled
+    // нужно сбрасывать при каждом открытии модалки, иначе после первого клика "Добавить"
+    // она навсегда остаётся "Запрос отправлен" + disabled для любого другого пользователя
+    // (в т.ч. после блокировки/разблокировки и попытки добавить снова).
+    addBtn.textContent = 'Добавить в друзья';
+    addBtn.disabled = false;
     addBtn.style.display = (isFriend || isMe) ? 'none' : '';
     if (!isFriend && !isMe) {
       addBtn.onclick = () => {
@@ -588,7 +627,13 @@ async function showUserProfile(userId) {
           if (!res.ok) return alert('Ошибка блокировки');
           if (me.friends) me.friends = me.friends.filter(id => id !== userId);
           delete friends[userId];
+          delete unread[userId];
           renderFriendsList();
+          if (activeFriend === userId) {
+            activeFriend = null;
+            $('chat-placeholder').style.display = 'flex';
+            $('chat-window').style.display = 'none';
+          }
           blockBtn.textContent = 'Заблокирован';
           blockBtn.disabled = true;
         } catch (e) { alert('Ошибка сети'); }
