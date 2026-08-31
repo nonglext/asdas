@@ -6,7 +6,7 @@ const path = require('path');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const rateLimit = require('express-rate-limit');
-const { Sequelize, DataTypes } = require('sequelize');
+const { Sequelize, DataTypes, Op } = require('sequelize');
 const fs = require('fs');
 const multer = require('multer');
 
@@ -45,9 +45,6 @@ const searchLimiter = rateLimit({
 });
 
 // ─── PostgreSQL Connection ────────────────────────────────────────────────────
-// Internal Database URL Render'а (вида dpg-xxxx-a без домена) работает по приватной
-// сети и НЕ использует SSL — если включить SSL для него, будет "Connection terminated
-// unexpectedly", как это и происходило. SSL нужен только для внешнего (External) URL.
 const dbUrl = process.env.DATABASE_URL || 'postgresql://user:password@localhost:5432/chatapp';
 const isInternalRenderUrl = /@dpg-[^.]+-a(:\d+)?\//.test(dbUrl) || /@dpg-[^./]+-a\//.test(dbUrl);
 const needsSSL = process.env.NODE_ENV === 'production' && !isInternalRenderUrl;
@@ -75,8 +72,6 @@ const sequelize = new Sequelize(
   }
 );
 
-// Пытаемся подключиться с повторными попытками, чтобы пережить
-// "холодный старт" базы данных (частая причина "Connection terminated unexpectedly")
 async function connectWithRetry(retries = 5, delayMs = 3000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -282,15 +277,33 @@ app.get('/api/search', authMiddleware, searchLimiter, async (req, res) => {
   try {
     const q = (req.query.q || '').trim();
     if (!q) return res.json([]);
+
+    // Ищем по id И по nickname (без учёта регистра)
     const results = await User.findAll({
-      where: sequelize.where(
-        sequelize.fn('LOWER', sequelize.col('id')),
-        'LIKE',
-        `%${q.toLowerCase()}%`
-      ),
+      where: {
+        [Op.or]: [
+          sequelize.where(
+            sequelize.fn('LOWER', sequelize.col('id')),
+            'LIKE',
+            `%${q.toLowerCase()}%`
+          ),
+          sequelize.where(
+            sequelize.fn('LOWER', sequelize.col('nickname')),
+            'LIKE',
+            `%${q.toLowerCase()}%`
+          )
+        ]
+      },
       limit: 10
     });
-    res.json(results.map(u => ({ id: u.id, nickname: u.nickname, avatar: u.avatar, status: u.status, online: !!onlineUsers[u.id] })));
+
+    res.json(results.map(u => ({
+      id: u.id,
+      nickname: u.nickname,
+      avatar: u.avatar,
+      status: u.status,
+      online: !!onlineUsers[u.id]
+    })));
   } catch (err) {
     console.error('Search error:', err);
     res.status(500).json({ error: 'Ошибка поиска' });
@@ -397,7 +410,7 @@ app.delete('/api/messages/:messageId', authMiddleware, async (req, res) => {
   }
 });
 
-// ─── Health check (полезно для мониторинга Render) ───────────────────────────
+// ─── Health check ─────────────────────────────────────────────────────────────
 app.get('/api/health', async (req, res) => {
   try {
     await sequelize.authenticate();
@@ -466,11 +479,11 @@ io.on('connection', (socket) => {
       const them = await User.findByPk(fromId);
       if (!me || !them) return;
       me.friendRequests = me.friendRequests.filter(id => id !== fromId);
-      if (!me.friends.includes(fromId))       me.friends = [...me.friends, fromId];
+      if (!me.friends.includes(fromId))          me.friends = [...me.friends, fromId];
       if (!them.friends.includes(currentUserId)) them.friends = [...them.friends, currentUserId];
       await me.save();
       await them.save();
-      socket.emit('friendAdded',  { id: fromId,        nickname: them.nickname, avatar: them.avatar, online: !!onlineUsers[fromId] });
+      socket.emit('friendAdded',        { id: fromId,        nickname: them.nickname, avatar: them.avatar, online: !!onlineUsers[fromId] });
       io.to(fromId).emit('friendAdded', { id: currentUserId, nickname: me.nickname,   avatar: me.avatar,   online: true });
     } catch (err) { console.error('Accept friend error:', err); }
   });
@@ -510,8 +523,8 @@ io.on('connection', (socket) => {
         time:    msg.createdAt.toISOString(),
         deleted: false
       };
-      io.to(currentUserId).emit('newMessage', { chatWith: toId,        msg: msgData });
-      io.to(toId).emit('newMessage',          { chatWith: currentUserId, msg: msgData });
+      io.to(currentUserId).emit('newMessage', { chatWith: toId,           msg: msgData });
+      io.to(toId).emit('newMessage',          { chatWith: currentUserId,  msg: msgData });
     } catch (err) { console.error('Send message error:', err); }
   });
 
@@ -539,7 +552,7 @@ const PORT = process.env.PORT || 3000;
       console.error('❌ Sync error:', err.message);
     }
   } else {
-    console.warn('⚠️  Сервер запускается без подтверждённого подключения к БД. Запросы к БД будут падать, пока соединение не восстановится.');
+    console.warn('⚠️  Сервер запускается без подтверждённого подключения к БД.');
   }
 
   server.listen(PORT, () => {

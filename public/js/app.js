@@ -19,6 +19,18 @@ function fmtTime(iso) {
 }
 function setErr(msg) { $('auth-error').textContent = msg || ''; }
 
+// ─── Auth Fetch (всегда отправляет JWT-токен) ──────────────────────────────────
+function authFetch(url, options = {}) {
+  const token = localStorage.getItem('chatapp_token');
+  return fetch(url, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      ...(token ? { 'Authorization': 'Bearer ' + token } : {})
+    }
+  });
+}
+
 // Render avatar: image or letter
 function renderAv(el, nickname, avatarUrl) {
   if (avatarUrl) {
@@ -71,7 +83,7 @@ $('btn-register').addEventListener('click', async () => {
     });
     const data = await res.json();
     if (!res.ok) return setErr(data.error || 'Ошибка регистрации');
-    saveAndLogin(data.user, userId, password);
+    saveAndLogin(data.user, userId, password, data.token);
   } catch(e) {
     setErr('Ошибка сети');
   } finally {
@@ -96,7 +108,7 @@ $('btn-login').addEventListener('click', async () => {
     });
     const data = await res.json();
     if (!res.ok) return setErr(data.error || 'Ошибка входа');
-    saveAndLogin(data.user, userId, password);
+    saveAndLogin(data.user, userId, password, data.token);
   } catch(e) {
     setErr('Ошибка сети');
   } finally {
@@ -107,10 +119,11 @@ $('btn-login').addEventListener('click', async () => {
 ['login-id','login-pw'].forEach(id => $(id).addEventListener('keydown', e => { if(e.key==='Enter') $('btn-login').click(); }));
 ['reg-id','reg-nick','reg-pw'].forEach(id => $(id).addEventListener('keydown', e => { if(e.key==='Enter') $('btn-register').click(); }));
 
-function saveAndLogin(user, userId, password) {
+function saveAndLogin(user, userId, password, token) {
   me = user;
   localStorage.setItem('chatapp_id', userId);
   localStorage.setItem('chatapp_pw', password);
+  if (token) localStorage.setItem('chatapp_token', token);
   enterApp(user);
 }
 
@@ -128,6 +141,7 @@ $('btn-logout').addEventListener('click', () => {
   me = null; activeFriend = null; friends = {}; unread = {};
   localStorage.removeItem('chatapp_id');
   localStorage.removeItem('chatapp_pw');
+  localStorage.removeItem('chatapp_token');
   $('friends-list').innerHTML = emptyFriendsHTML();
   $('requests-list').innerHTML = '';
   $('requests-section').style.display = 'none';
@@ -165,7 +179,7 @@ $('search-input').addEventListener('blur', () => setTimeout(closeDrop, 200));
 
 async function doSearch(q) {
   try {
-    const res = await fetch('/api/search?q=' + encodeURIComponent(q));
+    const res = await authFetch('/api/search?q=' + encodeURIComponent(q));
     if (!res.ok) throw new Error();
     const list = await res.json();
     const drop = $('search-results');
@@ -230,7 +244,7 @@ socket.on('profile', profile => {
 async function fetchNicknames(ids) {
   for (const id of ids) {
     try {
-      const res = await fetch('/api/profile/' + encodeURIComponent(id));
+      const res = await authFetch('/api/profile/' + encodeURIComponent(id));
       if (res.ok) {
         const u = await res.json();
         friends[id] = { id, nickname: u.nickname, avatar: u.avatar, online: u.online };
@@ -398,7 +412,7 @@ async function openChat(id) {
   $('messages').innerHTML = '<div style="text-align:center;color:var(--text3);padding:24px;font-size:13px">Загрузка…</div>';
 
   try {
-    const res = await fetch(`/api/messages/${me.id}/${id}`);
+    const res = await authFetch(`/api/messages/${me.id}/${id}`);
     if (!res.ok) throw new Error();
     const history = await res.json();
     $('messages').innerHTML = '';
@@ -467,7 +481,7 @@ $('btn-confirm-delete').addEventListener('click', async () => {
   if (!pendingDeleteId || !me) return;
   closeDeleteConfirm();
   try {
-    const res = await fetch(`/api/messages/${pendingDeleteId}`, {
+    const res = await authFetch(`/api/messages/${pendingDeleteId}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId: me.id })
@@ -500,7 +514,7 @@ $('chat-head-click').addEventListener('click', () => {
 
 async function showUserProfile(userId) {
   try {
-    const res = await fetch('/api/profile/' + encodeURIComponent(userId));
+    const res = await authFetch('/api/profile/' + encodeURIComponent(userId));
     if (!res.ok) return;
     const u = await res.json();
 
@@ -571,7 +585,7 @@ $('avatar-input').addEventListener('change', async (e) => {
   formData.append('avatar', file);
   formData.append('userId', me.id);
   try {
-    const res = await fetch('/api/upload/avatar', { method: 'POST', body: formData });
+    const res = await authFetch('/api/upload/avatar', { method: 'POST', body: formData });
     if (!res.ok) return alert('Ошибка загрузки аватара');
     const data = await res.json();
     me.avatar = data.avatar;
@@ -591,7 +605,7 @@ $('btn-save-profile').addEventListener('click', async () => {
   const btn = $('btn-save-profile');
   btn.disabled = true; btn.textContent = 'Сохранение…';
   try {
-    const res = await fetch('/api/profile/update', {
+    const res = await authFetch('/api/profile/update', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId: me.id, nickname, status, bio })
     });
@@ -635,10 +649,12 @@ window.addEventListener('resize', () => {
       if (res.ok) {
         const d = await res.json();
         me = d.user;
+        if (d.token) localStorage.setItem('chatapp_token', d.token);
         enterApp(d.user);
       } else {
         localStorage.removeItem('chatapp_id');
         localStorage.removeItem('chatapp_pw');
+        localStorage.removeItem('chatapp_token');
       }
     } catch(e) {}
   }
