@@ -157,8 +157,7 @@ const Message = sequelize.define('Message', {
   },
   chatKey: {
     type: DataTypes.STRING,
-    allowNull: false,
-    index: true
+    allowNull: false
   },
   from: {
     type: DataTypes.STRING,
@@ -192,8 +191,8 @@ const Message = sequelize.define('Message', {
   timestamps: true,
   underscored: true,
   indexes: [
-    { fields: ['chatKey'] },
-    { fields: ['createdAt'] }
+    { fields: ['chat_key'] },
+    { fields: ['created_at'] }
   ]
 });
 
