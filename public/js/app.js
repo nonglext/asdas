@@ -548,9 +548,13 @@ function closeDeleteConfirm() {
 }
 $('btn-confirm-delete').addEventListener('click', async () => {
   if (!pendingDeleteId || !me) return;
+  // Важно: сохраняем id ДО closeDeleteConfirm() — она обнуляет pendingDeleteId,
+  // а он читался прямо в шаблонной строке fetch ниже. Из-за этого запрос уходил
+  // на DELETE /api/messages/null → "Некорректный ID сообщения" (см. скриншоты).
+  const idToDelete = pendingDeleteId;
   closeDeleteConfirm();
   try {
-    const res = await authFetch(`/api/messages/${pendingDeleteId}`, {
+    const res = await authFetch(`/api/messages/${idToDelete}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId: me.id })
@@ -626,14 +630,27 @@ async function showUserProfile(userId) {
 
     const blockBtn = $('btn-block-user');
     if (blockBtn) {
+      const isBlocked = !!me?.blockedUsers?.includes(userId);
       blockBtn.style.display = isMe ? 'none' : '';
       blockBtn.disabled = false;
-      blockBtn.textContent = 'Заблокировать';
+      blockBtn.className = 'btn-secondary' + (isBlocked ? '' : ' btn-danger-outline');
+      blockBtn.textContent = isBlocked ? 'Разблокировать' : 'Заблокировать';
       blockBtn.onclick = async () => {
+        if (isBlocked) {
+          try {
+            const res = await authFetch(`/api/users/${encodeURIComponent(userId)}/unblock`, { method: 'POST' });
+            if (!res.ok) return alert('Ошибка разблокировки');
+            if (me.blockedUsers) me.blockedUsers = me.blockedUsers.filter(id => id !== userId);
+            showUserProfile(userId); // перерисовать модалку с обновлённым состоянием кнопки
+          } catch (e) { alert('Ошибка сети'); }
+          return;
+        }
         if (!confirm(`Заблокировать @${userId}?`)) return;
         try {
           const res = await authFetch(`/api/users/${encodeURIComponent(userId)}/block`, { method: 'POST' });
           if (!res.ok) return alert('Ошибка блокировки');
+          if (!me.blockedUsers) me.blockedUsers = [];
+          if (!me.blockedUsers.includes(userId)) me.blockedUsers = [...me.blockedUsers, userId];
           if (me.friends) me.friends = me.friends.filter(id => id !== userId);
           delete friends[userId];
           delete unread[userId];
@@ -643,8 +660,9 @@ async function showUserProfile(userId) {
             $('chat-placeholder').style.display = 'flex';
             $('chat-window').style.display = 'none';
           }
-          blockBtn.textContent = 'Заблокирован';
-          blockBtn.disabled = true;
+          blockBtn.textContent = 'Разблокировать';
+          blockBtn.className = 'btn-secondary';
+          blockBtn.onclick = () => showUserProfile(userId);
         } catch (e) { alert('Ошибка сети'); }
       };
     }
@@ -720,6 +738,67 @@ $('btn-save-profile').addEventListener('click', async () => {
   } catch(e) { alert('Ошибка сети'); }
   finally { btn.disabled = false; btn.textContent = 'Сохранить'; }
 });
+
+// ─── Blocked users list (как в Discord) ───────────────────────────────────────
+$('btn-open-blocked')?.addEventListener('click', () => {
+  closeEditProfileModal();
+  openBlockedUsersModal();
+});
+
+async function openBlockedUsersModal() {
+  $('blocked-users-modal').style.display = 'flex';
+  const list = $('blocked-users-list');
+  list.innerHTML = '<div class="blocked-users-empty">Загрузка…</div>';
+  try {
+    const res = await authFetch('/api/users/blocked');
+    if (!res.ok) throw new Error();
+    const users = await res.json();
+    me.blockedUsers = users.map(u => u.id); // держим в актуальном состоянии
+    renderBlockedUsersList(users);
+  } catch (e) {
+    list.innerHTML = '<div class="blocked-users-empty" style="color:var(--red)">Ошибка загрузки</div>';
+  }
+}
+function closeBlockedUsersModal() { $('blocked-users-modal').style.display = 'none'; }
+window.closeBlockedUsersModal = closeBlockedUsersModal;
+
+$('blocked-users-modal').addEventListener('click', e => {
+  if (e.target === $('blocked-users-modal')) closeBlockedUsersModal();
+});
+
+function renderBlockedUsersList(users) {
+  const list = $('blocked-users-list');
+  list.innerHTML = '';
+  if (!users || !users.length) {
+    list.innerHTML = '<div class="blocked-users-empty">Нет заблокированных пользователей</div>';
+    return;
+  }
+  users.forEach(u => {
+    const el = document.createElement('div');
+    el.className = 'blocked-user-item';
+    el.dataset.uid = u.id;
+    el.innerHTML = `
+      <div class="f-av"></div>
+      <div class="f-info">
+        <div class="blocked-user-nick">${esc(u.nickname)}</div>
+        <div class="blocked-user-id">@${esc(u.id)}</div>
+      </div>
+      <button class="btn-unblock">Разблокировать</button>`;
+    renderAv(el.querySelector('.f-av'), u.nickname, u.avatar);
+    el.querySelector('.btn-unblock').addEventListener('click', async () => {
+      try {
+        const res = await authFetch(`/api/users/${encodeURIComponent(u.id)}/unblock`, { method: 'POST' });
+        if (!res.ok) return alert('Ошибка разблокировки');
+        if (me.blockedUsers) me.blockedUsers = me.blockedUsers.filter(id => id !== u.id);
+        el.remove();
+        if (!list.children.length) {
+          list.innerHTML = '<div class="blocked-users-empty">Нет заблокированных пользователей</div>';
+        }
+      } catch (e) { alert('Ошибка сети'); }
+    });
+    list.appendChild(el);
+  });
+}
 
 // ─── Mobile back button ───────────────────────────────────────────────────────
 $('btn-back')?.addEventListener('click', () => {

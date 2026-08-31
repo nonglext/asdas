@@ -281,7 +281,7 @@ app.post('/api/register', authLimiter, async (req, res) => {
     res.json({
       success: true,
       token,
-      user: { id: user.id, nickname: user.nickname, avatar: user.avatar, status: user.status, friends: user.friends, friendRequests: user.friendRequests }
+      user: { id: user.id, nickname: user.nickname, avatar: user.avatar, status: user.status, friends: user.friends, friendRequests: user.friendRequests, blockedUsers: user.blockedUsers }
     });
   } catch (err) {
     console.error('Register error:', err);
@@ -304,7 +304,7 @@ app.post('/api/login', authLimiter, async (req, res) => {
     res.json({
       success: true,
       token,
-      user: { id: user.id, nickname: user.nickname, avatar: user.avatar, status: user.status, bio: user.bio, friends: user.friends, friendRequests: user.friendRequests }
+      user: { id: user.id, nickname: user.nickname, avatar: user.avatar, status: user.status, bio: user.bio, friends: user.friends, friendRequests: user.friendRequests, blockedUsers: user.blockedUsers }
     });
   } catch (err) {
     console.error('Login error:', err);
@@ -452,6 +452,22 @@ app.post('/api/users/:id/unblock', authMiddleware, async (req, res) => {
   }
 });
 
+// Список заблокированных — с никнеймом/аватаром, а не только ID
+// (нужен клиенту для отрисовки экрана «Заблокированные пользователи», как в Discord)
+app.get('/api/users/blocked', authMiddleware, async (req, res) => {
+  try {
+    const me = await User.findByPk(req.user.id);
+    if (!me) return res.status(404).json({ error: 'Пользователь не найден' });
+    if (!me.blockedUsers.length) return res.json([]);
+
+    const users = await User.findAll({ where: { id: { [Op.in]: me.blockedUsers } } });
+    res.json(users.map(u => ({ id: u.id, nickname: u.nickname, avatar: u.avatar })));
+  } catch (err) {
+    console.error('Blocked list error:', err);
+    res.status(500).json({ error: 'Ошибка загрузки списка заблокированных' });
+  }
+});
+
 // ─── Message Routes ───────────────────────────────────────────────────────────
 app.get('/api/messages/:userId/:friendId', authMiddleware, async (req, res) => {
   try {
@@ -584,6 +600,7 @@ io.on('connection', (socket) => {
         bio:            user.bio,
         friends:        user.friends,
         friendRequests: user.friendRequests,
+        blockedUsers:   user.blockedUsers,
         unreadCounts
       });
       console.log(`[online] ${currentUserId}`);

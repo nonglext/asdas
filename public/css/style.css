@@ -650,6 +650,50 @@ html, body {
 .edit-profile-actions .btn-primary,
 .edit-profile-actions .btn-secondary { flex: 1; }
 
+/* Open "blocked users" link row (edit profile modal) */
+.btn-link-row {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; background: none; border: none;
+  color: var(--text2); font-family: var(--font); font-size: 13px;
+  padding: 10px; margin-top: 6px; cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s, color 0.15s;
+}
+.btn-link-row:hover { background: var(--bg2); color: var(--red); }
+
+/* Block button when target is already blocked → outlined red, matches "destructive but reversible" */
+.btn-secondary.btn-danger-outline {
+  border-color: rgba(248,113,113,0.35);
+  color: var(--red);
+}
+.btn-secondary.btn-danger-outline:hover { background: rgba(248,113,113,0.12); }
+
+/* Blocked users modal */
+.blocked-users-list {
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: 360px; overflow-y: auto;
+  margin-top: 4px;
+}
+.blocked-user-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px; border-radius: var(--radius-sm);
+  background: var(--bg2); border: 1px solid var(--border);
+}
+.blocked-user-item .f-av { width: 38px; height: 38px; font-size: 14px; }
+.blocked-user-nick { font-weight: 500; font-size: 13px; }
+.blocked-user-id { font-size: 11px; color: var(--text3); }
+.btn-unblock {
+  background: rgba(124,110,245,0.12);
+  border: 1px solid rgba(124,110,245,0.3);
+  color: var(--accent);
+  border-radius: 7px;
+  font-family: var(--font); font-size: 12px; font-weight: 500;
+  padding: 6px 12px; cursor: pointer; flex-shrink: 0;
+  transition: all 0.2s;
+}
+.btn-unblock:hover { background: rgba(124,110,245,0.22); }
+.blocked-users-empty { text-align: center; color: var(--text3); padding: 24px 8px; font-size: 13px; }
+
 /* ─── Delete confirm popup ──────────────────────────────────────────────────── */
 .delete-confirm-popup {
   position: fixed;
