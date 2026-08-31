@@ -6,8 +6,19 @@ let friends = {};
 let unread = {};
 let pendingDeleteId = null;
 
-const socket = io();
+// Раньше: const socket = io()  — без токена. Сервер (io.use в server.js) требует
+// socket.handshake.auth.token и без него сразу рвёт соединение с 'Unauthorized'.
+// Из-за этого ни одно событие (sendFriendRequest, sendMessage и т.д.) не доходило.
+const socket = io({ autoConnect: false });
 const $ = id => document.getElementById(id);
+
+function connectSocket() {
+  const token = localStorage.getItem('chatapp_token');
+  if (!token) return;
+  socket.auth = { token };
+  if (socket.connected) socket.disconnect();
+  socket.connect();
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function av(nick) { return nick ? nick[0].toUpperCase() : '?'; }
@@ -34,7 +45,13 @@ function authFetch(url, options = {}) {
 // Render avatar: image or letter
 function renderAv(el, nickname, avatarUrl) {
   if (avatarUrl) {
-    el.innerHTML = `<img src="${esc(avatarUrl)}" alt="" loading="lazy" onerror="this.parentElement.textContent='${av(nickname)}'">`;
+    el.textContent = '';
+    const img = document.createElement('img');
+    img.src = avatarUrl;
+    img.alt = '';
+    img.loading = 'lazy';
+    img.onerror = () => { el.textContent = av(nickname); };
+    el.appendChild(img);
   } else {
     el.textContent = av(nickname);
   }
@@ -133,12 +150,13 @@ function enterApp(user) {
   $('my-id').textContent   = '@' + user.id;
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   $('app-screen').classList.add('active');
-  socket.emit('auth', user.id);
+  connectSocket(); // было: socket.emit('auth', user.id) — сервер это событие не слушал
 }
 
 // ─── Logout ───────────────────────────────────────────────────────────────────
 $('btn-logout').addEventListener('click', () => {
   me = null; activeFriend = null; friends = {}; unread = {};
+  if (socket.connected) socket.disconnect();
   localStorage.removeItem('chatapp_id');
   localStorage.removeItem('chatapp_pw');
   localStorage.removeItem('chatapp_token');
@@ -231,6 +249,7 @@ function closeDrop() { $('search-results').classList.remove('open'); $('search-i
 // ─── Socket events ────────────────────────────────────────────────────────────
 socket.on('profile', profile => {
   me = { ...me, ...profile };
+  unread = { ...(profile.unreadCounts || {}) }; // раньше не подтягивались — не было бейджей после захода/реконнекта
   renderAv($('my-avatar'), me.nickname, me.avatar);
   $('my-nick').textContent = me.nickname;
   (profile.friends || []).forEach(fId => {
@@ -239,6 +258,9 @@ socket.on('profile', profile => {
   renderRequests(profile.friendRequests || []);
   renderFriendsList();
   fetchNicknames(profile.friends || []);
+  // Если чат был открыт в момент дисконнекта — переоткрываем, чтобы подтянуть
+  // возможные messageDeleted/новые сообщения, пропущенные во время оффлайна (аудит, пункт 1)
+  if (activeFriend) openChat(activeFriend);
 });
 
 async function fetchNicknames(ids) {
@@ -360,7 +382,11 @@ function buildFriendEl(id) {
   const span = document.createElement('span');
   span.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:50%';
   if (f.avatar) {
-    span.innerHTML = `<img src="${esc(f.avatar)}" style="width:100%;height:100%;object-fit:cover" onerror="this.parentElement.textContent='${av(f.nickname)}'">`;
+    const img = document.createElement('img');
+    img.src = f.avatar;
+    img.style.cssText = 'width:100%;height:100%;object-fit:cover';
+    img.onerror = () => { span.textContent = av(f.nickname); };
+    span.appendChild(img);
   } else {
     span.textContent = av(f.nickname);
   }
@@ -425,6 +451,7 @@ async function openChat(id) {
   } catch(e) {
     $('messages').innerHTML = '<div style="text-align:center;color:var(--red);padding:24px;font-size:13px">Ошибка загрузки</div>';
   }
+  socket.emit('markRead', id);
   $('msg-input').focus();
 }
 
@@ -444,7 +471,7 @@ function appendMsg(msg, doScroll=true) {
   if (isDeleted) {
     bubble.innerHTML = '<em>Сообщение удалено</em>';
   } else {
-    bubble.innerHTML = `${esc(msg.text || '')}<div class="msg-time">${fmtTime(msg.time || msg.timestamp)}</div>`;
+    bubble.innerHTML = `${esc(msg.text || '')}<div class="msg-time">${fmtTime(msg.time || msg.timestamp || msg.createdAt)}</div>`;
   }
 
   wrap.appendChild(bubble);
@@ -546,6 +573,25 @@ async function showUserProfile(userId) {
         socket.emit('sendFriendRequest', userId);
         addBtn.textContent = 'Запрос отправлен';
         addBtn.disabled = true;
+      };
+    }
+
+    const blockBtn = $('btn-block-user');
+    if (blockBtn) {
+      blockBtn.style.display = isMe ? 'none' : '';
+      blockBtn.disabled = false;
+      blockBtn.textContent = 'Заблокировать';
+      blockBtn.onclick = async () => {
+        if (!confirm(`Заблокировать @${userId}?`)) return;
+        try {
+          const res = await authFetch(`/api/users/${encodeURIComponent(userId)}/block`, { method: 'POST' });
+          if (!res.ok) return alert('Ошибка блокировки');
+          if (me.friends) me.friends = me.friends.filter(id => id !== userId);
+          delete friends[userId];
+          renderFriendsList();
+          blockBtn.textContent = 'Заблокирован';
+          blockBtn.disabled = true;
+        } catch (e) { alert('Ошибка сети'); }
       };
     }
 
@@ -661,5 +707,16 @@ window.addEventListener('resize', () => {
 })();
 
 // ─── Socket error handling ────────────────────────────────────────────────────
-socket.on('connect_error', err => console.error('Socket error:', err));
+socket.on('connect_error', err => {
+  console.error('Socket error:', err);
+  if (err.message === 'Unauthorized') {
+    localStorage.removeItem('chatapp_id');
+    localStorage.removeItem('chatapp_pw');
+    localStorage.removeItem('chatapp_token');
+    me = null;
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    $('auth-screen').classList.add('active');
+    setErr('Сессия истекла, войдите снова');
+  }
+});
 socket.on('disconnect', reason => console.warn('Socket disconnected:', reason));

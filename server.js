@@ -12,7 +12,12 @@ const multer = require('multer');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+const io = new Server(server, {
+  cors: {
+    origin: process.env.CLIENT_URL || 'http://localhost:3000',
+    methods: ['GET', 'POST']
+  }
+});
 
 // Render (и большинство PaaS) работают за обратным прокси —
 // без этого express-rate-limit будет падать с ERR_ERL_UNEXPECTED_X_FORWARDED_FOR
@@ -187,6 +192,20 @@ const Message = sequelize.define('Message', {
 const onlineUsers = {};
 function getChatKey(a, b) { return [a, b].sort().join('::'); }
 
+// Простой rate limiter для socket-событий — REST-лимитеры их не покрывают (см. аудит, пункт 2)
+function makeSocketLimiter(maxPerWindow, windowMs) {
+  const hits = new Map();
+  return (key) => {
+    const now = Date.now();
+    const arr = (hits.get(key) || []).filter(t => now - t < windowMs);
+    arr.push(now);
+    hits.set(key, arr);
+    return arr.length <= maxPerWindow;
+  };
+}
+const canSendMessage = makeSocketLimiter(20, 10_000);       // 20 сообщений / 10 сек
+const canSendFriendRequest = makeSocketLimiter(10, 60_000); // 10 заявок / мин
+
 // ─── JWT Auth Middleware ──────────────────────────────────────────────────────
 function authMiddleware(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
@@ -202,9 +221,20 @@ function authMiddleware(req, res, next) {
 // ─── File Upload ───────────────────────────────────────────────────────────────
 if (!fs.existsSync('uploads')) fs.mkdirSync('uploads');
 
+const crypto = require('crypto');
+
+const EXT_BY_MIME = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+  'image/gif': '.gif'
+};
+
 const storage = multer.diskStorage({
   destination: 'uploads/',
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
+  // originalname от клиента НИКОГДА не участвует в имени файла на диске —
+  // иначе это path traversal / произвольное расширение (см. аудит, пункт 5)
+  filename: (req, file, cb) => cb(null, crypto.randomUUID() + (EXT_BY_MIME[file.mimetype] || ''))
 });
 
 const upload = multer({
@@ -359,6 +389,40 @@ app.post('/api/upload/avatar', authMiddleware, upload.single('avatar'), async (r
   }
 });
 
+// ─── Block / Unblock ──────────────────────────────────────────────────────────
+app.post('/api/users/:id/block', authMiddleware, async (req, res) => {
+  try {
+    const me = await User.findByPk(req.user.id);
+    if (!me) return res.status(404).json({ error: 'Пользователь не найден' });
+    const targetId = req.params.id;
+    if (targetId === me.id) return res.status(400).json({ error: 'Нельзя заблокировать самого себя' });
+
+    if (!me.blockedUsers.includes(targetId)) {
+      me.blockedUsers = [...me.blockedUsers, targetId];
+      me.friends = me.friends.filter(id => id !== targetId);
+      me.friendRequests = me.friendRequests.filter(id => id !== targetId);
+      await me.save();
+    }
+    res.json({ success: true, blockedUsers: me.blockedUsers });
+  } catch (err) {
+    console.error('Block error:', err);
+    res.status(500).json({ error: 'Ошибка блокировки' });
+  }
+});
+
+app.post('/api/users/:id/unblock', authMiddleware, async (req, res) => {
+  try {
+    const me = await User.findByPk(req.user.id);
+    if (!me) return res.status(404).json({ error: 'Пользователь не найден' });
+    me.blockedUsers = me.blockedUsers.filter(id => id !== req.params.id);
+    await me.save();
+    res.json({ success: true, blockedUsers: me.blockedUsers });
+  } catch (err) {
+    console.error('Unblock error:', err);
+    res.status(500).json({ error: 'Ошибка разблокировки' });
+  }
+});
+
 // ─── Message Routes ───────────────────────────────────────────────────────────
 app.get('/api/messages/:userId/:friendId', authMiddleware, async (req, res) => {
   try {
@@ -366,19 +430,33 @@ app.get('/api/messages/:userId/:friendId', authMiddleware, async (req, res) => {
       return res.status(403).json({ error: 'Нет доступа' });
     }
 
-    const { page = 1, limit = 50 } = req.query;
-    const pageNum  = Math.max(1, parseInt(page));
+    const { before, limit = 50 } = req.query;
     const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
 
     const key = getChatKey(req.params.userId, req.params.friendId);
+    const where = { chatKey: key };
+    // Курсорная пагинация: страница без "before" — последние N сообщений;
+    // "before" = createdAt самого старого уже загруженного сообщения —
+    // так листание истории не сбивается при параллельно приходящих новых сообщениях
+    // (в отличие от OFFSET/LIMIT, см. аудит, пункт 8)
+    if (before) where.createdAt = { [Op.lt]: new Date(before) };
+
     const messages = await Message.findAll({
-      where: { chatKey: key },
+      where,
       order: [['createdAt', 'DESC']],
-      offset: (pageNum - 1) * limitNum,
       limit: limitNum
     });
 
-    res.json(messages.reverse());
+    res.json(messages.reverse().map(m => ({
+      _id: m.id,
+      from: m.from,
+      to: m.to,
+      text: m.text,
+      image: m.image,
+      type: m.type,
+      deleted: m.deleted,
+      time: m.createdAt.toISOString() // раньше отдавался только createdAt — клиент ждал time/timestamp → "Invalid Date"
+    })));
   } catch (err) {
     console.error('Messages error:', err);
     res.status(500).json({ error: 'Ошибка загрузки сообщений' });
@@ -436,6 +514,14 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   const currentUserId = socket.user.id;
 
+  // Токен рано или поздно истекает — jwt.verify в io.use проверяет это только
+  // на подключении, поэтому соединение принудительно закрываем по exp (см. аудит, пункт 6)
+  let expiryTimer = null;
+  if (socket.user.exp) {
+    const msUntilExpiry = socket.user.exp * 1000 - Date.now();
+    expiryTimer = setTimeout(() => socket.disconnect(true), Math.max(msUntilExpiry, 0));
+  }
+
   (async () => {
     try {
       const user = await User.findByPk(currentUserId);
@@ -445,6 +531,14 @@ io.on('connection', (socket) => {
       socket.join(currentUserId);
       user.friends.forEach(fId => io.to(fId).emit('friendOnline', { id: currentUserId, nickname: user.nickname }));
 
+      // Счётчики непрочитанных сообщений, накопившихся, пока пользователь был оффлайн (аудит, пункт 7)
+      const unreadRows = await Message.findAll({
+        where: { to: currentUserId, read: false, deleted: false },
+        attributes: ['from', [sequelize.fn('COUNT', sequelize.col('id')), 'count']],
+        group: ['from']
+      });
+      const unreadCounts = Object.fromEntries(unreadRows.map(r => [r.from, parseInt(r.get('count'), 10)]));
+
       socket.emit('profile', {
         id:             user.id,
         nickname:       user.nickname,
@@ -452,7 +546,8 @@ io.on('connection', (socket) => {
         status:         user.status,
         bio:            user.bio,
         friends:        user.friends,
-        friendRequests: user.friendRequests
+        friendRequests: user.friendRequests,
+        unreadCounts
       });
       console.log(`[online] ${currentUserId}`);
     } catch (err) { console.error('Connection init error:', err); }
@@ -460,14 +555,24 @@ io.on('connection', (socket) => {
 
   socket.on('sendFriendRequest', async (toId) => {
     try {
+      if (!canSendFriendRequest(currentUserId)) return;
       const from = await User.findByPk(currentUserId);
-      const to   = await User.findByPk(toId);
-      if (!from || !to) return;
-      if (to.friends.includes(currentUserId))        return;
-      if (to.friendRequests.includes(currentUserId)) return;
-      if (to.blockedUsers.includes(currentUserId))   return;
-      to.friendRequests = [...to.friendRequests, currentUserId];
-      await to.save();
+      if (!from || !toId || toId === currentUserId) return;
+
+      // Атомарный UPDATE вместо "прочитать массив → проверить в JS → сохранить" —
+      // старая версия была уязвима к гонке при параллельных вызовах (аудит, пункт 3)
+      const affected = await sequelize.query(`
+        UPDATE "Users"
+        SET friend_requests = array_append(friend_requests, :fromId)
+        WHERE id = :toId
+          AND NOT (:fromId = ANY(friend_requests))
+          AND NOT (:fromId = ANY(friends))
+          AND NOT (:fromId = ANY(blocked_users))
+        RETURNING id
+      `, { replacements: { fromId: currentUserId, toId }, type: sequelize.QueryTypes.SELECT });
+
+      if (!affected || !affected.length) return; // уже есть заявка / уже друзья / заблокирован
+
       io.to(toId).emit('friendRequest', { id: currentUserId, nickname: from.nickname });
       socket.emit('requestSent', { id: toId });
     } catch (err) { console.error('Friend request error:', err); }
@@ -500,9 +605,12 @@ io.on('connection', (socket) => {
 
   socket.on('sendMessage', async ({ toId, text, image }) => {
     try {
+      if (!canSendMessage(currentUserId)) return socket.emit('rateLimited', 'sendMessage');
       if (!text?.trim() && !image) return;
       const me = await User.findByPk(currentUserId);
-      if (!me || !me.friends.includes(toId)) return;
+      const to = await User.findByPk(toId);
+      if (!me || !to || !me.friends.includes(toId)) return;
+      if (to.blockedUsers.includes(currentUserId) || me.blockedUsers.includes(toId)) return;
 
       const key = getChatKey(currentUserId, toId);
       const msg = await Message.create({
@@ -528,8 +636,19 @@ io.on('connection', (socket) => {
     } catch (err) { console.error('Send message error:', err); }
   });
 
+  socket.on('markRead', async (friendId) => {
+    try {
+      if (!friendId) return;
+      await Message.update(
+        { read: true },
+        { where: { chatKey: getChatKey(currentUserId, friendId), to: currentUserId, read: false } }
+      );
+    } catch (err) { console.error('Mark read error:', err); }
+  });
+
   socket.on('disconnect', async () => {
     delete onlineUsers[currentUserId];
+    if (expiryTimer) clearTimeout(expiryTimer);
     try {
       const user = await User.findByPk(currentUserId);
       if (user) user.friends.forEach(fId => io.to(fId).emit('friendOffline', currentUserId));
