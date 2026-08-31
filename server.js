@@ -45,12 +45,19 @@ const searchLimiter = rateLimit({
 });
 
 // ─── PostgreSQL Connection ────────────────────────────────────────────────────
+// Internal Database URL Render'а (вида dpg-xxxx-a без домена) работает по приватной
+// сети и НЕ использует SSL — если включить SSL для него, будет "Connection terminated
+// unexpectedly", как это и происходило. SSL нужен только для внешнего (External) URL.
+const dbUrl = process.env.DATABASE_URL || 'postgresql://user:password@localhost:5432/chatapp';
+const isInternalRenderUrl = /@dpg-[^.]+-a(:\d+)?\//.test(dbUrl) || /@dpg-[^./]+-a\//.test(dbUrl);
+const needsSSL = process.env.NODE_ENV === 'production' && !isInternalRenderUrl;
+
 const sequelize = new Sequelize(
-  process.env.DATABASE_URL || 'postgresql://user:password@localhost:5432/chatapp',
+  dbUrl,
   {
     dialect: 'postgres',
     logging: false,
-    dialectOptions: process.env.NODE_ENV === 'production' ? {
+    dialectOptions: needsSSL ? {
       ssl: {
         require: true,
         rejectUnauthorized: false
