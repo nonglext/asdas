@@ -139,8 +139,14 @@ $('btn-login').addEventListener('click', async () => {
 function saveAndLogin(user, userId, password, token) {
   me = user;
   localStorage.setItem('chatapp_id', userId);
-  localStorage.setItem('chatapp_pw', password);
+  // Раньше здесь же сохранялся пароль в открытом виде (chatapp_pw) и на каждой
+  // перезагрузке страницы он заново отправлялся на /api/login — это и давало
+  // "мигание" формы входа (страница ждала ответ сети, прежде чем показать чат),
+  // а хранить пароль в localStorage в принципе небезопасно. Теперь храним только
+  // токен и кэш профиля — вход при перезагрузке идёт по токену через сокет.
+  localStorage.removeItem('chatapp_pw');
   if (token) localStorage.setItem('chatapp_token', token);
+  localStorage.setItem('chatapp_profile', JSON.stringify(user));
   enterApp(user);
 }
 
@@ -160,6 +166,8 @@ $('btn-logout').addEventListener('click', () => {
   localStorage.removeItem('chatapp_id');
   localStorage.removeItem('chatapp_pw');
   localStorage.removeItem('chatapp_token');
+  localStorage.removeItem('chatapp_profile');
+  document.documentElement.classList.remove('has-session');
   $('friends-list').innerHTML = emptyFriendsHTML();
   $('requests-list').innerHTML = '';
   $('requests-section').style.display = 'none';
@@ -249,6 +257,7 @@ function closeDrop() { $('search-results').classList.remove('open'); $('search-i
 // ─── Socket events ────────────────────────────────────────────────────────────
 socket.on('profile', profile => {
   me = { ...me, ...profile };
+  localStorage.setItem('chatapp_profile', JSON.stringify(me));
   unread = { ...(profile.unreadCounts || {}) }; // раньше не подтягивались — не было бейджей после захода/реконнекта
   renderAv($('my-avatar'), me.nickname, me.avatar);
   $('my-nick').textContent = me.nickname;
@@ -728,26 +737,25 @@ window.addEventListener('resize', () => {
 });
 
 // ─── Auto-login ───────────────────────────────────────────────────────────────
-(async () => {
-  const savedId = localStorage.getItem('chatapp_id');
-  const savedPw = localStorage.getItem('chatapp_pw');
-  if (savedId && savedPw) {
+// Раньше при каждой загрузке страницы отправлялся POST /api/login с сохранённым
+// паролем, и пока не приходил ответ — на экране было видно форму входа/регистрации
+// (мигание). Теперь если есть токен и кэшированный профиль — сразу открываем
+// приложение и подключаем сокет; сокет сам провалидирует токен и досинхронизирует
+// актуальные данные через событие 'profile'. Если токен невалиден — сработает
+// уже существующий обработчик socket.on('connect_error').
+(() => {
+  const token = localStorage.getItem('chatapp_token');
+  const cached = localStorage.getItem('chatapp_profile');
+  if (token && cached) {
     try {
-      const res = await fetch('/api/login', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: savedId, password: savedPw })
-      });
-      if (res.ok) {
-        const d = await res.json();
-        me = d.user;
-        if (d.token) localStorage.setItem('chatapp_token', d.token);
-        enterApp(d.user);
-      } else {
-        localStorage.removeItem('chatapp_id');
-        localStorage.removeItem('chatapp_pw');
-        localStorage.removeItem('chatapp_token');
-      }
-    } catch(e) {}
+      me = JSON.parse(cached);
+      enterApp(me);
+    } catch (e) {
+      localStorage.removeItem('chatapp_profile');
+      document.documentElement.classList.remove('has-session');
+    }
+  } else {
+    document.documentElement.classList.remove('has-session');
   }
 })();
 
@@ -758,6 +766,8 @@ socket.on('connect_error', err => {
     localStorage.removeItem('chatapp_id');
     localStorage.removeItem('chatapp_pw');
     localStorage.removeItem('chatapp_token');
+    localStorage.removeItem('chatapp_profile');
+    document.documentElement.classList.remove('has-session');
     me = null;
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
     $('auth-screen').classList.add('active');

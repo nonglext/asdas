@@ -4,6 +4,18 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>ChatApp</title>
+  <!--
+    Если есть сохранённая сессия — сразу прячем экран входа/регистрации через CSS,
+    ДО того как браузер вообще успеет его отрисовать. app.js подключён внизу
+    страницы и раньше не успевал сработать до первой отрисовки — отсюда было
+    видно мигание формы входа перед автовходом в аккаунт.
+  -->
+  <script>
+    if (localStorage.getItem('chatapp_token') && localStorage.getItem('chatapp_profile')) {
+      document.documentElement.classList.add('has-session');
+    }
+  </script>
+  <style>.has-session #auth-screen { display: none !important; }</style>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css"/>
