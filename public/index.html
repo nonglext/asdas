@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ChatApp</title>
+  <!--
+    Если есть сохранённая сессия — сразу прячем экран входа/регистрации через CSS,
+    ДО того как браузер вообще успеет его отрисовать. app.js подключён внизу
+    страницы и раньше не успевал сработать до первой отрисовки — отсюда было
+    видно мигание формы входа перед автовходом в аккаунт.
+  -->
+  <script>
+    if (localStorage.getItem('chatapp_token') && localStorage.getItem('chatapp_profile')) {
+      document.documentElement.classList.add('has-session');
+    }
+  </script>
+  <style>.has-session #auth-screen { display: none !important; }</style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css"/>
+</head>
+<body>
+
+<!-- AUTH -->
+<div id="auth-screen" class="screen active">
+  <div class="auth-bg">
+    <div class="auth-blob b1"></div>
+    <div class="auth-blob b2"></div>
+    <div class="auth-blob b3"></div>
+  </div>
+  <div class="auth-box">
+    <div class="auth-logo">
+      <div class="auth-logo-icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+          <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" fill="currentColor"/>
+        </svg>
+      </div>
+      <span class="auth-logo-text">ChatApp</span>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="login">Войти</button>
+      <button class="tab" data-tab="register">Регистрация</button>
+    </div>
+
+    <div id="tab-login" class="tab-content active">
+      <div class="field">
+        <label>Ваш ID</label>
+        <input type="text" id="login-id" placeholder="cool_user123" maxlength="32" autocomplete="username"/>
+      </div>
+      <div class="field">
+        <label>Пароль</label>
+        <div class="pw-wrap">
+          <input type="password" id="login-pw" placeholder="••••••••" maxlength="64" autocomplete="current-password"/>
+          <button class="pw-toggle" data-target="login-pw" type="button">
+            <svg class="eye-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+      <button id="btn-login" class="btn-primary">Войти</button>
+    </div>
+
+    <div id="tab-register" class="tab-content">
+      <div class="field">
+        <label>Придумай ID <span class="hint">только a-z, 0-9, _</span></label>
+        <input type="text" id="reg-id" placeholder="my_cool_id" maxlength="32" autocomplete="username"/>
+      </div>
+      <div class="field">
+        <label>Никнейм <span class="hint">необязательно</span></label>
+        <input type="text" id="reg-nick" placeholder="Как тебя зовут?" maxlength="32"/>
+      </div>
+      <div class="field">
+        <label>Пароль <span class="hint">мин. 4 символа</span></label>
+        <div class="pw-wrap">
+          <input type="password" id="reg-pw" placeholder="••••••••" maxlength="64" autocomplete="new-password"/>
+          <button class="pw-toggle" data-target="reg-pw" type="button">
+            <svg class="eye-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+      <button id="btn-register" class="btn-primary">Зарегистрироваться</button>
+    </div>
+
+    <div id="auth-error" class="error-msg"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app-screen" class="screen">
+  <aside class="sidebar">
+    <div class="sidebar-top">
+      <div class="me-card" id="me-card" title="Редактировать профиль">
+        <div class="me-avatar-wrap">
+          <div class="me-avatar" id="my-avatar"></div>
+        </div>
+        <div class="me-info">
+          <div class="me-nick" id="my-nick">—</div>
+          <div class="me-id" id="my-id">—</div>
+        </div>
+        <button id="btn-logout" class="icon-btn logout-btn" title="Выйти">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+        </button>
+      </div>
+
+      <div class="search-box">
+        <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input type="text" id="search-input" placeholder="Поиск по ID или нику…"/>
+        <div id="search-results" class="search-drop"></div>
+      </div>
+    </div>
+
+    <div class="sidebar-body">
+      <div id="requests-section" style="display:none">
+        <div class="section-label">Запросы <span id="req-badge" class="badge"></span></div>
+        <div id="requests-list"></div>
+      </div>
+      <div class="section-label">Чаты</div>
+      <div id="friends-list">
+        <div class="empty-state">
+          <div class="empty-icon">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+          </div>
+          <div class="empty-title">Нет контактов</div>
+          <div class="empty-sub">Найди кого-нибудь через поиск</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="chat-main">
+    <div id="chat-placeholder" class="chat-empty">
+      <div class="chat-empty-icon">
+        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+      </div>
+      <div class="chat-empty-title">Выберите чат</div>
+      <div class="chat-empty-sub">чтобы начать общение</div>
+    </div>
+
+    <div id="chat-window" class="chat-window" style="display:none">
+      <div class="chat-head">
+        <button class="icon-btn back-btn" id="btn-back" style="display:none">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <div class="chat-head-avatar" id="chat-avatar"></div>
+        <div class="chat-head-info" id="chat-head-click" style="cursor:pointer">
+          <div class="chat-head-nick" id="chat-nick">—</div>
+          <div class="chat-head-status" id="chat-status">офлайн</div>
+        </div>
+      </div>
+      <div class="messages" id="messages"></div>
+      <div class="msg-bar">
+        <input type="text" id="msg-input" placeholder="Написать сообщение…" maxlength="1000"/>
+        <button id="btn-send" class="send-btn" title="Отправить">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path d="M22 2L11 13" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+            <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="white" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- View Profile Modal -->
+<div id="profile-modal" class="modal-overlay" style="display:none">
+  <div class="modal-box">
+    <button class="modal-close-btn" onclick="closeProfileModal()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+    <div class="modal-profile-header">
+      <div class="modal-avatar" id="profile-modal-avatar"></div>
+      <div class="modal-profile-name" id="profile-modal-nick">—</div>
+      <div class="modal-profile-id" id="profile-modal-id">—</div>
+      <div class="modal-online-badge" id="profile-modal-online"></div>
+    </div>
+    <div class="modal-profile-body">
+      <div class="profile-info-row" id="profile-modal-status-row">
+        <span class="profile-info-label">Статус</span>
+        <span class="profile-info-value" id="profile-modal-status">—</span>
+      </div>
+      <div class="profile-info-row" id="profile-modal-bio-row">
+        <span class="profile-info-label">О себе</span>
+        <span class="profile-info-value" id="profile-modal-bio">—</span>
+      </div>
+    </div>
+    <button id="btn-add-friend" class="btn-primary" style="width:100%;margin-top:8px">Добавить в друзья</button>
+    <button id="btn-block-user" class="btn-secondary" style="width:100%;margin-top:8px">Заблокировать</button>
+  </div>
+</div>
+
+<!-- Edit Profile Modal -->
+<div id="edit-profile-modal" class="modal-overlay" style="display:none">
+  <div class="modal-box">
+    <button class="modal-close-btn" onclick="closeEditProfileModal()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+    <h2 class="modal-title">Мой профиль</h2>
+    <div class="edit-avatar-wrap">
+      <div class="edit-avatar" id="edit-avatar"></div>
+      <label class="avatar-upload-btn" title="Загрузить фото">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        <input type="file" id="avatar-input" accept="image/*" style="display:none"/>
+      </label>
+    </div>
+    <div class="field">
+      <label>Никнейм</label>
+      <input type="text" id="edit-nick" maxlength="32" placeholder="Как тебя зовут?"/>
+    </div>
+    <div class="field">
+      <label>Статус</label>
+      <input type="text" id="edit-status" maxlength="100" placeholder="Привет! Я использую ChatApp"/>
+    </div>
+    <div class="field">
+      <label>О себе</label>
+      <textarea id="edit-bio" maxlength="200" rows="3" placeholder="Расскажи о себе…"></textarea>
+    </div>
+    <div class="edit-profile-actions">
+      <button class="btn-secondary" onclick="closeEditProfileModal()">Отмена</button>
+      <button id="btn-save-profile" class="btn-primary">Сохранить</button>
+    </div>
+    <button id="btn-open-blocked" class="btn-link-row" type="button">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M4.9 4.9l14.2 14.2"/></svg>
+      Заблокированные пользователи
+    </button>
+  </div>
+</div>
+
+<!-- Blocked Users Modal -->
+<div id="blocked-users-modal" class="modal-overlay" style="display:none">
+  <div class="modal-box">
+    <button class="modal-close-btn" onclick="closeBlockedUsersModal()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+    <h2 class="modal-title">Заблокированные пользователи</h2>
+    <div id="blocked-users-list" class="blocked-users-list"></div>
+  </div>
+</div>
+
+<!-- Delete Confirm -->
+<div id="delete-confirm" class="delete-confirm-popup" style="display:none">
+  <span>Удалить сообщение?</span>
+  <button id="btn-confirm-delete" class="btn-danger-sm">Удалить</button>
+  <button onclick="closeDeleteConfirm()" class="btn-ghost-sm">Отмена</button>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>
