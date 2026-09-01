@@ -6,6 +6,7 @@ let friends = {};
 let unread = {};
 let pendingDeleteId = null;
 let chatRequestSeq = 0; // счётчик для защиты openChat от гонки при быстром переключении чатов
+let profileRequestSeq = 0; // защита showUserProfile от гонки при быстром переключении профилей
 
 const MAX_MESSAGE_LENGTH = 4000;
 const MAX_AVATAR_SIZE = 5 * 1024 * 1024; // должно совпадать с лимитом multer на сервере
@@ -28,12 +29,23 @@ function connectSocket() {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function av(nick) { return nick ? nick[0].toUpperCase() : '?'; }
 function esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 function fmtTime(iso) {
   return new Date(iso).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
 }
 function setErr(msg) { $('auth-error').textContent = msg || ''; }
+
+// Закрывает все модалки поверх экрана — используется при принудительном разлогине,
+// чтобы истёкший токен (401 / socket 'connect_error') не оставлял модалку висящей
+// поверх экрана входа (аудит, пункт 1).
+function closeAllModals() {
+  ['profile-modal', 'edit-profile-modal', 'blocked-users-modal', 'delete-confirm'].forEach(id => {
+    const el = $(id);
+    if (el) el.style.display = 'none';
+  });
+  pendingDeleteId = null;
+}
 
 function forceLogoutToLogin(message) {
   // Общий выход при истёкшем/невалидном токене — используется и REST-, и socket-путём,
@@ -45,6 +57,7 @@ function forceLogoutToLogin(message) {
   localStorage.removeItem('chatapp_token');
   localStorage.removeItem('chatapp_profile');
   document.documentElement.classList.remove('has-session');
+  closeAllModals();
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   $('auth-screen').classList.add('active');
   if (message) setErr(message);
@@ -117,6 +130,7 @@ $('btn-register').addEventListener('click', async () => {
 
   if (!userId || userId.length < 3) return setErr('ID минимум 3 символа');
   if (!/^[a-z0-9_]+$/.test(userId)) return setErr('ID: только a-z, 0-9, _');
+  if (!nickname) return setErr('Введите никнейм');
   if (!password || password.length < 4) return setErr('Пароль минимум 4 символа');
 
   const btn = $('btn-register');
@@ -313,8 +327,14 @@ async function fetchNicknames(ids) {
 socket.on('friendRequest', req => {
   if (!me) return;
   if (!me.friendRequests) me.friendRequests = [];
-  me.friendRequests.push({ id: req.id, nickname: req.nickname });
-  renderRequests(me.friendRequests);
+  // Защита от дублей: сервер может повторно прислать это событие при реконнекте,
+  // а актуальный список заявок уже приходит в 'profile' — без проверки заявка
+  // могла задвоиться в UI (аудит, пункт 3).
+  const already = me.friendRequests.some(r => (r.id || r) === req.id);
+  if (!already) {
+    me.friendRequests.push({ id: req.id, nickname: req.nickname });
+    renderRequests(me.friendRequests);
+  }
 });
 socket.on('requestSent', () => {});
 socket.on('friendRequestError', ({ reason }) => {
@@ -379,7 +399,7 @@ socket.on('newMessage', ({ chatWith, msg }) => {
   else { unread[chatWith] = (unread[chatWith]||0) + 1; refreshFriendItem(chatWith); }
 });
 socket.on('messageDeleted', ({ messageId, chatWith }) => {
-  const wrap = document.querySelector(`[data-msgid="${messageId}"]`);
+  const wrap = document.querySelector(`[data-msgid="${CSS.escape(messageId)}"]`);
   if (wrap) {
     const bubble = wrap.querySelector('.msg');
     if (bubble) {
@@ -461,12 +481,16 @@ function renderFriendsList() {
 }
 
 function buildFriendEl(id) {
+  // Раньше здесь искался старый DOM-узел для "переиспользования", но оба места
+  // вызова (renderFriendsList — после innerHTML='', refreshFriendItem — после
+  // old.remove()) уже гарантированно его удаляют, так что `old` всегда был null
+  // и ветка переиспользования никогда не срабатывала (аудит, пункт 4). Убрали
+  // мёртвый код — элемент всегда создаётся заново, поведение не изменилось.
   const f = friends[id]; if (!f) return;
   const list = $('friends-list');
-  const old = list.querySelector(`[data-fid="${id}"]`);
   const u = unread[id]||0;
 
-  const el = old || document.createElement('div');
+  const el = document.createElement('div');
   el.className = 'friend-item' + (activeFriend===id?' active':'');
   el.dataset.fid = id;
   el.innerHTML = `
@@ -495,12 +519,12 @@ function buildFriendEl(id) {
   avEl.insertBefore(span, dot);
 
   el.onclick = () => openChat(id);
-  if (!old) list.appendChild(el);
+  list.appendChild(el);
 }
 
 function refreshFriendItem(id) {
   const list = $('friends-list');
-  const old = list.querySelector(`[data-fid="${id}"]`);
+  const old = list.querySelector(`[data-fid="${CSS.escape(id)}"]`);
   if (old) old.remove();
   buildFriendEl(id);
 }
@@ -653,10 +677,16 @@ $('chat-head-click').addEventListener('click', () => {
 });
 
 async function showUserProfile(userId) {
+  // Защита от гонки, аналогично openChat: быстрые клики по разным профилям подряд
+  // не должны дать более старому ответу перезаписать уже открытый новый профиль
+  // (аудит, пункт 5).
+  const requestSeq = ++profileRequestSeq;
   try {
     const res = await authFetch('/api/profile/' + encodeURIComponent(userId));
+    if (requestSeq !== profileRequestSeq) return;
     if (!res.ok) return;
     const u = await res.json();
+    if (requestSeq !== profileRequestSeq) return;
 
     renderAv($('profile-modal-avatar'), u.nickname, u.avatar);
     $('profile-modal-nick').textContent = u.nickname;
@@ -702,43 +732,49 @@ async function showUserProfile(userId) {
       blockBtn.disabled = false;
       blockBtn.className = 'btn-secondary' + (isBlocked ? '' : ' btn-danger-outline');
       blockBtn.textContent = isBlocked ? 'Разблокировать' : 'Заблокировать';
-      blockBtn.onclick = async () => {
-        if (isBlocked) {
-          try {
-            const res = await authFetch(`/api/users/${encodeURIComponent(userId)}/unblock`, { method: 'POST' });
-            if (!res.ok) return alert('Ошибка разблокировки');
-            if (me.blockedUsers) me.blockedUsers = me.blockedUsers.filter(id => id !== userId);
-            showUserProfile(userId); // перерисовать модалку с обновлённым состоянием кнопки
-          } catch (e) { alert('Ошибка сети'); }
-          return;
-        }
-        if (!confirm(`Заблокировать @${userId}?`)) return;
-        try {
-          const res = await authFetch(`/api/users/${encodeURIComponent(userId)}/block`, { method: 'POST' });
-          if (!res.ok) {
-            const d = await res.json().catch(() => ({}));
-            return alert(d.error || 'Ошибка блокировки');
-          }
-          if (!me.blockedUsers) me.blockedUsers = [];
-          if (!me.blockedUsers.includes(userId)) me.blockedUsers = [...me.blockedUsers, userId];
-          if (me.friends) me.friends = me.friends.filter(id => id !== userId);
-          delete friends[userId];
-          delete unread[userId];
-          renderFriendsList();
-          if (activeFriend === userId) {
-            activeFriend = null;
-            $('chat-placeholder').style.display = 'flex';
-            $('chat-window').style.display = 'none';
-          }
-          blockBtn.textContent = 'Разблокировать';
-          blockBtn.className = 'btn-secondary';
-          blockBtn.onclick = () => showUserProfile(userId);
-        } catch (e) { alert('Ошибка сети'); }
-      };
+      // Раньше после успешной блокировки кнопка вешала onclick, который просто
+      // заново вызывал showUserProfile(userId) — это не разблокировало пользователя,
+      // а лишь перерисовывало модалку. Реальный unblock срабатывал только со
+      // второго клика, когда уже отрабатывала ветка isBlocked ниже. Теперь both
+      // ветки (block/unblock) используют один и тот же обработчик performUnblock/
+      // performBlock, назначенный один раз (аудит, пункт 2).
+      blockBtn.onclick = () => isBlocked ? performUnblock(userId) : performBlock(userId);
     }
 
     $('profile-modal').style.display = 'flex';
   } catch(e) {}
+}
+
+async function performUnblock(userId) {
+  try {
+    const res = await authFetch(`/api/users/${encodeURIComponent(userId)}/unblock`, { method: 'POST' });
+    if (!res.ok) return alert('Ошибка разблокировки');
+    if (me.blockedUsers) me.blockedUsers = me.blockedUsers.filter(id => id !== userId);
+    showUserProfile(userId); // перерисовать модалку с обновлённым состоянием кнопки
+  } catch (e) { alert('Ошибка сети'); }
+}
+
+async function performBlock(userId) {
+  if (!confirm(`Заблокировать @${userId}?`)) return;
+  try {
+    const res = await authFetch(`/api/users/${encodeURIComponent(userId)}/block`, { method: 'POST' });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      return alert(d.error || 'Ошибка блокировки');
+    }
+    if (!me.blockedUsers) me.blockedUsers = [];
+    if (!me.blockedUsers.includes(userId)) me.blockedUsers = [...me.blockedUsers, userId];
+    if (me.friends) me.friends = me.friends.filter(id => id !== userId);
+    delete friends[userId];
+    delete unread[userId];
+    renderFriendsList();
+    if (activeFriend === userId) {
+      activeFriend = null;
+      $('chat-placeholder').style.display = 'flex';
+      $('chat-window').style.display = 'none';
+    }
+    showUserProfile(userId); // перерисовать модалку с кнопкой "Разблокировать"
+  } catch (e) { alert('Ошибка сети'); }
 }
 
 function closeProfileModal() { $('profile-modal').style.display = 'none'; }
@@ -890,9 +926,16 @@ function renderBlockedUsersList(users) {
 
 // ─── Mobile back button ───────────────────────────────────────────────────────
 $('btn-back')?.addEventListener('click', () => {
+  // Раньше только сбрасывался activeFriend и переключались .sidebar/.chat-main,
+  // но #chat-window/#chat-placeholder и .active-класс в списке друзей не
+  // приводились в порядок — при возврате на десктопную ширину было видно
+  // рассинхронизированное состояние (аудит, пункт 6).
   activeFriend = null;
   document.querySelector('.sidebar').classList.remove('hidden');
   document.querySelector('.chat-main').classList.add('hidden');
+  document.querySelectorAll('.friend-item').forEach(el => el.classList.remove('active'));
+  $('chat-window').style.display = 'none';
+  $('chat-placeholder').style.display = 'flex';
 });
 
 // Handle resize
@@ -931,6 +974,13 @@ socket.on('connect_error', err => {
   console.error('Socket error:', err);
   if (err.message === 'Unauthorized') {
     forceLogoutToLogin('Сессия истекла, войдите снова');
+  } else {
+    showTransientNotice('Нет соединения с сервером');
   }
 });
-socket.on('disconnect', reason => console.warn('Socket disconnected:', reason));
+socket.on('disconnect', reason => {
+  console.warn('Socket disconnected:', reason);
+  if (reason !== 'io client disconnect') {
+    showTransientNotice('Соединение потеряно, переподключение…');
+  }
+});
