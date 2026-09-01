@@ -13,12 +13,23 @@ const winston = require('winston');
 
 const app = express();
 const server = http.createServer(app);
+
+// FIX #13: пустой CLIENT_URL раньше молча означал "разрешить любой Origin" —
+// это открытый CORS в проде, если переменная забыта в .env. Оставляем то же
+// поведение для совместимости (нужно для локальной разработки без .env), но
+// теперь явно предупреждаем в логах, аналогично предупреждению про JWT_SECRET.
+const corsAllowList = (process.env.CLIENT_URL || '').split(',').map(s => s.trim()).filter(Boolean);
+if (corsAllowList.length === 0) {
+  // логгер объявлен ниже, поэтому предупреждение пишем через console здесь,
+  // а повторно логируем через winston после его инициализации
+  console.warn('⚠️  CLIENT_URL не задан в .env — CORS разрешает ЛЮБОЙ origin!');
+}
+
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
-      const allowList = (process.env.CLIENT_URL || '').split(',').map(s => s.trim()).filter(Boolean);
       if (!origin) return callback(null, true);
-      if (allowList.length === 0 || allowList.includes(origin)) return callback(null, true);
+      if (corsAllowList.length === 0 || corsAllowList.includes(origin)) return callback(null, true);
       callback(new Error('CORS blocked'));
     },
     methods: ['GET', 'POST']
@@ -46,6 +57,10 @@ const logger = winston.createLogger({
     new winston.transports.File({ filename: 'combined.log' })
   ]
 });
+
+if (corsAllowList.length === 0) {
+  logger.warn('⚠️  CLIENT_URL не задан в .env — CORS разрешает ЛЮБОЙ origin! Задайте CLIENT_URL в проде.');
+}
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret_in_production';
 const SALT_ROUNDS = 12;
@@ -87,7 +102,10 @@ const searchLimiter = rateLimit({
 
 // ─── PostgreSQL Connection ────────────────────────────────────────────────────
 const dbUrl = process.env.DATABASE_URL || 'postgresql://user:password@localhost:5432/chatapp';
-const isInternalRenderUrl = /@dpg-[^.]+-a(:\d+)?\//.test(dbUrl) || /@dpg-[^./]+-a\//.test(dbUrl);
+// FIX (minor cleanup): было два почти идентичных регулярных выражения подряд —
+// второе ничего не добавляло к первому (тот уже покрывает случай без порта за
+// счёт необязательной группы `(:\d+)?`). Оставили одно.
+const isInternalRenderUrl = /@dpg-[^.]+-a(:\d+)?\//.test(dbUrl);
 const needsSSL = process.env.NODE_ENV === 'production' && !isInternalRenderUrl;
 
 const sequelize = new Sequelize(dbUrl, {
@@ -226,6 +244,11 @@ function deleteUploadedFile(publicPath) {
   });
 }
 
+// Формат путей, которые реально мог выдать наш /api/upload/avatar (см. multer storage ниже:
+// crypto.randomUUID() + расширение из EXT_BY_MIME). Используется, чтобы ограничить,
+// какие значения можно записать в поле avatar через /api/profile/update (FIX #12).
+const AVATAR_PATH_RE = /^\/uploads\/[0-9a-f-]{36}\.(jpg|png|webp|gif)$/;
+
 // FIX #5: добавлена периодическая очистка Map — в оригинале ключи (userId) накапливались
 // вечно даже для давно неактивных пользователей → утечка памяти при большой аудитории
 function makeSocketLimiter(maxPerWindow, windowMs) {
@@ -334,9 +357,18 @@ app.post('/api/register', authLimiter, async (req, res) => {
 app.post('/api/login', authLimiter, async (req, res) => {
   try {
     const { userId, password } = req.body;
-    const id   = (userId || '').trim().toLowerCase();
-    const user = await User.findByPk(id);
+    const id = (userId || '').trim().toLowerCase();
 
+    // FIX #11: раньше длина пароля никак не ограничивалась перед bcrypt.compare.
+    // Атакующий мог прислать пароль в несколько мегабайт (лимит express.json — 10mb)
+    // и заставить bcrypt хэшировать его целиком на каждый запрос — ощутимый CPU-DoS,
+    // особенно в обход authLimiter, если ID существующий и запросы идут медленно
+    // но со здоровенным телом. Раньше это ограничение было только на регистрации.
+    if (typeof password !== 'string' || password.length > MAX_PASSWORD_LENGTH) {
+      return res.status(401).json({ error: 'Неверный ID или пароль' });
+    }
+
+    const user = await User.findByPk(id);
     if (!user) return res.status(401).json({ error: 'Неверный ID или пароль' });
 
     const match = await bcrypt.compare(password, user.passwordHash);
@@ -424,8 +456,15 @@ app.post('/api/profile/update', authMiddleware, async (req, res) => {
     if (bio !== undefined && bio.length > MAX_BIO_LENGTH) {
       return res.status(400).json({ error: `Описание максимум ${MAX_BIO_LENGTH} символов` });
     }
-    if (avatar !== undefined && typeof avatar === 'string' && avatar.length > MAX_IMAGE_BASE64_CHARS) {
-      return res.status(400).json({ error: 'Аватар слишком большой' });
+    // FIX #12: раньше это поле принимало ЛЮБУЮ строку без проверки — клиент им
+    // не пользуется (аватар грузится только через /api/upload/avatar), но API
+    // как таковое позволяло выставить себе avatar = произвольный внешний URL.
+    // Это рендерится как <img src="..."> у всех, кто открывает профиль/чат/список
+    // друзей — то есть давало возможность подставить трекинг-пиксель и получать
+    // IP/UA всех, кто просто посмотрел на профиль. Теперь принимаем только null
+    // (сброс аватара) или путь, реально выданный нашим аплоад-эндпоинтом.
+    if (avatar !== undefined && avatar !== null && !(typeof avatar === 'string' && AVATAR_PATH_RE.test(avatar))) {
+      return res.status(400).json({ error: 'Аватар можно изменить только через загрузку файла' });
     }
 
     const user = await User.findByPk(userId);
@@ -714,6 +753,16 @@ io.on('connection', (socket) => {
       if (from.blockedUsers.includes(toId))          return socket.emit('friendRequestError', { toId, reason: 'blocked' });
       if (to.friendRequests.length >= MAX_FRIEND_REQUESTS) return socket.emit('friendRequestError', { toId, reason: 'target_limit_reached' });
 
+      // FIX #10 (КРИТИЧЕСКИЙ, race condition): было
+      //   AND array_length(friend_requests, 1) IS DISTINCT FROM :maxRequests
+      // "IS DISTINCT FROM" — это проверка НЕравенства, а не "меньше лимита".
+      // Условие блокировало добавление только если длина массива РОВНО равна
+      // MAX_FRIEND_REQUESTS (200), но пропускало добавление при ЛЮБОЙ другой
+      // длине — в том числе 201, 300 и т.д., если лимит вдруг был превышен
+      // (например, из-за гонки двух параллельных запросов, прошедших проверку
+      // выше до того, как первый успел записаться). Т.е. атомарная проверка
+      // лимита в БД фактически не работала. Заменено на настоящее "меньше
+      // лимита", с учётом NULL для пустого массива (array_length от [] = NULL).
       const affected = await sequelize.query(`
         UPDATE "users"
         SET friend_requests = array_append(friend_requests, :fromId)
@@ -721,7 +770,7 @@ io.on('connection', (socket) => {
           AND NOT (:fromId = ANY(friend_requests))
           AND NOT (:fromId = ANY(friends))
           AND NOT (:fromId = ANY(blocked_users))
-          AND array_length(friend_requests, 1) IS DISTINCT FROM :maxRequests
+          AND (array_length(friend_requests, 1) IS NULL OR array_length(friend_requests, 1) < :maxRequests)
         RETURNING id
       `, {
         replacements: { fromId: currentUserId, toId, maxRequests: MAX_FRIEND_REQUESTS },
@@ -815,16 +864,24 @@ io.on('connection', (socket) => {
   });
 
   // ─── Messages ─────────────────────────────────────────────────────────────
-  socket.on('sendMessage', async ({ toId, text, image }) => {
+  socket.on('sendMessage', async ({ toId, text, image } = {}) => {
     try {
       if (!canSendMessage(currentUserId)) return socket.emit('rateLimited', 'sendMessage');
+
+      // FIX #14: раньше text/image не проверялись на тип. Строка вида
+      // text.trim() падала с TypeError, если text — не строка (число, объект,
+      // массив и т.п.), и обработчик тихо завершался в catch без ответа
+      // клиенту — сообщение просто "пропадало" без объяснения.
+      if (text !== undefined && typeof text !== 'string') return;
+      if (image !== undefined && image !== null && typeof image !== 'string') return;
+
       if (!text?.trim() && !image) return;
 
       // FIX #7: валидация длины текста
       if (text && text.trim().length > MAX_TEXT_LENGTH) {
         return socket.emit('sendMessageError', { toId, reason: 'text_too_long' });
       }
-      if (image && typeof image === 'string' && image.length > MAX_IMAGE_BASE64_CHARS) {
+      if (image && image.length > MAX_IMAGE_BASE64_CHARS) {
         return socket.emit('sendMessageError', { toId, reason: 'image_too_large' });
       }
 
