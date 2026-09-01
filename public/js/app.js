@@ -5,6 +5,11 @@ let activeFriend = null;
 let friends = {};
 let unread = {};
 let pendingDeleteId = null;
+let chatRequestSeq = 0; // счётчик для защиты openChat от гонки при быстром переключении чатов
+
+const MAX_MESSAGE_LENGTH = 4000;
+const MAX_AVATAR_SIZE = 5 * 1024 * 1024; // должно совпадать с лимитом multer на сервере
+const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
 // Раньше: const socket = io()  — без токена. Сервер (io.use в server.js) требует
 // socket.handshake.auth.token и без него сразу рвёт соединение с 'Unauthorized'.
@@ -30,16 +35,39 @@ function fmtTime(iso) {
 }
 function setErr(msg) { $('auth-error').textContent = msg || ''; }
 
+function forceLogoutToLogin(message) {
+  // Общий выход при истёкшем/невалидном токене — используется и REST-, и socket-путём,
+  // чтобы поведение не расходилось (раньше так делал только socket 'connect_error').
+  me = null; activeFriend = null; friends = {}; unread = {};
+  if (socket.connected) socket.disconnect();
+  localStorage.removeItem('chatapp_id');
+  localStorage.removeItem('chatapp_pw');
+  localStorage.removeItem('chatapp_token');
+  localStorage.removeItem('chatapp_profile');
+  document.documentElement.classList.remove('has-session');
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  $('auth-screen').classList.add('active');
+  if (message) setErr(message);
+}
+
 // ─── Auth Fetch (всегда отправляет JWT-токен) ──────────────────────────────────
-function authFetch(url, options = {}) {
+// Раньше 401 от REST-запросов (например, из-за истёкшего токена) никак не
+// обрабатывался централизованно — только socket 'connect_error' мог разлогинить.
+// Из-за этого REST-запросы могли молча падать с невнятной ошибкой, пока сокет
+// ещё не переподключился. Теперь любой 401 сразу ведёт на экран входа.
+async function authFetch(url, options = {}) {
   const token = localStorage.getItem('chatapp_token');
-  return fetch(url, {
+  const res = await fetch(url, {
     ...options,
     headers: {
       ...(options.headers || {}),
       ...(token ? { 'Authorization': 'Bearer ' + token } : {})
     }
   });
+  if (res.status === 401 && me) {
+    forceLogoutToLogin('Сессия истекла, войдите снова');
+  }
+  return res;
 }
 
 // Render avatar: image or letter
@@ -161,20 +189,12 @@ function enterApp(user) {
 
 // ─── Logout ───────────────────────────────────────────────────────────────────
 $('btn-logout').addEventListener('click', () => {
-  me = null; activeFriend = null; friends = {}; unread = {};
-  if (socket.connected) socket.disconnect();
-  localStorage.removeItem('chatapp_id');
-  localStorage.removeItem('chatapp_pw');
-  localStorage.removeItem('chatapp_token');
-  localStorage.removeItem('chatapp_profile');
-  document.documentElement.classList.remove('has-session');
+  forceLogoutToLogin();
   $('friends-list').innerHTML = emptyFriendsHTML();
   $('requests-list').innerHTML = '';
   $('requests-section').style.display = 'none';
   $('chat-window').style.display = 'none';
   $('chat-placeholder').style.display = '';
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  $('auth-screen').classList.add('active');
 });
 
 function emptyFriendsHTML() {
@@ -273,15 +293,20 @@ socket.on('profile', profile => {
 });
 
 async function fetchNicknames(ids) {
-  for (const id of ids) {
-    try {
-      const res = await authFetch('/api/profile/' + encodeURIComponent(id));
-      if (res.ok) {
-        const u = await res.json();
-        friends[id] = { id, nickname: u.nickname, avatar: u.avatar, online: u.online };
-      }
-    } catch(e) {}
-  }
+  // Раньше запросы шли последовательно (await в цикле) — при большом списке друзей
+  // это N последовательных round-trip'ов подряд. Грузим параллельно.
+  const results = await Promise.allSettled(
+    ids.map(id => authFetch('/api/profile/' + encodeURIComponent(id)).then(async res => {
+      if (!res.ok) throw new Error('not ok');
+      return { id, data: await res.json() };
+    }))
+  );
+  results.forEach(r => {
+    if (r.status === 'fulfilled') {
+      const { id, data: u } = r.value;
+      friends[id] = { id, nickname: u.nickname, avatar: u.avatar, online: u.online };
+    }
+  });
   renderFriendsList();
 }
 
@@ -307,6 +332,8 @@ socket.on('friendRequestError', ({ reason }) => {
     already_friends: 'Вы уже друзья',
     already_sent: 'Заявка уже отправлена',
     blocked: 'Невозможно отправить заявку',
+    limit_reached: 'Достигнут лимит заявок/друзей',
+    target_limit_reached: 'У пользователя переполнен список заявок',
     server_error: 'Ошибка сервера'
   };
   alert(messages[reason] || 'Не удалось отправить заявку');
@@ -363,6 +390,38 @@ socket.on('messageDeleted', ({ messageId, chatWith }) => {
     if (delBtn) delBtn.remove();
   }
 });
+// Раньше сервер эмитил 'rateLimited' при спаме сообщений, а клиент это событие
+// вообще не слушал — пользователь просто не понимал, почему сообщение "зависло".
+socket.on('rateLimited', (kind) => {
+  if (kind === 'sendMessage') {
+    showTransientNotice('Слишком много сообщений, подождите немного');
+  }
+});
+// Новое серверное событие (лимит размера картинки в sendMessage) — раньше клиент
+// его не обрабатывал вовсе, сообщение просто пропадало без объяснения.
+socket.on('sendMessageError', ({ reason }) => {
+  if (reason === 'image_too_large') {
+    showTransientNotice('Изображение слишком большое');
+  } else {
+    showTransientNotice('Не удалось отправить сообщение');
+  }
+});
+
+function showTransientNotice(text) {
+  // Лёгкий неблокирующий тост вместо alert() — не прерывает набор текста в поле ввода.
+  // Стилизация — через класс .transient-notice в styles.css, а не inline (см. аудит стиля, пункт 5).
+  let el = $('transient-notice');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'transient-notice';
+    el.className = 'transient-notice';
+    document.body.appendChild(el);
+  }
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(el._hideTimer);
+  el._hideTimer = setTimeout(() => { el.classList.remove('show'); }, 2500);
+}
 
 // ─── Render ───────────────────────────────────────────────────────────────────
 function renderRequests(reqs) {
@@ -479,10 +538,17 @@ async function openChat(id) {
 
   $('messages').innerHTML = '<div style="text-align:center;color:var(--text3);padding:24px;font-size:13px">Загрузка…</div>';
 
+  // Защита от гонки: если пользователь быстро переключился на другой чат,
+  // ответ на более старый запрос не должен перезаписать уже открытый новый чат
+  // (раньше при быстром клике по двум друзьям подряд могла отрисоваться чужая история).
+  const requestSeq = ++chatRequestSeq;
+
   try {
     const res = await authFetch(`/api/messages/${me.id}/${id}`);
+    if (requestSeq !== chatRequestSeq) return; // чат уже сменился — этот ответ устарел
     if (!res.ok) throw new Error();
     const history = await res.json();
+    if (requestSeq !== chatRequestSeq) return;
     $('messages').innerHTML = '';
     if (!history || !history.length) {
       $('messages').innerHTML = '<div style="text-align:center;color:var(--text3);padding:24px;font-size:13px">Напишите первым! 👋</div>';
@@ -491,6 +557,7 @@ async function openChat(id) {
     }
     scrollMsgs();
   } catch(e) {
+    if (requestSeq !== chatRequestSeq) return;
     $('messages').innerHTML = '<div style="text-align:center;color:var(--red);padding:24px;font-size:13px">Ошибка загрузки</div>';
   }
   socket.emit('markRead', id);
@@ -554,11 +621,7 @@ $('btn-confirm-delete').addEventListener('click', async () => {
   const idToDelete = pendingDeleteId;
   closeDeleteConfirm();
   try {
-    const res = await authFetch(`/api/messages/${idToDelete}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: me.id })
-    });
+    const res = await authFetch(`/api/messages/${idToDelete}`, { method: 'DELETE' });
     if (!res.ok) {
       const d = await res.json();
       alert(d.error || 'Ошибка удаления');
@@ -575,6 +638,10 @@ $('msg-input').addEventListener('keydown', e => { if(e.key==='Enter'&&!e.shiftKe
 function sendMsg() {
   const text = $('msg-input').value.trim();
   if (!text || !activeFriend) return;
+  if (text.length > MAX_MESSAGE_LENGTH) {
+    showTransientNotice(`Сообщение слишком длинное (максимум ${MAX_MESSAGE_LENGTH} символов)`);
+    return;
+  }
   socket.emit('sendMessage', { toId: activeFriend, text });
   $('msg-input').value = '';
   $('msg-input').focus();
@@ -648,7 +715,10 @@ async function showUserProfile(userId) {
         if (!confirm(`Заблокировать @${userId}?`)) return;
         try {
           const res = await authFetch(`/api/users/${encodeURIComponent(userId)}/block`, { method: 'POST' });
-          if (!res.ok) return alert('Ошибка блокировки');
+          if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            return alert(d.error || 'Ошибка блокировки');
+          }
           if (!me.blockedUsers) me.blockedUsers = [];
           if (!me.blockedUsers.includes(userId)) me.blockedUsers = [...me.blockedUsers, userId];
           if (me.friends) me.friends = me.friends.filter(id => id !== userId);
@@ -699,14 +769,31 @@ $('edit-profile-modal').addEventListener('click', e => {
 $('avatar-input').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file || !me) return;
+
+  // Быстрая проверка на клиенте — раньше о слишком большом/неподходящем файле
+  // узнавали только после полной отправки на сервер и ответа 400/413.
+  if (!ALLOWED_AVATAR_TYPES.includes(file.type)) {
+    alert('Разрешены только изображения (jpeg, png, webp, gif)');
+    e.target.value = '';
+    return;
+  }
+  if (file.size > MAX_AVATAR_SIZE) {
+    alert('Файл слишком большой (максимум 5MB)');
+    e.target.value = '';
+    return;
+  }
+
   const formData = new FormData();
   formData.append('avatar', file);
-  formData.append('userId', me.id);
   try {
     const res = await authFetch('/api/upload/avatar', { method: 'POST', body: formData });
-    if (!res.ok) return alert('Ошибка загрузки аватара');
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      return alert(d.error || 'Ошибка загрузки аватара');
+    }
     const data = await res.json();
     me.avatar = data.avatar;
+    localStorage.setItem('chatapp_profile', JSON.stringify(me));
     renderAv($('edit-avatar'), me.nickname, me.avatar);
     renderAv($('my-avatar'), me.nickname, me.avatar);
   } catch(e) { alert('Ошибка сети'); }
@@ -725,13 +812,14 @@ $('btn-save-profile').addEventListener('click', async () => {
   try {
     const res = await authFetch('/api/profile/update', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: me.id, nickname, status, bio })
+      body: JSON.stringify({ nickname, status, bio })
     });
     const data = await res.json();
     if (!res.ok) return alert(data.error || 'Ошибка сохранения');
     me.nickname = data.user.nickname;
     me.status   = data.user.status;
     me.bio      = data.user.bio;
+    localStorage.setItem('chatapp_profile', JSON.stringify(me));
     $('my-nick').textContent = me.nickname;
     renderAv($('my-avatar'), me.nickname, me.avatar);
     closeEditProfileModal();
@@ -842,15 +930,7 @@ window.addEventListener('resize', () => {
 socket.on('connect_error', err => {
   console.error('Socket error:', err);
   if (err.message === 'Unauthorized') {
-    localStorage.removeItem('chatapp_id');
-    localStorage.removeItem('chatapp_pw');
-    localStorage.removeItem('chatapp_token');
-    localStorage.removeItem('chatapp_profile');
-    document.documentElement.classList.remove('has-session');
-    me = null;
-    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-    $('auth-screen').classList.add('active');
-    setErr('Сессия истекла, войдите снова');
+    forceLogoutToLogin('Сессия истекла, войдите снова');
   }
 });
 socket.on('disconnect', reason => console.warn('Socket disconnected:', reason));

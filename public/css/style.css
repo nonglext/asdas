@@ -15,7 +15,7 @@
   --accent-bg2: rgba(124,110,245,0.2);
   --text: #e8e8f0;
   --text2: #8888a8;
-  --text3: #5a5a7a;
+  --text3: #6f6f95; /* было #5a5a7a — светлее для контраста ~4.5:1 на мелком тексте (WCAG AA) */
   --green: #34d399;
   --red: #f87171;
   --shadow: 0 8px 32px rgba(0,0,0,0.5);
@@ -25,6 +25,17 @@
   --radius-lg: 20px;
   --sidebar-w: 300px;
   --font: 'Inter', system-ui, sans-serif;
+
+  /* Общие градиенты — раньше дублировались побуквенно в 6+ местах;
+     теперь единая точка правки (см. аудит, пункт 4) */
+  --accent-gradient: linear-gradient(135deg, var(--accent), #a78bfa);
+  --neutral-avatar-gradient: linear-gradient(135deg, #5a5a8a, #7a7aaa);
+
+  /* Единая шкала z-index вместо разрозненных магических чисел (аудит, пункт 6) */
+  --z-dropdown: 100;
+  --z-toast: 500;
+  --z-popup: 500;
+  --z-modal: 1000;
 }
 
 html, body {
@@ -36,6 +47,40 @@ html, body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
+}
+
+/* Уважаем системную настройку "уменьшить движение" — раньше анимации
+   (fadeIn/slideUp модалок, transition кнопок) всегда работали в полную силу */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Универсальный видимый фокус для клавиатурной навигации — раньше был только
+   у text-полей (через border-color/box-shadow), а кнопки/карточки друзей/
+   результаты поиска фокус вообще не показывали (аудит, пункт 2) */
+.icon-btn:focus-visible,
+.btn-primary:focus-visible,
+.btn-secondary:focus-visible,
+.btn-add:focus-visible,
+.btn-ok:focus-visible,
+.btn-no:focus-visible,
+.btn-unblock:focus-visible,
+.btn-danger-sm:focus-visible,
+.btn-ghost-sm:focus-visible,
+.btn-link-row:focus-visible,
+.tab:focus-visible,
+.pw-toggle:focus-visible,
+.modal-close-btn:focus-visible,
+.friend-item:focus-visible,
+.s-item:focus-visible,
+.msg-del-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* ─── Screens ───────────────────────────────────────────────────────────────── */
@@ -83,7 +128,7 @@ html, body {
 }
 .auth-logo-icon {
   width: 44px; height: 44px;
-  background: linear-gradient(135deg, var(--accent), #a78bfa);
+  background: var(--accent-gradient);
   border-radius: 12px;
   display: flex; align-items: center; justify-content: center;
   color: white;
@@ -140,12 +185,13 @@ html, body {
   background: none; border: none; color: var(--text3); cursor: pointer;
   padding: 2px; display: flex; align-items: center; justify-content: center;
   transition: color 0.2s;
+  border-radius: 4px;
 }
 .pw-toggle:hover { color: var(--text); }
 
 /* Buttons */
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent), #a78bfa);
+  background: var(--accent-gradient);
   color: #fff;
   border: none;
   border-radius: var(--radius-sm);
@@ -221,7 +267,7 @@ html, body {
 .me-avatar {
   width: 40px; height: 40px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent), #a78bfa);
+  background: var(--accent-gradient);
   display: flex; align-items: center; justify-content: center;
   font-weight: 700; font-size: 16px; color: white;
   overflow: hidden;
@@ -280,7 +326,7 @@ html, body {
   max-height: 300px;
   overflow-y: auto;
   display: none;
-  z-index: 100;
+  z-index: var(--z-dropdown);
 }
 .search-drop.open { display: block; }
 
@@ -295,7 +341,7 @@ html, body {
 
 .s-mini-av {
   width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
-  background: linear-gradient(135deg, var(--accent), #a78bfa);
+  background: var(--accent-gradient);
   display: flex; align-items: center; justify-content: center;
   font-weight: 700; font-size: 13px; color: white;
   overflow: hidden;
@@ -372,7 +418,7 @@ html, body {
 
 .f-av {
   width: 42px; height: 42px; border-radius: 50%; flex-shrink: 0;
-  background: linear-gradient(135deg, #5a5a8a, #7a7aaa);
+  background: var(--neutral-avatar-gradient);
   display: flex; align-items: center; justify-content: center;
   font-weight: 700; font-size: 16px; color: white;
   position: relative; overflow: hidden;
@@ -445,7 +491,7 @@ html, body {
 
 .chat-head-avatar {
   width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
-  background: linear-gradient(135deg, #5a5a8a, #7a7aaa);
+  background: var(--neutral-avatar-gradient);
   display: flex; align-items: center; justify-content: center;
   font-weight: 700; font-size: 16px; color: white;
   overflow: hidden;
@@ -466,16 +512,19 @@ html, body {
 .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
 .msg {
-  max-width: 70%;
+  /* min(70%, 560px) — на узких экранах ведёт себя как раньше (70%), но на
+     широких/4K не растягивает короткое сообщение на пол-экрана (аудит, пункт 3) */
+  max-width: min(70%, 560px);
   padding: 10px 14px;
   border-radius: 16px;
   font-size: 14px;
   line-height: 1.5;
   word-break: break-word;
+  overflow-wrap: anywhere; /* аккуратнее переносит длинные URL/токены, чем один word-break */
   position: relative;
 }
 .msg.mine {
-  background: linear-gradient(135deg, var(--accent), #a78bfa);
+  background: var(--accent-gradient);
   color: white;
   align-self: flex-end;
   border-bottom-right-radius: 4px;
@@ -521,6 +570,13 @@ html, body {
 .msg-wrap:hover .msg-del-btn { opacity: 1; }
 .msg-del-btn:hover { background: rgba(248,113,113,0.2); color: var(--red); border-color: rgba(248,113,113,0.3); }
 
+/* На устройствах без hover (телефоны/планшеты) :hover никогда не срабатывает —
+   кнопка удаления была фактически недостижима с тачскрина. Показываем её
+   постоянно (полупрозрачно), раз навести курсор физически невозможно (аудит, пункт 1) */
+@media (hover: none) {
+  .msg-del-btn { opacity: 0.6; }
+}
+
 /* Message bar */
 .msg-bar {
   display: flex; align-items: center; gap: 10px;
@@ -546,7 +602,7 @@ html, body {
 
 .send-btn {
   width: 42px; height: 42px;
-  background: linear-gradient(135deg, var(--accent), #a78bfa);
+  background: var(--accent-gradient);
   border: none; border-radius: 12px;
   cursor: pointer; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
@@ -558,7 +614,7 @@ html, body {
 
 /* ─── Modals ────────────────────────────────────────────────────────────────── */
 .modal-overlay {
-  position: fixed; inset: 0; z-index: 1000;
+  position: fixed; inset: 0; z-index: var(--z-modal);
   background: rgba(0,0,0,0.7);
   backdrop-filter: blur(6px);
   display: flex; align-items: center; justify-content: center;
@@ -598,7 +654,7 @@ html, body {
 }
 .modal-avatar {
   width: 80px; height: 80px; border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent), #a78bfa);
+  background: var(--accent-gradient);
   display: flex; align-items: center; justify-content: center;
   font-weight: 700; font-size: 30px; color: white;
   overflow: hidden; margin-bottom: 4px;
@@ -625,7 +681,7 @@ html, body {
 }
 .edit-avatar {
   width: 80px; height: 80px; border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent), #a78bfa);
+  background: var(--accent-gradient);
   display: flex; align-items: center; justify-content: center;
   font-weight: 700; font-size: 30px; color: white;
   overflow: hidden;
@@ -643,6 +699,21 @@ html, body {
   border: 2px solid var(--bg1);
 }
 .avatar-upload-btn:hover { opacity: 0.85; }
+.avatar-upload-btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Скрытый <input type="file"> для загрузки аватара: display:none убирает элемент
+   и из accessibility-дерева (скринридеры его не видят и не могут активировать
+   через клавиатуру/жест). Этот паттерн держит поле технически видимым для AT,
+   визуально скрывая его обычным пользователям (аудит, пункт 11). */
+.visually-hidden-input {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 .edit-profile-actions {
   display: flex; gap: 10px; margin-top: 20px;
@@ -705,7 +776,7 @@ html, body {
   padding: 12px 16px;
   display: flex; align-items: center; gap: 10px;
   box-shadow: var(--shadow);
-  z-index: 500;
+  z-index: var(--z-popup);
   font-size: 13px;
   animation: slideUp 0.15s ease;
 }
@@ -728,11 +799,40 @@ html, body {
 }
 .btn-ghost-sm:hover { background: var(--bg3); }
 
+/* ─── Transient toast notice ────────────────────────────────────────────────── */
+/* Раньше создавался и стилизовался прямо в JS через style.cssText — единственное
+   место в приложении, стилизованное не через CSS-классы. Перенесено сюда,
+   JS теперь только переключает класс .show (аудит, пункт 5). */
+.transient-notice {
+  position: fixed;
+  bottom: 20px; left: 50%; transform: translateX(-50%);
+  background: var(--bg4);
+  color: var(--text);
+  padding: 10px 18px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: var(--shadow);
+  z-index: var(--z-toast);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.transient-notice.show { opacity: 1; }
+
 /* ─── Scrollbar global ──────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--border2); }
+
+/* ─── Responsive (tablet / mid-width) ───────────────────────────────────────── */
+/* Раньше был единственный breakpoint на 640px — на планшетах в портретной
+   ориентации (например, iPad ~768px) фикс. сайдбар 300px мог смотреться тесно
+   рядом с чатом (аудит, пункт 8). */
+@media (min-width: 641px) and (max-width: 900px) {
+  :root { --sidebar-w: 260px; }
+}
 
 /* ─── Responsive (mobile) ───────────────────────────────────────────────────── */
 @media (max-width: 640px) {

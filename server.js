@@ -9,6 +9,7 @@ const rateLimit = require('express-rate-limit');
 const { Sequelize, DataTypes, Op } = require('sequelize');
 const fs = require('fs');
 const multer = require('multer');
+const winston = require('winston');
 
 const app = express();
 const server = http.createServer(app);
@@ -32,16 +33,43 @@ const io = new Server(server, {
 // без этого express-rate-limit будет падать с ERR_ERL_UNEXPECTED_X_FORWARDED_FOR
 app.set('trust proxy', 1);
 
+// ─── Logging (Winston) ────────────────────────────────────────────────────────
+// Заменяет console.log/console.error: структурированные логи, уровни, файлы для ошибок
+const logger = winston.createLogger({
+  level: process.env.LOG_LEVEL || 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.errors({ stack: true }),
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.Console({
+      format: winston.format.combine(
+        winston.format.colorize(),
+        winston.format.simple()
+      )
+    }),
+    new winston.transports.File({ filename: 'error.log', level: 'error' }),
+    new winston.transports.File({ filename: 'combined.log' })
+  ]
+});
+
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret_in_production';
 const SALT_ROUNDS = 12;
 
 if (!process.env.JWT_SECRET) {
-  console.warn('⚠️  JWT_SECRET не задан в .env — используется дефолтный небезопасный секрет!');
+  logger.warn('⚠️  JWT_SECRET не задан в .env — используется дефолтный небезопасный секрет!');
 }
 
+// ─── Limits ───────────────────────────────────────────────────────────────────
+const MAX_FRIENDS = 500;
+const MAX_BLOCKED = 200;
+const MAX_FRIEND_REQUESTS = 200;
+const MAX_IMAGE_BASE64_CHARS = Math.ceil((5 * 1024 * 1024) * 1.37); // ~5MB после base64-инфляции
+
 // ─── Middleware ───────────────────────────────────────────────────────────────
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(express.json({ limit: '10mb' })); // было 50mb — избыточно и облегчает DoS через большие тела запросов
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
@@ -90,16 +118,16 @@ async function connectWithRetry(retries = 5, delayMs = 3000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       await sequelize.authenticate();
-      console.log('✅ PostgreSQL подключена');
+      logger.info('✅ PostgreSQL подключена');
       return true;
     } catch (err) {
-      console.error(`❌ PostgreSQL (попытка ${attempt}/${retries}):`, err.message);
+      logger.error(`❌ PostgreSQL (попытка ${attempt}/${retries}): ${err.message}`);
       if (attempt < retries) {
         await new Promise(res => setTimeout(res, delayMs));
       }
     }
   }
-  console.error('❌ Не удалось подключиться к PostgreSQL после нескольких попыток');
+  logger.error('❌ Не удалось подключиться к PostgreSQL после нескольких попыток');
   return false;
 }
 
@@ -202,6 +230,19 @@ const Message = sequelize.define('Message', {
 const onlineUsers = {};
 function getChatKey(a, b) { return [a, b].sort().join('::'); }
 
+// Удаляем файл из uploads/ по публичному пути вида /uploads/xxx.ext.
+// path.basename защищает от path traversal через сохранённое значение.
+function deleteUploadedFile(publicPath) {
+  if (!publicPath || typeof publicPath !== 'string') return;
+  const filename = path.basename(publicPath);
+  const fullPath = path.join(__dirname, 'uploads', filename);
+  fs.unlink(fullPath, (err) => {
+    if (err && err.code !== 'ENOENT') {
+      logger.error('Ошибка удаления файла', { file: fullPath, error: err.message });
+    }
+  });
+}
+
 // Простой rate limiter для socket-событий — REST-лимитеры их не покрывают (см. аудит, пункт 2)
 function makeSocketLimiter(maxPerWindow, windowMs) {
   const hits = new Map();
@@ -215,6 +256,18 @@ function makeSocketLimiter(maxPerWindow, windowMs) {
 }
 const canSendMessage = makeSocketLimiter(20, 10_000);       // 20 сообщений / 10 сек
 const canSendFriendRequest = makeSocketLimiter(10, 60_000); // 10 заявок / мин
+
+// Периодическая сверка onlineUsers с реально подключёнными сокетами.
+// При нештатных разрывах (network drop без корректного 'disconnect') запись могла зависать вечно.
+setInterval(() => {
+  const connectedSocketIds = new Set(io.sockets.sockets.keys());
+  for (const [userId, socketId] of Object.entries(onlineUsers)) {
+    if (!connectedSocketIds.has(socketId)) {
+      delete onlineUsers[userId];
+      logger.warn('Удалён протухший onlineUsers-эатрая', { userId });
+    }
+  }
+}, 60_000);
 
 // ─── JWT Auth Middleware ──────────────────────────────────────────────────────
 function authMiddleware(req, res, next) {
@@ -284,7 +337,7 @@ app.post('/api/register', authLimiter, async (req, res) => {
       user: { id: user.id, nickname: user.nickname, avatar: user.avatar, status: user.status, friends: user.friends, friendRequests: user.friendRequests, blockedUsers: user.blockedUsers }
     });
   } catch (err) {
-    console.error('Register error:', err);
+    logger.error('Register error', { error: err.message });
     res.status(500).json({ error: 'Ошибка регистрации' });
   }
 });
@@ -307,7 +360,7 @@ app.post('/api/login', authLimiter, async (req, res) => {
       user: { id: user.id, nickname: user.nickname, avatar: user.avatar, status: user.status, bio: user.bio, friends: user.friends, friendRequests: user.friendRequests, blockedUsers: user.blockedUsers }
     });
   } catch (err) {
-    console.error('Login error:', err);
+    logger.error('Login error', { error: err.message });
     res.status(500).json({ error: 'Ошибка входа' });
   }
 });
@@ -345,7 +398,7 @@ app.get('/api/search', authMiddleware, searchLimiter, async (req, res) => {
       online: !!onlineUsers[u.id]
     })));
   } catch (err) {
-    console.error('Search error:', err);
+    logger.error('Search error', { error: err.message });
     res.status(500).json({ error: 'Ошибка поиска' });
   }
 });
@@ -356,7 +409,7 @@ app.get('/api/profile/:userId', authMiddleware, async (req, res) => {
     if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
     res.json({ id: user.id, nickname: user.nickname, avatar: user.avatar, status: user.status, bio: user.bio, online: !!onlineUsers[user.id], createdAt: user.createdAt });
   } catch (err) {
-    console.error('Profile error:', err);
+    logger.error('Profile error', { error: err.message });
     res.status(500).json({ error: 'Ошибка профиля' });
   }
 });
@@ -377,7 +430,7 @@ app.post('/api/profile/update', authMiddleware, async (req, res) => {
 
     res.json({ success: true, user: { id: user.id, nickname: user.nickname, avatar: user.avatar, status: user.status, bio: user.bio } });
   } catch (err) {
-    console.error('Profile update error:', err);
+    logger.error('Profile update error', { error: err.message });
     res.status(500).json({ error: 'Ошибка обновления профиля' });
   }
 });
@@ -388,13 +441,20 @@ app.post('/api/upload/avatar', authMiddleware, upload.single('avatar'), async (r
     if (!req.file) return res.status(400).json({ error: 'Файл не загружен' });
 
     const user = await User.findByPk(userId);
-    if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+    if (!user) {
+      deleteUploadedFile(`/uploads/${req.file.filename}`); // юзера нет — не оставляем сиротский файл
+      return res.status(404).json({ error: 'Пользователь не найден' });
+    }
 
+    const oldAvatar = user.avatar;
     user.avatar = `/uploads/${req.file.filename}`;
     await user.save();
+
+    if (oldAvatar) deleteUploadedFile(oldAvatar); // чистим старый аватар, чтобы диск не пух
+
     res.json({ success: true, avatar: user.avatar });
   } catch (err) {
-    console.error('Avatar upload error:', err);
+    logger.error('Avatar upload error', { error: err.message });
     res.status(500).json({ error: 'Ошибка загрузки аватара' });
   }
 });
@@ -408,6 +468,9 @@ app.post('/api/users/:id/block', authMiddleware, async (req, res) => {
     if (targetId === me.id) return res.status(400).json({ error: 'Нельзя заблокировать самого себя' });
 
     if (!me.blockedUsers.includes(targetId)) {
+      if (me.blockedUsers.length >= MAX_BLOCKED) {
+        return res.status(400).json({ error: `Лимит заблокированных пользователей (${MAX_BLOCKED})` });
+      }
       me.blockedUsers = [...me.blockedUsers, targetId];
       me.friends = me.friends.filter(id => id !== targetId);
       me.friendRequests = me.friendRequests.filter(id => id !== targetId);
@@ -434,7 +497,7 @@ app.post('/api/users/:id/block', authMiddleware, async (req, res) => {
 
     res.json({ success: true, blockedUsers: me.blockedUsers });
   } catch (err) {
-    console.error('Block error:', err);
+    logger.error('Block error', { error: err.message });
     res.status(500).json({ error: 'Ошибка блокировки' });
   }
 });
@@ -447,7 +510,7 @@ app.post('/api/users/:id/unblock', authMiddleware, async (req, res) => {
     await me.save();
     res.json({ success: true, blockedUsers: me.blockedUsers });
   } catch (err) {
-    console.error('Unblock error:', err);
+    logger.error('Unblock error', { error: err.message });
     res.status(500).json({ error: 'Ошибка разблокировки' });
   }
 });
@@ -463,7 +526,7 @@ app.get('/api/users/blocked', authMiddleware, async (req, res) => {
     const users = await User.findAll({ where: { id: { [Op.in]: me.blockedUsers } } });
     res.json(users.map(u => ({ id: u.id, nickname: u.nickname, avatar: u.avatar })));
   } catch (err) {
-    console.error('Blocked list error:', err);
+    logger.error('Blocked list error', { error: err.message });
     res.status(500).json({ error: 'Ошибка загрузки списка заблокированных' });
   }
 });
@@ -503,7 +566,7 @@ app.get('/api/messages/:userId/:friendId', authMiddleware, async (req, res) => {
       time: m.createdAt.toISOString() // раньше отдавался только createdAt — клиент ждал time/timestamp → "Invalid Date"
     })));
   } catch (err) {
-    console.error('Messages error:', err);
+    logger.error('Messages error', { error: err.message });
     res.status(500).json({ error: 'Ошибка загрузки сообщений' });
   }
 });
@@ -525,10 +588,14 @@ app.delete('/api/messages/:messageId', authMiddleware, async (req, res) => {
     if (!msg)             return res.status(404).json({ error: 'Сообщение не найдено' });
     if (msg.from !== userId) return res.status(403).json({ error: 'Нет доступа' });
 
+    const imageToDelete = msg.image;
+
     msg.deleted = true;
     msg.text    = '';
     msg.image   = null;
     await msg.save();
+
+    if (imageToDelete) deleteUploadedFile(imageToDelete); // не оставляем файл-сироту на диске
 
     const otherUser = msg.chatKey.split('::').find(id => id !== userId);
     io.to(userId).emit('messageDeleted', { messageId, chatWith: otherUser || null });
@@ -536,7 +603,7 @@ app.delete('/api/messages/:messageId', authMiddleware, async (req, res) => {
 
     res.json({ success: true });
   } catch (err) {
-    console.error('Delete message error:', err);
+    logger.error('Delete message error', { error: err.message });
     res.status(500).json({ error: 'Ошибка удаления' });
   }
 });
@@ -603,8 +670,8 @@ io.on('connection', (socket) => {
         blockedUsers:   user.blockedUsers,
         unreadCounts
       });
-      console.log(`[online] ${currentUserId}`);
-    } catch (err) { console.error('Connection init error:', err); }
+      logger.info(`[online] ${currentUserId}`);
+    } catch (err) { logger.error('Connection init error', { error: err.message }); }
   })();
 
   socket.on('sendFriendRequest', async (toId) => {
@@ -616,6 +683,9 @@ io.on('connection', (socket) => {
       if (!from) return;
       if (!toId) return socket.emit('friendRequestError', { toId, reason: 'not_found' });
       if (toId === currentUserId) return socket.emit('friendRequestError', { toId, reason: 'self' });
+      if (from.friendRequests.length >= MAX_FRIEND_REQUESTS || from.friends.length >= MAX_FRIENDS) {
+        return socket.emit('friendRequestError', { toId, reason: 'limit_reached' });
+      }
 
       const to = await User.findByPk(toId);
       if (!to) return socket.emit('friendRequestError', { toId, reason: 'not_found' });
@@ -623,6 +693,7 @@ io.on('connection', (socket) => {
       if (to.friendRequests.includes(currentUserId)) return socket.emit('friendRequestError', { toId, reason: 'already_sent' });
       if (to.blockedUsers.includes(currentUserId)) return socket.emit('friendRequestError', { toId, reason: 'blocked' });
       if (from.blockedUsers.includes(toId)) return socket.emit('friendRequestError', { toId, reason: 'blocked' });
+      if (to.friendRequests.length >= MAX_FRIEND_REQUESTS) return socket.emit('friendRequestError', { toId, reason: 'target_limit_reached' });
 
       // Атомарный UPDATE вместо "прочитать массив → проверить в JS → сохранить" —
       // старая версия была уязвима к гонке при параллельных вызовах (аудит, пункт 3)
@@ -633,32 +704,62 @@ io.on('connection', (socket) => {
           AND NOT (:fromId = ANY(friend_requests))
           AND NOT (:fromId = ANY(friends))
           AND NOT (:fromId = ANY(blocked_users))
+          AND array_length(friend_requests, 1) IS DISTINCT FROM :maxRequests
         RETURNING id
-      `, { replacements: { fromId: currentUserId, toId }, type: sequelize.QueryTypes.SELECT });
+      `, {
+        replacements: { fromId: currentUserId, toId, maxRequests: MAX_FRIEND_REQUESTS },
+        type: sequelize.QueryTypes.SELECT
+      });
 
-      if (!affected || !affected.length) return socket.emit('friendRequestError', { toId, reason: 'already_sent' }); // уже есть заявка / уже друзья / заблокирован
+      if (!affected || !affected.length) return socket.emit('friendRequestError', { toId, reason: 'already_sent' }); // уже есть заявка / уже друзья / заблокирован / лимит
 
       io.to(toId).emit('friendRequest', { id: currentUserId, nickname: from.nickname });
       socket.emit('requestSent', { id: toId });
     } catch (err) {
-      console.error('Friend request error:', err);
+      logger.error('Friend request error', { error: err.message });
       socket.emit('friendRequestError', { toId, reason: 'server_error' });
     }
   });
 
   socket.on('acceptFriendRequest', async (fromId) => {
     try {
-      const me   = await User.findByPk(currentUserId);
-      const them = await User.findByPk(fromId);
-      if (!me || !them) return;
-      me.friendRequests = me.friendRequests.filter(id => id !== fromId);
-      if (!me.friends.includes(fromId))          me.friends = [...me.friends, fromId];
-      if (!them.friends.includes(currentUserId)) them.friends = [...them.friends, currentUserId];
-      await me.save();
-      await them.save();
+      if (!fromId) return;
+
+      // Атомарный UPDATE вместо read-modify-write в JS — раньше при почти
+      // одновременном accept/decline или двух accept подряд могла случиться
+      // гонка (запись друг друга затирали, друг добавлялся дважды и т.п.).
+      const meResult = await sequelize.query(`
+        UPDATE "users"
+        SET friend_requests = array_remove(friend_requests, :fromId),
+            friends = CASE
+              WHEN :fromId = ANY(friends) THEN friends
+              ELSE array_append(friends, :fromId)
+            END
+        WHERE id = :myId
+          AND :fromId = ANY(friend_requests)
+        RETURNING id, nickname, avatar
+      `, { replacements: { fromId, myId: currentUserId }, type: sequelize.QueryTypes.SELECT });
+
+      if (!meResult || !meResult.length) return; // заявки уже не было (принята/отклонена/отозвана параллельно)
+
+      const themResult = await sequelize.query(`
+        UPDATE "users"
+        SET friends = CASE
+              WHEN :myId = ANY(friends) THEN friends
+              ELSE array_append(friends, :myId)
+            END
+        WHERE id = :fromId
+        RETURNING id, nickname, avatar
+      `, { replacements: { fromId, myId: currentUserId }, type: sequelize.QueryTypes.SELECT });
+
+      if (!themResult || !themResult.length) return; // отправитель успел удалить аккаунт
+
+      const me = meResult[0];
+      const them = themResult[0];
+
       socket.emit('friendAdded',        { id: fromId,        nickname: them.nickname, avatar: them.avatar, online: !!onlineUsers[fromId] });
       io.to(fromId).emit('friendAdded', { id: currentUserId, nickname: me.nickname,   avatar: me.avatar,   online: true });
-    } catch (err) { console.error('Accept friend error:', err); }
+    } catch (err) { logger.error('Accept friend error', { error: err.message }); }
   });
 
   socket.on('declineFriendRequest', async (fromId) => {
@@ -668,13 +769,20 @@ io.on('connection', (socket) => {
       user.friendRequests = user.friendRequests.filter(id => id !== fromId);
       await user.save();
       socket.emit('requestDeclined', fromId);
-    } catch (err) { console.error('Decline friend error:', err); }
+    } catch (err) { logger.error('Decline friend error', { error: err.message }); }
   });
 
   socket.on('sendMessage', async ({ toId, text, image }) => {
     try {
       if (!canSendMessage(currentUserId)) return socket.emit('rateLimited', 'sendMessage');
       if (!text?.trim() && !image) return;
+
+      // Защита от чрезмерно больших base64-изображений через сокет
+      // (multer/limits покрывает только REST-загрузку аватаров, не этот путь)
+      if (image && typeof image === 'string' && image.length > MAX_IMAGE_BASE64_CHARS) {
+        return socket.emit('sendMessageError', { toId, reason: 'image_too_large' });
+      }
+
       const me = await User.findByPk(currentUserId);
       const to = await User.findByPk(toId);
       if (!me || !to || !me.friends.includes(toId)) return;
@@ -701,7 +809,7 @@ io.on('connection', (socket) => {
       };
       io.to(currentUserId).emit('newMessage', { chatWith: toId,           msg: msgData });
       io.to(toId).emit('newMessage',          { chatWith: currentUserId,  msg: msgData });
-    } catch (err) { console.error('Send message error:', err); }
+    } catch (err) { logger.error('Send message error', { error: err.message }); }
   });
 
   socket.on('markRead', async (friendId) => {
@@ -711,7 +819,7 @@ io.on('connection', (socket) => {
         { read: true },
         { where: { chatKey: getChatKey(currentUserId, friendId), to: currentUserId, read: false } }
       );
-    } catch (err) { console.error('Mark read error:', err); }
+    } catch (err) { logger.error('Mark read error', { error: err.message }); }
   });
 
   socket.on('disconnect', async () => {
@@ -720,8 +828,8 @@ io.on('connection', (socket) => {
     try {
       const user = await User.findByPk(currentUserId);
       if (user) user.friends.forEach(fId => io.to(fId).emit('friendOffline', currentUserId));
-    } catch (err) { console.error('Disconnect error:', err); }
-    console.log(`[offline] ${currentUserId}`);
+    } catch (err) { logger.error('Disconnect error', { error: err.message }); }
+    logger.info(`[offline] ${currentUserId}`);
   });
 });
 
@@ -734,19 +842,52 @@ const PORT = process.env.PORT || 3000;
   if (connected) {
     try {
       await sequelize.sync({ alter: true });
-      console.log('✅ Таблицы синхронизированы');
+      logger.info('✅ Таблицы синхронизированы');
     } catch (err) {
-      console.error('❌ Sync error:', err.message);
+      logger.error('❌ Sync error', { error: err.message });
     }
   } else {
-    console.warn('⚠️  Сервер запускается без подтверждённого подключения к БД.');
+    logger.warn('⚠️  Сервер запускается без подтверждённого подключения к БД.');
   }
 
   server.listen(PORT, () => {
-    console.log(`✅ Сервер запущен на http://localhost:${PORT}`);
+    logger.info(`✅ Сервер запущен на http://localhost:${PORT}`);
   });
 })();
 
 process.on('unhandledRejection', (err) => {
-  console.error('Unhandled rejection:', err);
+  logger.error('Unhandled rejection', { error: err?.message || String(err) });
 });
+
+// ─── Graceful shutdown ────────────────────────────────────────────────────────
+// При деплое/рестарте (SIGTERM от оркестратора, Ctrl+C локально) корректно
+// закрываем новые подключения, даём время текущим запросам завершиться,
+// и закрываем пул соединений с БД, вместо резкого обрыва.
+let shuttingDown = false;
+function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info(`Получен ${signal}, начинаю штатную остановку сервера...`);
+
+  io.close(); // разрывает все socket.io соединения с уведомлением клиентов
+
+  server.close(async () => {
+    try {
+      await sequelize.close();
+      logger.info('Соединение с БД закрыто, выход.');
+      process.exit(0);
+    } catch (err) {
+      logger.error('Ошибка при закрытии БД', { error: err.message });
+      process.exit(1);
+    }
+  });
+
+  // Если что-то зависло — не ждём вечно
+  setTimeout(() => {
+    logger.error('Не удалось завершить работу штатно за 30с, принудительный выход.');
+    process.exit(1);
+  }, 30_000).unref();
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
