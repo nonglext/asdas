@@ -20,7 +20,14 @@ const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gi
 // Раньше: const socket = io()  — без токена. Сервер (io.use в server.js) требует
 // socket.handshake.auth.token и без него сразу рвёт соединение с 'Unauthorized'.
 // Из-за этого ни одно событие (sendFriendRequest, sendMessage и т.д.) не доходило.
-const socket = io({ autoConnect: false });
+// Укажите здесь реальный URL вашего бэкенда на Render!
+const BACKEND_URL = "https://asdas-p7ht.onrender.com"; 
+
+// Передаем URL первым аргументом
+const socket = io(BACKEND_URL, { 
+  autoConnect: false,
+  transports: ['websocket', 'polling'] // Явное указание транспортов для стабильности
+});
 const $ = id => document.getElementById(id);
 
 function connectSocket() {
