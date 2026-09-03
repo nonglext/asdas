@@ -1105,31 +1105,15 @@ html, body {
   left: var(--call-left, var(--sidebar-w));
   right: 0;
   width: auto;
+  top: var(--call-top, 40px);
   bottom: auto;
-  height: 190px;
+  height: 180px;
   background: #000;
   border-bottom: 1px solid rgba(255,255,255,0.08);
   box-shadow: 0 8px 24px rgba(0,0,0,0.28);
 }
 .call-overlay.voice-mode .call-overlay-top {
-  position: absolute;
-  top: 14px;
-  left: 0;
-  right: 0;
-  padding: 0;
-  z-index: 2;
-}
-.call-overlay.voice-mode .call-overlay-heading {
-  font-size: 9px;
-  color: #9ca3af;
-}
-.call-overlay.voice-mode .call-overlay-title {
-  font-size: 14px;
-  margin-top: 3px;
-}
-.call-overlay.voice-mode .call-overlay-status {
-  font-size: 10px;
-  margin-top: 0;
+  display: none;
 }
 .call-overlay-top {
   padding: 26px 20px 10px; text-align: center; flex-shrink: 0;
@@ -1174,7 +1158,7 @@ html, body {
   justify-content: center;
   align-content: start;
   gap: 12px;
-  padding: 64px 230px 12px;
+  padding: 34px 230px 70px;
   overflow: hidden;
 }
 .voice-mode .call-tile {
@@ -1217,7 +1201,7 @@ html, body {
 .call-overlay.voice-mode .call-overlay-controls {
   position: absolute;
   left: 50%;
-  bottom: 12px;
+  bottom: 14px;
   transform: translateX(-50%);
   padding: 0;
   gap: 8px;
@@ -1257,14 +1241,15 @@ html, body {
   .call-overlay.voice-mode {
     left: 0;
     width: 100%;
-    height: 210px;
+    top: var(--call-top, 48px);
+    height: 172px;
   }
   .call-overlay-top { padding-top: 18px; }
   .call-overlay-title { font-size: 17px; }
   .voice-mode .call-video-grid {
     grid-template-columns: repeat(auto-fit, 56px);
     grid-auto-rows: 56px;
-    padding: 58px 12px 54px;
+    padding: 26px 12px 58px;
   }
   .voice-mode .call-tile { min-height: 56px; width: 56px; height: 56px; }
   .voice-mode .call-tile-avatar { width: 56px; height: 56px; font-size: 18px; }

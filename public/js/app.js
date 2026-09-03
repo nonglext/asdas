@@ -1847,7 +1847,13 @@ function openCallOverlay(statusText) {
 function syncVoiceOverlayPosition() {
   const overlay = $('call-overlay');
   const sidebar = document.querySelector('.sidebar');
-  if (!overlay || !sidebar || window.innerWidth <= 640) return;
+  if (!overlay || !sidebar) return;
+
+  const chatHead = [...document.querySelectorAll('.chat-head, .group-chat-head')]
+    .find(element => getComputedStyle(element).display !== 'none');
+  const top = chatHead ? chatHead.getBoundingClientRect().bottom : 0;
+  overlay.style.setProperty('--call-top', `${Math.max(0, top)}px`);
+  if (window.innerWidth <= 640) return;
 
   const sidebarRect = sidebar.getBoundingClientRect();
   const sidebarVisible = sidebarRect.width > 0 && !sidebar.classList.contains('hidden');
@@ -1859,6 +1865,7 @@ function closeCallOverlay() {
   overlay.style.display = 'none';
   overlay.classList.remove('voice-mode', 'video-mode');
   overlay.style.removeProperty('--call-left');
+  overlay.style.removeProperty('--call-top');
   $('incoming-call-modal').style.display = 'none';
   clearTimeout(callState.ringTimer);
 
