@@ -1048,6 +1048,7 @@ io.on('connection', (socket) => {
       for (const m of memberships) {
         socket.join(`group:${m.groupId}`);
         socket.groupIds.add(m.groupId);
+        emitGroupVoiceState(m.groupId, currentUserId);
       }
       socket.groupsLoaded = true;
 
