@@ -934,25 +934,86 @@ async function openChat(id) {
   $('msg-input').focus();
 }
 
+/* ============================================================================
+ * MESSAGE GROUPING (Discord-style: свернуть подряд идущие сообщения одного
+ * автора в течение короткого промежутка времени — без повторной аватарки/ника)
+ * ==========================================================================*/
+const MSG_GROUP_WINDOW_MS = 5 * 60 * 1000; // 5 минут
+
+function getMsgTimeMs(msg) {
+  const t = new Date(msg.time || msg.timestamp || msg.createdAt).getTime();
+  return isNaN(t) ? Date.now() : t;
+}
+
+function shouldGroupMsg(container, senderId, timeMs) {
+  const last = container.lastElementChild;
+  if (!last || !last.dataset || last.dataset.sender === undefined) return false;
+  if (last.dataset.sender !== String(senderId)) return false;
+  const lastTime = parseInt(last.dataset.time || '0', 10);
+  if (!lastTime) return false;
+  return Math.abs(timeMs - lastTime) < MSG_GROUP_WINDOW_MS;
+}
+
+// Discord-style личное сообщение: аватар + ник (+время) + текст,
+// с группировкой подряд идущих сообщений от одного собеседника
 function appendMsg(msg, containerId, doScroll = true) {
   if (!state.me) return;
+  const container = $(containerId);
+  if (!container) return;
+
   const isMine = msg.from === state.me.id;
   const isDeleted = !!msg.deleted;
   const msgId = msg._id || msg.id || '';
+  const timeMs = getMsgTimeMs(msg);
+  const timeStr = fmtTime(msg.time || msg.timestamp || msg.createdAt);
+
+  const senderId = msg.from;
+  const friend = state.friends[senderId];
+  const senderNick = isMine ? state.me.nickname : (friend?.nickname || senderId);
+  const senderAvatar = isMine ? state.me.avatar : (friend?.avatar || null);
+
+  const grouped = shouldGroupMsg(container, senderId, timeMs);
 
   const wrap = document.createElement('div');
-  wrap.className = 'msg-wrap ' + (isMine ? 'mine' : 'theirs');
+  wrap.className = 'g-msg' + (isMine ? ' mine' : '') + (isDeleted ? ' deleted' : '') + (grouped ? ' grouped' : '');
   if (msgId) wrap.dataset.msgid = msgId;
+  wrap.dataset.sender = senderId;
+  wrap.dataset.time = String(timeMs);
 
-  const bubble = document.createElement('div');
-  bubble.className = 'msg ' + (isMine ? 'mine' : 'theirs') + (isDeleted ? ' deleted-msg' : '');
-
-  if (isDeleted) {
-    bubble.innerHTML = '<em>Сообщение удалено</em>';
+  if (grouped) {
+    const slot = document.createElement('div');
+    slot.className = 'g-msg-av-slot';
+    slot.innerHTML = `<span class="g-msg-hover-time">${esc(timeStr)}</span>`;
+    wrap.appendChild(slot);
   } else {
-    bubble.innerHTML = `${esc(msg.text || '')}<div class="msg-time">${fmtTime(msg.time || msg.timestamp || msg.createdAt)}</div>`;
+    const avEl = document.createElement('div');
+    avEl.className = 'g-msg-av';
+    renderAv(avEl, senderNick, senderAvatar);
+    if (!isMine) {
+      avEl.style.cursor = 'pointer';
+      avEl.addEventListener('click', () => showUserProfile(senderId));
+    }
+    wrap.appendChild(avEl);
   }
-  wrap.appendChild(bubble);
+
+  const body = document.createElement('div');
+  body.className = 'g-msg-body';
+
+  if (!grouped) {
+    const head = document.createElement('div');
+    head.className = 'g-msg-head';
+    head.innerHTML = `
+      <span class="g-msg-nick">${esc(senderNick)}</span>
+      <span class="g-msg-time">${timeStr}</span>`;
+    body.appendChild(head);
+  }
+
+  const text = document.createElement('div');
+  text.className = 'g-msg-text';
+  text.textContent = isDeleted ? 'Сообщение удалено' : (msg.text || '');
+  body.appendChild(text);
+
+  wrap.appendChild(body);
 
   if (isMine && !isDeleted && msgId) {
     const delBtn = document.createElement('button');
@@ -966,7 +1027,7 @@ function appendMsg(msg, containerId, doScroll = true) {
     wrap.appendChild(delBtn);
   }
 
-  $(containerId).appendChild(wrap);
+  container.appendChild(wrap);
   if (doScroll) scrollMsgs(containerId);
 }
 
@@ -1026,41 +1087,59 @@ function updateGroupChatHeader(g) {
   $('group-chat-members-count').textContent = `${membersCount} участников · ${onlineCount} онлайн`;
 }
 
-// Discord-style сообщение в группе: аватар + ник (+коронка) + время + текст
+// Discord-style сообщение в группе: аватар + ник (+коронка) + время + текст,
+// с группировкой подряд идущих сообщений от одного участника
 function appendGroupMsg(msg, doScroll = true) {
   if (!state.me) return;
+  const container = $('group-messages');
+  if (!container) return;
   const g = state.groups[state.activeGroup];
   const isMine = msg.from === state.me.id;
   const isDeleted = !!msg.deleted;
   const msgId = msg._id || msg.id || '';
+  const timeMs = getMsgTimeMs(msg);
+  const timeStr = fmtTime(msg.time || msg.createdAt);
 
   const sender = g?.members?.find(m => m.id === msg.from);
   const senderNick = sender?.nickname || msg.from;
   const isOwner = isGroupOwner(g, msg.from);
 
-  const wrap = document.createElement('div');
-  wrap.className = 'g-msg' + (isMine ? ' mine' : '') + (isDeleted ? ' deleted' : '');
-  if (msgId) wrap.dataset.msgid = msgId;
+  const grouped = shouldGroupMsg(container, msg.from, timeMs);
 
-  const avEl = document.createElement('div');
-  avEl.className = 'g-msg-av';
-  renderAv(avEl, senderNick, sender?.avatar || null);
-  if (!isMine) {
-    avEl.style.cursor = 'pointer';
-    avEl.addEventListener('click', () => showUserProfile(msg.from));
+  const wrap = document.createElement('div');
+  wrap.className = 'g-msg' + (isMine ? ' mine' : '') + (isDeleted ? ' deleted' : '') + (grouped ? ' grouped' : '');
+  if (msgId) wrap.dataset.msgid = msgId;
+  wrap.dataset.sender = msg.from;
+  wrap.dataset.time = String(timeMs);
+
+  if (grouped) {
+    const slot = document.createElement('div');
+    slot.className = 'g-msg-av-slot';
+    slot.innerHTML = `<span class="g-msg-hover-time">${esc(timeStr)}</span>`;
+    wrap.appendChild(slot);
+  } else {
+    const avEl = document.createElement('div');
+    avEl.className = 'g-msg-av';
+    renderAv(avEl, senderNick, sender?.avatar || null);
+    if (!isMine) {
+      avEl.style.cursor = 'pointer';
+      avEl.addEventListener('click', () => showUserProfile(msg.from));
+    }
+    wrap.appendChild(avEl);
   }
-  wrap.appendChild(avEl);
 
   const body = document.createElement('div');
   body.className = 'g-msg-body';
 
-  const head = document.createElement('div');
-  head.className = 'g-msg-head';
-  head.innerHTML = `
-    <span class="g-msg-nick">${esc(senderNick)}</span>
-    ${isOwner ? CROWN_SVG : ''}
-    <span class="g-msg-time">${fmtTime(msg.time || msg.createdAt)}</span>`;
-  body.appendChild(head);
+  if (!grouped) {
+    const head = document.createElement('div');
+    head.className = 'g-msg-head';
+    head.innerHTML = `
+      <span class="g-msg-nick">${esc(senderNick)}</span>
+      ${isOwner ? CROWN_SVG : ''}
+      <span class="g-msg-time">${timeStr}</span>`;
+    body.appendChild(head);
+  }
 
   const text = document.createElement('div');
   text.className = 'g-msg-text';
@@ -1078,7 +1157,7 @@ function appendGroupMsg(msg, doScroll = true) {
     wrap.appendChild(delBtn);
   }
 
-  $('group-messages').appendChild(wrap);
+  container.appendChild(wrap);
   if (doScroll) scrollMsgs('group-messages');
 }
 
