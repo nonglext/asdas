@@ -8,11 +8,13 @@ const MAX_MESSAGE_LENGTH = 4000;
 const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
 const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
-// Keep browser audio processing disabled so the microphone stream stays raw.
+// Keep browser audio processing enabled so calls don't produce echo/noise
+// for users without headsets. (Previously disabled — caused feedback loops
+// on speaker playback.)
 const RAW_AUDIO_CONSTRAINTS = {
-  echoCancellation: false,
-  noiseSuppression: false,
-  autoGainControl: false
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true
 };
 
 // Иконка коронки для владельца группы
@@ -36,6 +38,7 @@ const state = {
   // Monotonic sequence counters guard against out-of-order async responses
   // (e.g. user clicks friend A then B before A's history request resolves).
   seq: { chat: 0, groupChat: 0, profile: 0 },
+  loggingOut: false,
 };
 
 function resetState() {
@@ -133,10 +136,14 @@ function showTransientNotice(text) {
  * AUTH / SESSION
  * ==========================================================================*/
 function forceLogoutToLogin(message) {
+  // Guard against concurrent 401s (e.g. several authFetch calls in flight)
+  // triggering multiple redundant logout/reset cycles.
+  if (state.loggingOut) return;
+  state.loggingOut = true;
+
   resetState();
   if (socket.connected) socket.disconnect();
   localStorage.removeItem('chatapp_id');
-  localStorage.removeItem('chatapp_pw');
   localStorage.removeItem('chatapp_token');
   localStorage.removeItem('chatapp_profile');
   document.documentElement.classList.remove('has-session');
@@ -156,30 +163,27 @@ function forceLogoutToLogin(message) {
   const gl = $('groups-list');
   if (gl) gl.innerHTML = emptyGroupsHTML();
   closeActiveChat();
+
+  state.loggingOut = false;
 }
 
 /**
  * A thin wrapper around fetch() that attaches the bearer token and handles
- * session expiry consistently. IMPORTANT: unlike the previous version, this
- * throws on 401 instead of silently returning the (unusable) response, so
- * callers can't accidentally keep processing data for a logged-out session.
+ * session expiry consistently. Throws on 401 instead of silently returning
+ * the (unusable) response, so callers can't accidentally keep processing
+ * data for a logged-out session.
  */
 class AuthError extends Error {}
 
 async function authFetch(url, options = {}) {
   const token = localStorage.getItem('chatapp_token');
-  let res;
-  try {
-    res = await fetch(url, {
-      ...options,
-      headers: {
-        ...(options.headers || {}),
-        ...(token ? { Authorization: 'Bearer ' + token } : {}),
-      },
-    });
-  } catch (networkErr) {
-    throw networkErr;
-  }
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
+    },
+  });
   if (res.status === 401 && state.me) {
     forceLogoutToLogin('Сессия истекла, войдите снова');
     throw new AuthError('Session expired');
@@ -190,8 +194,6 @@ async function authFetch(url, options = {}) {
 function saveAndLogin(user, userId, token) {
   state.me = user;
   localStorage.setItem('chatapp_id', userId);
-  // Never persist plaintext passwords client-side.
-  localStorage.removeItem('chatapp_pw');
   if (token) localStorage.setItem('chatapp_token', token);
   localStorage.setItem('chatapp_profile', JSON.stringify(user));
   enterApp(user);
@@ -439,6 +441,10 @@ async function doSearch(q) {
       const isFriend = state.me?.friends?.includes(u.id);
       const el = document.createElement('div');
       el.className = 's-item';
+      // data-uid lets the friendRequestError handler find and roll back
+      // this specific button if the server rejects the request, instead
+      // of only touching the profile-modal's add-friend button.
+      el.dataset.uid = u.id;
       el.innerHTML = `
         <div class="s-mini-av"></div>
         <div style="flex:1;min-width:0">
@@ -530,11 +536,32 @@ socket.on('friendRequest', req => {
 
 socket.on('requestSent', () => {});
 
-socket.on('friendRequestError', ({ reason }) => {
+socket.on('friendRequestError', ({ reason, targetId }) => {
+  // Roll back the profile-modal "add friend" button if it's the one showing.
   const addBtn = $('btn-add-friend');
   if (addBtn && addBtn.style.display !== 'none') {
     addBtn.textContent = 'Добавить в друзья';
     addBtn.disabled = false;
+  }
+  // Roll back the matching row in the search dropdown too — this is the
+  // button that most often gets stuck as "Отправлено" after a failed
+  // request, since doSearch() disables it optimistically on click.
+  if (targetId) {
+    const row = document.querySelector(`.s-item[data-uid="${CSS.escape(targetId)}"] .btn-add`);
+    if (row) {
+      row.textContent = '+ Добавить';
+      row.disabled = false;
+    }
+  } else {
+    // No targetId from the server — we don't know which row to roll back,
+    // so conservatively reset every non-friend "Отправлено" button in the
+    // currently open dropdown.
+    document.querySelectorAll('#search-results .btn-add:disabled').forEach(btn => {
+      if (btn.textContent === 'Отправлено') {
+        btn.textContent = '+ Добавить';
+        btn.disabled = false;
+      }
+    });
   }
   const messages = {
     rate_limited: 'Слишком много заявок, попробуйте позже',
@@ -770,8 +797,7 @@ function renderFriendsList() {
 
 function buildFriendEl(id) {
   const f = state.friends[id];
-  if (!f) return;
-  const list = $('friends-list');
+  if (!f) return null;
   const u = state.unread[id] || 0;
 
   const el = document.createElement('div');
@@ -795,14 +821,25 @@ function buildFriendEl(id) {
   }
 
   el.onclick = () => openChat(id);
-  list.appendChild(el);
+  return el;
 }
 
+// Re-renders a single friend row IN PLACE (same position in the list)
+// instead of removing + re-appending it, which used to silently reorder
+// the whole list to put the just-updated friend at the bottom.
 function refreshFriendItem(id) {
   const list = $('friends-list');
   const old = list.querySelector(`[data-fid="${CSS.escape(id)}"]`);
-  if (old) old.remove();
-  buildFriendEl(id);
+  const fresh = buildFriendEl(id);
+  if (!fresh) {
+    if (old) old.remove();
+    return;
+  }
+  if (old) {
+    old.replaceWith(fresh);
+  } else {
+    list.appendChild(fresh);
+  }
 }
 
 function updateStatus(id, online) {
@@ -844,8 +881,7 @@ function renderGroupsList() {
 
 function buildGroupEl(id) {
   const g = state.groups[id];
-  if (!g) return;
-  const list = $('groups-list');
+  if (!g) return null;
   const u = state.groupUnread[id] || 0;
   const onlineCount = (g.members || []).filter(m => m.online).length;
 
@@ -862,14 +898,23 @@ function buildGroupEl(id) {
 
   renderGroupAv(el.querySelector('.group-av-slot'), g);
   el.onclick = () => openGroupChat(id);
-  list.appendChild(el);
+  return el;
 }
 
+// Same in-place update as refreshFriendItem — see comment there.
 function refreshGroupItem(id) {
   const list = $('groups-list');
   const old = list.querySelector(`[data-gid="${CSS.escape(id)}"]`);
-  if (old) old.remove();
-  buildGroupEl(id);
+  const fresh = buildGroupEl(id);
+  if (!fresh) {
+    if (old) old.remove();
+    return;
+  }
+  if (old) {
+    old.replaceWith(fresh);
+  } else {
+    list.appendChild(fresh);
+  }
 }
 
 /* ============================================================================
@@ -2273,11 +2318,8 @@ socket.on('callStarted', ({ callId, chatKey }) => {
   callState.callId = callId;
   callState.chatKey = chatKey;
   $('call-overlay-status').textContent = 'ожидание ответа…';
-  if (!callState.isGroup) {
-    socket.emit('callJoin', { callId }); // initiator also joins as participant #1
-  } else {
-    socket.emit('callJoin', { callId });
-  }
+  // Initiator joins as participant #1 in both DM and group calls.
+  socket.emit('callJoin', { callId });
 });
 
 socket.on('incomingCall', (info) => {
