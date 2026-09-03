@@ -8,16 +8,10 @@ const MAX_MESSAGE_LENGTH = 4000;
 const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
 const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
-// Echo cancellation + noise suppression stay on so calls don't produce
-// feedback/noise for users without headsets. autoGainControl is OFF on
-// purpose: AGC actively boosts mic gain to hit a target loudness, which
-// means it also amplifies room/background noise when nobody is talking.
-// That pushed our volume-based "speaking" detector (see SPEAKING_THRESHOLD
-// below) above threshold almost permanently, making the speaking ring glow
-// constantly instead of only while someone is actually talking.
+// Disable all browser-side microphone processing so the call uses the raw stream.
 const RAW_AUDIO_CONSTRAINTS = {
-  echoCancellation: true,
-  noiseSuppression: true,
+  echoCancellation: false,
+  noiseSuppression: false,
   autoGainControl: false
 };
 
@@ -38,6 +32,7 @@ const state = {
   groups: Object.create(null),
   unread: Object.create(null),
   groupUnread: Object.create(null),
+  groupVoiceCalls: Object.create(null),
   pendingDeleteId: null,
   // Monotonic sequence counters guard against out-of-order async responses
   // (e.g. user clicks friend A then B before A's history request resolves).
@@ -53,6 +48,7 @@ function resetState() {
   state.groups = Object.create(null);
   state.unread = Object.create(null);
   state.groupUnread = Object.create(null);
+  state.groupVoiceCalls = Object.create(null);
   state.pendingDeleteId = null;
 }
 
@@ -690,6 +686,28 @@ socket.on('addedToGroup', ({ group }) => {
   showTransientNotice(`Вас добавили в группу «${group.name}»`);
 });
 
+socket.on('groupVoiceState', ({ groupId, callId, video, participants }) => {
+  if (!groupId) return;
+  if (!callId) delete state.groupVoiceCalls[groupId];
+  else state.groupVoiceCalls[groupId] = { callId, video: !!video, participants: participants || [] };
+  updateGroupVoiceBar(groupId);
+});
+
+socket.on('groupUpdated', ({ groupId, name, avatar }) => {
+  const group = state.groups[groupId];
+  if (!group) {
+    loadGroups();
+    return;
+  }
+  if (typeof name === 'string') group.name = name;
+  if (avatar !== undefined) group.avatar = avatar;
+  refreshGroupItem(groupId);
+  if (state.activeGroup === groupId) {
+    updateGroupChatHeader(group);
+    renderGroupMembersPanel(group);
+  }
+});
+
 socket.on('newGroupMessage', ({ groupId, msg }) => {
   if (state.activeGroup === groupId) {
     appendGroupMsg(msg);
@@ -878,13 +896,17 @@ async function loadGroups() {
 
 function renderGroupsList() {
   const list = $('groups-list');
+  if (!list) return;
   const ids = Object.keys(state.groups);
   if (!ids.length) {
     list.innerHTML = emptyGroupsHTML();
     return;
   }
   list.innerHTML = '';
-  ids.forEach(id => buildGroupEl(id));
+  ids.forEach(id => {
+    const groupEl = buildGroupEl(id);
+    if (groupEl) list.appendChild(groupEl);
+  });
 }
 
 function buildGroupEl(id) {
@@ -1104,6 +1126,7 @@ async function openGroupChat(groupId) {
   $('chat-placeholder').style.display = 'none';
   $('chat-window').style.display = 'none';
   $('group-chat-window').style.display = 'flex';
+  socket.emit('watchGroupVoice', { groupId });
 
   enterMobileChatView('btn-back-group');
 
@@ -1121,6 +1144,19 @@ async function openGroupChat(groupId) {
       $('group-messages').innerHTML = '<div style="text-align:center;color:var(--text3);padding:24px;font-size:13px">Начните общение в группе! 👋</div>';
     } else {
       history.forEach(m => appendGroupMsg(m, false));
+    }
+
+    function updateGroupVoiceBar(groupId) {
+      const bar = $('group-voice-bar');
+      const call = state.groupVoiceCalls[groupId];
+      if (!bar) return;
+      bar.style.display = call ? 'flex' : 'none';
+      if (call) {
+        $('group-voice-count').textContent = `${call.participants.length} в голосовом канале`;
+        const join = $('btn-join-group-voice');
+        join.textContent = callState.active && callState.callId === call.callId ? 'Вы в канале' : 'Войти';
+        join.disabled = callState.active && callState.callId === call.callId;
+      }
     }
     scrollMsgs('group-messages');
   } catch (e) {
@@ -1947,6 +1983,13 @@ async function startCall({ toId, groupId, video }) {
       audio: RAW_AUDIO_CONSTRAINTS,
       video: !!video
     });
+    const audioTracks = callState.localStream.getAudioTracks();
+    audioTracks.forEach(track => {
+      const settings = track.getSettings();
+      if (settings.echoCancellation || settings.noiseSuppression || settings.autoGainControl) {
+        console.warn('Browser did not apply raw microphone constraints', settings);
+      }
+    });
   } catch (e) {
     showTransientNotice('Не удалось получить доступ к камере/микрофону');
     return;
@@ -2249,6 +2292,26 @@ $('btn-group-call-audio').addEventListener('click', () => {
 $('btn-group-call-video').addEventListener('click', () => {
   if (state.activeGroup) startCall({ groupId: state.activeGroup, video: true });
 });
+ $('btn-join-group-voice').addEventListener('click', async () => {
+  const call = state.groupVoiceCalls[state.activeGroup];
+  if (!call || callState.active) return;
+  try {
+    callState.localStream = await navigator.mediaDevices.getUserMedia({
+      audio: RAW_AUDIO_CONSTRAINTS,
+      video: !!call.video
+    });
+  } catch (e) {
+    showTransientNotice('Не удалось получить доступ к камере/микрофону');
+    return;
+  }
+  callState.video = call.video;
+  callState.isGroup = true;
+  callState.groupId = state.activeGroup;
+  callState.peerFriendId = null;
+  callState.callId = call.callId;
+  openCallOverlay('соединение…');
+  socket.emit('callJoin', { callId: call.callId });
+});
 
 $('btn-call-hangup').addEventListener('click', () => {
   if (callState.callId) socket.emit('callLeave', { callId: callState.callId });
@@ -2302,6 +2365,13 @@ $('btn-call-accept').addEventListener('click', async () => {
     callState.localStream = await navigator.mediaDevices.getUserMedia({
       audio: RAW_AUDIO_CONSTRAINTS,
       video: !!info.video
+    });
+    const audioTracks = callState.localStream.getAudioTracks();
+    audioTracks.forEach(track => {
+      const settings = track.getSettings();
+      if (settings.echoCancellation || settings.noiseSuppression || settings.autoGainControl) {
+        console.warn('Browser did not apply raw microphone constraints', settings);
+      }
     });
   } catch (e) {
     showTransientNotice('Не удалось получить доступ к камере/микрофону');

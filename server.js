@@ -974,6 +974,7 @@ async function isGroupMember(userId, groupId) {
 
 // ─── Calls registry ─────────────────────────────────────────────────────────
 const activeCalls = new Map();
+const pendingCalls = new Map();
 
 function findCallById(callId) {
   if (!callId) return null;
@@ -995,7 +996,23 @@ function leaveCall(socket, userId, callId) {
 
   if (call.participants.size === 0) {
     activeCalls.delete(call.chatKey);
+    if (call.type === 'group') {
+      io.to(`group:${call.groupId}`).emit('groupVoiceState', { groupId: call.groupId, callId: null });
+    }
+  } else if (call.type === 'group') {
+    io.to(`group:${call.groupId}`).emit('groupVoiceState', {
+      groupId: call.groupId, callId: call.callId, video: call.video,
+      participants: [...call.participants]
+    });
   }
+}
+
+function emitGroupVoiceState(groupId, target) {
+  const call = activeCalls.get(`group:${groupId}`);
+  const payload = call ? {
+    groupId, callId: call.callId, video: call.video, participants: [...call.participants]
+  } : { groupId, callId: null };
+  (target ? io.to(target) : io.to(`group:${groupId}`)).emit('groupVoiceState', payload);
 }
 
 // ─── Socket.IO ────────────────────────────────────────────────────────────────
@@ -1068,6 +1085,12 @@ io.on('connection', (socket) => {
         blockedUsers: user.blockedUsers,
         unreadCounts, groupUnreadCounts
       });
+      const pendingForUser = pendingCalls.get(currentUserId) || [];
+      for (const pending of pendingForUser.filter(item => Date.now() - item.createdAt < 5 * 60 * 1000)) {
+        const call = findCallById(pending.callId);
+        if (call) socket.emit('incomingCall', pending);
+      }
+      pendingCalls.delete(currentUserId);
       logger.info(`[online] ${currentUserId}`);
     } catch (err) { logger.error('Connection init error', { socketId: socket.id, error: err.message, stack: err.stack }); }
   })();
@@ -1448,8 +1471,6 @@ io.on('connection', (socket) => {
         const me = await User.findByPk(currentUserId);
         if (!me || !me.friends.includes(toId)) return socket.emit('callError', { reason: 'not_friend' });
         if (me.blockedUsers.includes(toId)) return socket.emit('callError', { reason: 'blocked' });
-        if (!isOnline(toId)) return socket.emit('callError', { reason: 'offline' });
-
         const chatKey = dmChatKey(currentUserId, toId);
         if (activeCalls.has(chatKey)) return socket.emit('callError', { reason: 'busy' });
 
@@ -1463,10 +1484,16 @@ io.on('connection', (socket) => {
         socket.activeCallKeys.add(chatKey);
 
         socket.emit('callStarted', { callId, chatKey });
-        io.to(toId).emit('incomingCall', {
+        const invitation = {
           callId, chatKey, isGroup: false, video: !!video,
-          from: currentUserId, fromNick: me.nickname
-        });
+          from: currentUserId, fromNick: me.nickname, createdAt: Date.now()
+        };
+        if (isOnline(toId)) io.to(toId).emit('incomingCall', invitation);
+        else {
+          const queued = pendingCalls.get(toId) || [];
+          queued.push(invitation);
+          pendingCalls.set(toId, queued);
+        }
       } else if (groupId) {
         if (!(await isGroupMember(currentUserId, groupId))) return socket.emit('callError', { reason: 'not_member' });
         const chatKey = groupChatKey(groupId);
@@ -1483,6 +1510,7 @@ io.on('connection', (socket) => {
             callId: call.callId, chatKey, isGroup: true, groupId, video: !!video,
             from: currentUserId, fromNick: me.nickname
           });
+          emitGroupVoiceState(groupId);
         }
         socket.emit('callStarted', { callId: call.callId, chatKey });
       } else {
@@ -1516,6 +1544,7 @@ io.on('connection', (socket) => {
 
       socket.emit('callParticipants', { callId: call.callId, chatKey: call.chatKey, video: call.video, participants: existingPeers });
       socket.to(`call:${call.callId}`).emit('peerJoined', { callId: call.callId, peerId: currentUserId });
+      if (call.type === 'group') emitGroupVoiceState(call.groupId);
     } catch (err) {
       logger.error('callJoin error', { error: err.message });
       socket.emit('callError', { reason: 'server_error' });
@@ -1529,6 +1558,15 @@ io.on('connection', (socket) => {
     if (call.type === 'dm' && call.participants.size <= 1) {
       activeCalls.delete(call.chatKey);
     }
+    if (call.type === 'dm' && call.targetId === currentUserId) {
+      const queued = pendingCalls.get(currentUserId);
+      if (queued) pendingCalls.set(currentUserId, queued.filter(item => item.callId !== call.callId));
+    }
+  });
+
+  socket.on('watchGroupVoice', async ({ groupId } = {}) => {
+    if (!groupId || !(await isGroupMember(currentUserId, groupId))) return;
+    emitGroupVoiceState(groupId, currentUserId);
   });
 
   socket.on('callSignal', ({ callId, to, data } = {}) => {
