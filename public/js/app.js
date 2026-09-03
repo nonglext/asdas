@@ -790,13 +790,17 @@ function renderRequests(reqs) {
  * ==========================================================================*/
 function renderFriendsList() {
   const list = $('friends-list');
+  if (!list) return;
   const ids = Object.keys(state.friends);
   if (!ids.length) {
     list.innerHTML = emptyFriendsHTML();
     return;
   }
   list.innerHTML = '';
-  ids.forEach(id => buildFriendEl(id));
+  ids.forEach(id => {
+    const friendEl = buildFriendEl(id);
+    if (friendEl) list.appendChild(friendEl);
+  });
 }
 
 function buildFriendEl(id) {
