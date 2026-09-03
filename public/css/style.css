@@ -1146,7 +1146,12 @@ html, body {
   overflow: hidden; display: flex; align-items: center; justify-content: center;
   min-height: 140px;
   box-shadow: 0 8px 20px rgba(0,0,0,.18);
+  transition: box-shadow .15s ease, border-color .15s ease;
 }
+/* Видео-режим: слабая фиолетовая рамка у своего тайла, зелёная — когда
+   человек реально говорит (определяется через Web Audio API в JS) */
+.call-tile.local { border-color: rgba(124,110,245,0.5); }
+.call-tile.speaking { border-color: #23a559; box-shadow: 0 0 0 2px rgba(35,165,89,.35), 0 8px 20px rgba(0,0,0,.18); }
 .call-tile video {
   width: 100%; height: 100%; object-fit: cover; background: #000;
 }
@@ -1182,13 +1187,37 @@ html, body {
   background: var(--neutral-avatar-gradient);
   border: 3px solid #000;
   box-shadow: 0 0 0 1px rgba(255,255,255,0.12);
+  transition: box-shadow .15s ease;
 }
-.voice-mode .call-tile.local .call-tile-avatar { box-shadow: 0 0 0 2px #23a559; }
+/* Слабое фиолетовое кольцо — просто чтобы отличать свой тайл от чужих,
+   никак не связано с речевой активностью */
+.voice-mode .call-tile.local .call-tile-avatar {
+  box-shadow: 0 0 0 2px rgba(124,110,245,0.65);
+}
+/* Индикатор "говорит сейчас" — включается/выключается только из JS
+   на основе реального анализа громкости микрофона (Web Audio API),
+   а не горит постоянно */
+.call-tile.speaking .call-tile-avatar {
+  box-shadow: 0 0 0 2px #23a559, 0 0 12px 1px rgba(35,165,89,.55);
+}
 .call-tile-nick {
-  position: absolute; left: 50%; bottom: -21px; transform: translateX(-50%);
-  width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  text-align: center; font-size: 10px; font-weight: 600; padding: 2px 4px;
-  border-radius: 3px; background: rgba(17,18,20,0.82); color: #f2f3f5;
+  position: absolute; left: 50%; bottom: -22px; transform: translateX(-50%);
+  max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: center; font-size: 10.5px; font-weight: 600; padding: 3px 8px;
+  border-radius: 6px; background: rgba(17,18,20,0.88); color: #f2f3f5;
+  border: 1px solid rgba(255,255,255,0.06);
+  transition: color .15s ease;
+}
+.call-tile.speaking .call-tile-nick { color: #7de5a8; }
+
+/* Значок выключенного микрофона — только на своём тайле */
+.call-tile-mic-off {
+  position: absolute; right: -1px; bottom: -1px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: #da373c; color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid #000;
+  z-index: 1;
 }
 .call-tile.local video { transform: scaleX(-1); }
 
@@ -1252,5 +1281,6 @@ html, body {
   }
   .voice-mode .call-tile { min-height: 56px; width: 56px; height: 56px; }
   .voice-mode .call-tile-avatar { width: 56px; height: 56px; font-size: 18px; }
+  .call-tile-mic-off { width: 17px; height: 17px; }
   .call-overlay-controls { padding-bottom: 20px; }
 }

@@ -1948,6 +1948,8 @@ function closeCallOverlay() {
   $('incoming-call-modal').style.display = 'none';
   clearTimeout(callState.ringTimer);
 
+  stopAllSpeakingMonitors();
+
   if (callState.localStream) {
     callState.localStream.getTracks().forEach(t => t.stop());
   }
@@ -1977,11 +1979,19 @@ function renderCallGrid() {
 
   // Local tile
   grid.appendChild(makeCallTile('local', state.me?.nickname || 'Я', state.me?.avatar, callState.localStream, true));
+  ensureSpeakingMonitor('local', callState.localStream);
 
   // Remote tiles
   for (const [peerId, p] of Object.entries(callState.peers)) {
     grid.appendChild(makeCallTile(peerId, callPeerName(peerId), callPeerAvatar(peerId), p.stream, false));
+    ensureSpeakingMonitor(peerId, p.stream);
   }
+
+  // Останавливаем мониторинг для участников, которых больше нет в звонке
+  const activeIds = new Set(['local', ...Object.keys(callState.peers)]);
+  Object.keys(speakingMonitors).forEach(id => {
+    if (!activeIds.has(id)) stopSpeakingMonitor(id);
+  });
 }
 
 function makeCallTile(id, nickname, avatarUrl, stream, isLocal) {
@@ -2004,12 +2014,108 @@ function makeCallTile(id, nickname, avatarUrl, stream, isLocal) {
   renderAv(avWrap, nickname, avatarUrl);
   tile.appendChild(avWrap);
 
+  // Бейдж выключенного микрофона — показываем только у себя, т.к. только
+  // свой статус микрофона известен достоверно (у собеседников об этом
+  // судим по индикатору речи, а не по отдельному значку).
+  if (isLocal && !callState.micOn) {
+    const micBadge = document.createElement('div');
+    micBadge.className = 'call-tile-mic-off';
+    micBadge.title = 'Микрофон выключен';
+    micBadge.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>`;
+    tile.appendChild(micBadge);
+  }
+
   const label = document.createElement('div');
   label.className = 'call-tile-nick';
-  label.textContent = isLocal ? `${nickname} (вы)` : nickname;
+  label.textContent = nickname;
   tile.appendChild(label);
 
   return tile;
+}
+
+/* ============================================================================
+ * CALL: индикатор "говорит сейчас" — реальный анализ громкости через Web
+ * Audio API, а не статичная всегда включённая подсветка.
+ * ==========================================================================*/
+const SPEAKING_THRESHOLD = 0.045; // порог RMS громкости, начиная с которого считаем, что человек говорит
+const speakingMonitors = Object.create(null); // id ('local' | peerId) -> { ctx, analyser, data, source, stream, raf }
+
+function setSpeakingUI(id, isSpeaking) {
+  const tile = document.querySelector(`.call-tile[data-peer="${CSS.escape(id)}"]`);
+  if (tile) tile.classList.toggle('speaking', isSpeaking);
+}
+
+function stopSpeakingMonitor(id) {
+  const mon = speakingMonitors[id];
+  if (!mon) return;
+  cancelAnimationFrame(mon.raf);
+  try { mon.source.disconnect(); } catch (e) {}
+  try { mon.ctx.close(); } catch (e) {}
+  delete speakingMonitors[id];
+  setSpeakingUI(id, false);
+}
+
+function stopAllSpeakingMonitors() {
+  Object.keys(speakingMonitors).forEach(stopSpeakingMonitor);
+}
+
+function startSpeakingMonitor(id, stream) {
+  if (!stream || !stream.getAudioTracks().length) return;
+
+  let ctx;
+  try {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+  } catch (e) {
+    return; // Web Audio недоступен в этом браузере — просто не показываем индикатор
+  }
+
+  let source;
+  try {
+    source = ctx.createMediaStreamSource(stream);
+  } catch (e) {
+    try { ctx.close(); } catch (e2) {}
+    return;
+  }
+
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 512;
+  analyser.smoothingTimeConstant = 0.65;
+  source.connect(analyser);
+  const data = new Uint8Array(analyser.frequencyBinCount);
+
+  const mon = { ctx, analyser, data, source, stream, raf: null };
+  speakingMonitors[id] = mon;
+
+  let wasSpeaking = false;
+  (function tick() {
+    if (!speakingMonitors[id]) return; // монитор остановлен
+    analyser.getByteTimeDomainData(data);
+    let sumSquares = 0;
+    for (let i = 0; i < data.length; i++) {
+      const v = (data[i] - 128) / 128;
+      sumSquares += v * v;
+    }
+    const rms = Math.sqrt(sumSquares / data.length);
+    const isSpeaking = rms > SPEAKING_THRESHOLD;
+    if (isSpeaking !== wasSpeaking) {
+      wasSpeaking = isSpeaking;
+      setSpeakingUI(id, isSpeaking);
+    }
+    mon.raf = requestAnimationFrame(tick);
+  })();
+}
+
+// Запускает мониторинг громкости для id, только если поток реально сменился —
+// чтобы не пересоздавать AudioContext на каждый renderCallGrid().
+function ensureSpeakingMonitor(id, stream) {
+  const existing = speakingMonitors[id];
+  if (!stream || !stream.getAudioTracks().length) {
+    if (existing) stopSpeakingMonitor(id);
+    return;
+  }
+  if (existing && existing.stream === stream) return;
+  if (existing) stopSpeakingMonitor(id);
+  startSpeakingMonitor(id, stream);
 }
 
 function createPeerConnection(peerId) {
@@ -2094,6 +2200,7 @@ $('btn-call-toggle-mic').addEventListener('click', () => {
   micButton.classList.toggle('active-off', !callState.micOn);
   micButton.title = callState.micOn ? 'Выключить микрофон' : 'Включить микрофон';
   micButton.setAttribute('aria-label', micButton.title);
+  renderCallGrid();
 });
 
 $('btn-call-toggle-cam').addEventListener('click', () => {
