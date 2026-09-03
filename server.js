@@ -1379,6 +1379,69 @@ io.on('connection', (socket) => {
 async function ensureSchema() {
   const qi = sequelize.getQueryInterface();
 
+  /* --------------------------------------------------------------------
+   * FIX (ROOT CAUSE #2): "relation group_members does not exist"
+   *
+   * sequelize.sync() создаёт таблицы одним проходом в порядке зависимостей
+   * ассоциаций. Если на каком-то из предыдущих (неудачных) деплоев Postgres
+   * уже успел создать ENUM-тип "enum_group_members_role" (для колонки
+   * GroupMember.role), а сама таблица group_members создана не была —
+   * повторный sync() падает на шаге "CREATE TYPE ... AS ENUM (...)" с
+   * ошибкой "type already exists", и ВЕСЬ sync() прерывается. Из-за этого
+   * ни groups, ни group_members так и не создаются, а сервер всё равно
+   * запускается (ошибка sync() только логируется, см. ниже) — отсюда и
+   * рантайм-ошибка "relation group_members does not exist" при первом же
+   * обращении к таблице.
+   *
+   * Решение: досоздаём groups/group_members здесь напрямую через
+   * идемпотентный raw SQL (IF NOT EXISTS / DO-блок с перехватом
+   * duplicate_object), не полагаясь на sequelize.sync(). Ничего не удаляет
+   * и не трогает существующие данные — безопасно на каждом старте.
+   * ------------------------------------------------------------------ */
+  try {
+    await sequelize.query(`
+      DO $$ BEGIN
+        CREATE TYPE "enum_group_members_role" AS ENUM ('owner', 'member');
+      EXCEPTION
+        WHEN duplicate_object THEN NULL;
+      END $$;
+    `);
+
+    await sequelize.query(`
+      CREATE TABLE IF NOT EXISTS "groups" (
+        "id" UUID PRIMARY KEY,
+        "name" VARCHAR(${MAX_GROUP_NAME_LENGTH}) NOT NULL,
+        "avatar" VARCHAR(255),
+        "owner_id" VARCHAR(255) NOT NULL,
+        "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        "updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await sequelize.query(`
+      CREATE TABLE IF NOT EXISTS "group_members" (
+        "id" UUID PRIMARY KEY,
+        "group_id" UUID NOT NULL,
+        "user_id" VARCHAR(255) NOT NULL,
+        "role" "enum_group_members_role" DEFAULT 'member',
+        "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        "updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await sequelize.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "group_members_group_id_user_id"
+        ON "group_members" ("group_id", "user_id");
+    `);
+    await sequelize.query(`
+      CREATE INDEX IF NOT EXISTS "group_members_user_id" ON "group_members" ("user_id");
+    `);
+
+    logger.info('✅ Миграция: таблицы groups/group_members проверены');
+  } catch (err) {
+    logger.error('❌ Ошибка миграции (groups/group_members)', { error: err.message, stack: err.stack });
+  }
+
   try {
     const tables = await qi.showAllTables();
     const tableSet = new Set(tables.map(t => (typeof t === 'string' ? t : t.tableName)));
