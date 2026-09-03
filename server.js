@@ -1473,22 +1473,42 @@ const PORT = process.env.PORT || 3000;
 (async () => {
   const connected = await connectWithRetry();
   if (connected) {
-    try {
-      if (process.env.NODE_ENV === 'production') {
-        // sync() без alter создаёт отсутствующие ЦЕЛИКОМ таблицы
-        // (в т.ч. groups и group_members, если их ещё нет в БД).
+    if (process.env.NODE_ENV === 'production') {
+      // FIX (ROOT CAUSE #3): sequelize.sync() падал ("column group_id does
+      // not exist" при попытке создать индекс на messages.group_id,
+      // которой ещё нет) — и это исключение прерывало try-блок ДО того,
+      // как выполнялась следующая строка с ensureSchema(). В итоге
+      // миграция groups/group_members/messages.group_id вообще ни разу
+      // не запускалась, хотя ошибка sync() каждый раз логировалась и
+      // сервер всё равно стартовал.
+      //
+      // Теперь sync() и ensureSchema() — в НЕЗАВИСИМЫХ try/catch, и
+      // ensureSchema() (которая сама умеет идемпотентно досоздавать все
+      // недостающие таблицы/колонки через raw SQL) выполняется всегда,
+      // даже если sync() упал.
+      try {
+        // sync() без alter создаёт отсутствующие ЦЕЛИКОМ таблицы —
+        // best effort, ошибки здесь не критичны, т.к. ensureSchema()
+        // ниже подстрахует все нужные таблицы/колонки независимо.
         await sequelize.sync();
-        // ensureSchema() добивает точечные additive-изменения к уже
-        // существующим таблицам (messages.group_id), которые sync() без
-        // alter пропускает. Безопасно вызывать на каждом старте.
+        logger.info('✅ sequelize.sync() выполнен без ошибок (production)');
+      } catch (err) {
+        logger.error('⚠️  sequelize.sync() завершился с ошибкой (не критично, ensureSchema() подстрахует)', { error: err.message, stack: err.stack });
+      }
+
+      try {
         await ensureSchema();
         logger.info('✅ Таблицы проверены и синхронизированы (production)');
-      } else {
+      } catch (err) {
+        logger.error('❌ ensureSchema() error', { error: err.message, stack: err.stack });
+      }
+    } else {
+      try {
         await sequelize.sync({ alter: true });
         logger.info('✅ Таблицы синхронизированы (dev, alter: true)');
+      } catch (err) {
+        logger.error('❌ Sync error', { error: err.message, stack: err.stack });
       }
-    } catch (err) {
-      logger.error('❌ Sync error', { error: err.message, stack: err.stack });
     }
   } else {
     logger.warn('⚠️  Сервер запускается без подтверждённого подключения к БД.');
