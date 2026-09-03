@@ -690,6 +690,7 @@ socket.on('groupVoiceState', ({ groupId, callId, video, participants }) => {
   if (!groupId) return;
   if (!callId) delete state.groupVoiceCalls[groupId];
   else state.groupVoiceCalls[groupId] = { callId, video: !!video, participants: participants || [] };
+  renderGroupsList();
   updateGroupVoiceBar(groupId);
 });
 
@@ -914,6 +915,10 @@ function buildGroupEl(id) {
   if (!g) return null;
   const u = state.groupUnread[id] || 0;
   const onlineCount = (g.members || []).filter(m => m.online).length;
+  const voice = state.groupVoiceCalls[id];
+  const voiceMembers = voice
+    ? voice.participants.map(peerId => g.members?.find(member => member.id === peerId)?.nickname || peerId)
+    : [];
 
   const el = document.createElement('div');
   el.className = 'friend-item group-item' + (state.activeGroup === id ? ' active' : '');
@@ -924,10 +929,28 @@ function buildGroupEl(id) {
       <div class="f-nick">${esc(g.name)}</div>
       <div class="f-stat">${(g.members || []).length} уч. · ${onlineCount} онлайн</div>
     </div>
-    ${u ? `<div class="f-unread">${u}</div>` : ''}`;
+    ${u ? `<div class="f-unread">${u}</div>` : ''}
+    ${voice ? `<div class="group-voice-channel" data-voice-group="${esc(id)}">
+      <div class="group-voice-channel-head">
+        <span class="group-voice-channel-icon">♫</span>
+        <span class="group-voice-channel-name">Голосовой канал</span>
+        <span class="group-voice-channel-count">${voice.participants.length}</span>
+      </div>
+      <div class="group-voice-channel-members">${voiceMembers.length
+        ? voiceMembers.map(name => `<span class="group-voice-member"><i></i>${esc(name)}</span>`).join('')
+        : '<span class="group-voice-member empty">Канал активен</span>'}</div>
+      <button class="group-voice-channel-join" type="button">Войти</button>
+    </div>` : ''}`;
 
   renderGroupAv(el.querySelector('.group-av-slot'), g);
   el.onclick = () => openGroupChat(id);
+  const joinButton = el.querySelector('.group-voice-channel-join');
+  if (joinButton) {
+    joinButton.onclick = (event) => {
+     event.stopPropagation();
+     joinExistingGroupVoice(id);
+    };
+  }
   return el;
 }
 
@@ -1127,6 +1150,7 @@ async function openGroupChat(groupId) {
   $('chat-window').style.display = 'none';
   $('group-chat-window').style.display = 'flex';
   socket.emit('watchGroupVoice', { groupId });
+  updateGroupVoiceBar(groupId);
 
   enterMobileChatView('btn-back-group');
 
@@ -1146,17 +1170,45 @@ async function openGroupChat(groupId) {
       history.forEach(m => appendGroupMsg(m, false));
     }
 
+    function joinExistingGroupVoice(groupId) {
+      const call = state.groupVoiceCalls[groupId];
+      if (!call || callState.active) return;
+      startExistingCall(call, groupId);
+    }
+
+    async function startExistingCall(call, groupId) {
+      try {
+        callState.localStream = await navigator.mediaDevices.getUserMedia({
+          audio: RAW_AUDIO_CONSTRAINTS,
+          video: !!call.video
+        });
+      } catch (e) {
+        showTransientNotice('Не удалось получить доступ к камере/микрофону');
+        return;
+      }
+      callState.video = call.video;
+      callState.isGroup = true;
+      callState.groupId = groupId;
+      callState.peerFriendId = null;
+      callState.callId = call.callId;
+      openCallOverlay('соединение…');
+      socket.emit('callJoin', { callId: call.callId });
+    }
+
     function updateGroupVoiceBar(groupId) {
       const bar = $('group-voice-bar');
       const call = state.groupVoiceCalls[groupId];
       if (!bar) return;
-      bar.style.display = call ? 'flex' : 'none';
-      if (call) {
-        $('group-voice-count').textContent = `${call.participants.length} в голосовом канале`;
-        const join = $('btn-join-group-voice');
-        join.textContent = callState.active && callState.callId === call.callId ? 'Вы в канале' : 'Войти';
-        join.disabled = callState.active && callState.callId === call.callId;
-      }
+      const isCurrentGroup = state.activeGroup === groupId;
+      bar.style.display = isCurrentGroup ? 'flex' : 'none';
+      if (!isCurrentGroup) return;
+      $('group-voice-count').textContent = call
+        ? `${call.participants.length} в голосовом канале`
+        : 'Голосовой канал · никто не подключён';
+      const join = $('btn-join-group-voice');
+      join.textContent = callState.active && callState.callId === call?.callId
+        ? 'Вы в канале' : call ? 'Войти' : 'Подключиться';
+      join.disabled = callState.active && callState.callId === call?.callId;
     }
     scrollMsgs('group-messages');
   } catch (e) {
@@ -2293,25 +2345,11 @@ $('btn-group-call-video').addEventListener('click', () => {
   if (state.activeGroup) startCall({ groupId: state.activeGroup, video: true });
 });
  $('btn-join-group-voice').addEventListener('click', async () => {
-  const call = state.groupVoiceCalls[state.activeGroup];
-  if (!call || callState.active) return;
-  try {
-    callState.localStream = await navigator.mediaDevices.getUserMedia({
-      audio: RAW_AUDIO_CONSTRAINTS,
-      video: !!call.video
-    });
-  } catch (e) {
-    showTransientNotice('Не удалось получить доступ к камере/микрофону');
-    return;
-  }
-  callState.video = call.video;
-  callState.isGroup = true;
-  callState.groupId = state.activeGroup;
-  callState.peerFriendId = null;
-  callState.callId = call.callId;
-  openCallOverlay('соединение…');
-  socket.emit('callJoin', { callId: call.callId });
-});
+   if (callState.active) return;
+   const call = state.groupVoiceCalls[state.activeGroup];
+   if (call) joinExistingGroupVoice(state.activeGroup);
+   else startCall({ groupId: state.activeGroup, video: false });
+ });
 
 $('btn-call-hangup').addEventListener('click', () => {
   if (callState.callId) socket.emit('callLeave', { callId: callState.callId });
