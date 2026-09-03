@@ -8,6 +8,16 @@ const MAX_MESSAGE_LENGTH = 4000;
 const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
 const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
+// FIX: "чистый звук" в звонках — отключаем всю встроенную обработку сигнала
+// браузером (эхоподавление, шумодав, автоусиление), чтобы микрофон отдавал
+// сырой, необработанный поток. Используется в обоих местах, где вызывается
+// getUserMedia() — исходящий звонок и приём входящего.
+const RAW_AUDIO_CONSTRAINTS = {
+  echoCancellation: false,
+  noiseSuppression: false,
+  autoGainControl: false
+};
+
 // Иконка коронки для владельца группы
 const CROWN_SVG = '<svg class="gm-crown" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" title="Владелец группы"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg>';
 
@@ -331,7 +341,7 @@ $('btn-register').addEventListener('click', async () => {
   if (!userId || userId.length < 3) return setErr('ID минимум 3 символа');
   if (!/^[a-z0-9_]+$/.test(userId)) return setErr('ID: только a-z, 0-9, _');
   if (!nickname) return setErr('Введите никнейм');
-  if (!password || password.length < 4) return setErr('Пароль минимум 4 символа');
+  if (!password || password.length < 8) return setErr('Пароль минимум 8 символов');
 
   await withButtonBusy($('btn-register'), 'Загрузка…', async () => {
     try {
@@ -1803,7 +1813,11 @@ async function startCall({ toId, groupId, video }) {
     return;
   }
   try {
-    callState.localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: !!video });
+    // FIX: чистый звук — отключена встроенная обработка сигнала браузером.
+    callState.localStream = await navigator.mediaDevices.getUserMedia({
+      audio: RAW_AUDIO_CONSTRAINTS,
+      video: !!video
+    });
   } catch (e) {
     showTransientNotice('Не удалось получить доступ к камере/микрофону');
     return;
@@ -1998,7 +2012,12 @@ $('btn-call-accept').addEventListener('click', async () => {
   $('incoming-call-modal').style.display = 'none';
 
   try {
-    callState.localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: !!info.video });
+    // FIX: чистый звук — отключена встроенная обработка сигнала браузером
+    // (то же самое, что и при исходящем звонке в startCall()).
+    callState.localStream = await navigator.mediaDevices.getUserMedia({
+      audio: RAW_AUDIO_CONSTRAINTS,
+      video: !!info.video
+    });
   } catch (e) {
     showTransientNotice('Не удалось получить доступ к камере/микрофону');
     socket.emit('callReject', { callId: info.callId });

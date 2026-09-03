@@ -11,8 +11,12 @@ const fs = require('fs');
 const multer = require('multer');
 const winston = require('winston');
 const crypto = require('crypto');
-// FIX #2.1: HTTP security headers. Требуется: npm i helmet
 const helmet = require('helmet');
+// FIX: REST API (Express) не имел CORS вовсе — были настроены только
+// сокеты. Если фронтенд обслуживается с другого origin, браузер блокировал
+// бы все fetch()-запросы к /api/*. Используем тот же allow-list, что и для
+// socket.io. Требуется: npm i cors
+const cors = require('cors');
 
 const app = express();
 const server = http.createServer(app);
@@ -70,6 +74,11 @@ const MAX_NICKNAME_LENGTH = 50;
 const MAX_STATUS_LENGTH = 150;
 const MAX_BIO_LENGTH = 1000;
 const MAX_TEXT_LENGTH = 4000;
+// FIX: минимальная длина пароля была 4 символа — это слишком слабо для
+// продакшн-приложения с обычными паролями (никакой доп. энтропии типа 2FA
+// нет). Поднято до 8. При желании ужесточить дальше — добавить проверку
+// на наличие цифр/букв разных регистров через отдельную функцию.
+const MIN_PASSWORD_LENGTH = 8;
 const MAX_PASSWORD_LENGTH = 128;
 const MAX_GROUP_NAME_LENGTH = 50;
 
@@ -95,6 +104,16 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false
 }));
 
+// FIX: единый CORS-заголовок для REST API, использующий тот же allow-list,
+// что и Socket.IO выше — раньше эти два места могли незаметно разойтись.
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (corsAllowList.length === 0 || corsAllowList.includes(origin)) return callback(null, true);
+    callback(new Error('CORS blocked'));
+  }
+}));
+
 app.use((req, res, next) => {
   req.requestId = crypto.randomUUID();
   res.setHeader('X-Request-Id', req.requestId);
@@ -110,12 +129,16 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
   message: { error: 'Слишком много попыток, попробуйте через 15 минут' }
 });
 
 const searchLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
   message: { error: 'Слишком много запросов поиска' }
 });
 
@@ -250,6 +273,27 @@ async function deleteUploadedFile(publicPath) {
 
 const AVATAR_PATH_RE = /^\/uploads\/[0-9a-f-]{36}\.(jpg|png|webp|gif)$/;
 
+// FIX: multer.fileFilter доверяет Content-Type, который присылает клиент —
+// это можно легко подделать (например, загрузить .html/.svg с payload'ом
+// под видом image/jpeg, что при определённых условиях раздачи статики
+// может привести к stored XSS). Проверяем реальные "магические байты"
+// файла уже после сохранения на диск и удаляем файл, если он не является
+// тем, за что себя выдаёт. Требуется: npm i file-type (пакет ESM-only,
+// поэтому импортируется динамически даже в CommonJS-проекте).
+const ALLOWED_IMAGE_EXTS = new Set(['jpg', 'png', 'webp', 'gif']);
+
+async function verifyIsRealImage(filePath) {
+  try {
+    const buffer = await fs.promises.readFile(filePath);
+    const { fileTypeFromBuffer } = await import('file-type');
+    const detected = await fileTypeFromBuffer(buffer);
+    return !!(detected && ALLOWED_IMAGE_EXTS.has(detected.ext === 'jpg' ? 'jpg' : detected.ext));
+  } catch (err) {
+    logger.error('Ошибка проверки типа файла', { file: filePath, error: err.message });
+    return false;
+  }
+}
+
 function makeSocketLimiter(maxPerWindow, windowMs) {
   const hits = new Map();
   setInterval(() => {
@@ -371,7 +415,9 @@ app.post('/api/register', authLimiter, async (req, res) => {
     if (!id || id.length < 3) return res.status(400).json({ error: 'ID минимум 3 символа' });
     if (id.length > 30) return res.status(400).json({ error: 'ID максимум 30 символов' });
     if (!/^[a-z0-9_]+$/.test(id)) return res.status(400).json({ error: 'ID: только a-z, 0-9, _' });
-    if (typeof password !== 'string' || password.length < 4) return res.status(400).json({ error: 'Пароль минимум 4 символа' });
+    if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
+      return res.status(400).json({ error: `Пароль минимум ${MIN_PASSWORD_LENGTH} символов` });
+    }
     if (password.length > MAX_PASSWORD_LENGTH) return res.status(400).json({ error: `Пароль максимум ${MAX_PASSWORD_LENGTH} символов` });
 
     const exists = await User.findByPk(id);
@@ -493,6 +539,13 @@ app.post('/api/upload/avatar', authMiddleware, upload.single('avatar'), async (r
   try {
     const userId = req.user.id;
     if (!req.file) return res.status(400).json({ error: 'Файл не загружен' });
+
+    const filePath = path.join(__dirname, 'uploads', req.file.filename);
+    if (!(await verifyIsRealImage(filePath))) {
+      await deleteUploadedFile(`/uploads/${req.file.filename}`);
+      return res.status(400).json({ error: 'Файл не является допустимым изображением' });
+    }
+
     const user = await User.findByPk(userId);
     if (!user) {
       await deleteUploadedFile(`/uploads/${req.file.filename}`);
@@ -692,15 +745,6 @@ app.post('/api/groups', authMiddleware, async (req, res) => {
 
       const groupData = await getGroupWithMembers(group.id);
 
-      // FIX: раньше сюда слался только { groupId }, без самого объекта
-      // группы. Клиент (app.js: socket.on('addedToGroup', ({ group }) => {
-      // if (!group) return; ... })) ждёт именно поле `group` — при
-      // получении только groupId условие `if (!group) return;` тихо
-      // прерывало обработку, и group так и не появлялась в state.groups
-      // у приглашённых участников. Из-за этого чат становился доступен
-      // только после релоуда страницы (state.groups подтягивался через
-      // REST в loadGroups() при инициализации). Теперь шлём полный объект,
-      // как это уже сделано в addGroupMember.
       for (const memberId of uniqueMembers) {
         if (memberId !== userId) io.to(memberId).emit('addedToGroup', { group: groupData });
       }
@@ -798,6 +842,12 @@ app.post('/api/groups/:groupId/avatar', authMiddleware, upload.single('avatar'),
     if (!UUID_RE.test(groupId)) return res.status(400).json({ error: 'Некорректный ID группы' });
     if (!req.file) return res.status(400).json({ error: 'Файл не загружен' });
 
+    const filePath = path.join(__dirname, 'uploads', req.file.filename);
+    if (!(await verifyIsRealImage(filePath))) {
+      await deleteUploadedFile(`/uploads/${req.file.filename}`);
+      return res.status(400).json({ error: 'Файл не является допустимым изображением' });
+    }
+
     const group = await Group.findByPk(groupId);
     if (!group) {
       await deleteUploadedFile(`/uploads/${req.file.filename}`);
@@ -843,8 +893,6 @@ app.get('/api/groups/:groupId/messages', authMiddleware, async (req, res) => {
     }
 
     const messages = await Message.findAll({ where, order: [['createdAt', 'DESC']], limit: limitNum });
-    // FIX: добавлен groupId в ответ, чтобы фронт мог однозначно определить,
-    // что это сообщение группового чата (раньше приходилось угадывать по контексту).
     res.json(messages.reverse().map(m => ({
       _id: m.id, from: m.from, to: m.to, groupId: m.groupId, text: m.text, image: m.image,
       type: m.type, deleted: m.deleted, time: m.createdAt.toISOString()
@@ -859,15 +907,25 @@ app.get('/api/groups/:groupId/messages', authMiddleware, async (req, res) => {
 app.get('/api/health', async (req, res) => {
   try {
     await sequelize.authenticate();
-    res.json({ status: 'ok', db: 'connected' });
+    res.json({ status: 'ok', db: 'connected', uptimeSeconds: Math.round(process.uptime()) });
   } catch (err) {
     res.status(503).json({ status: 'error', db: 'disconnected' });
   }
 });
 
-// ─── FIX #2.6: централизованная обработка ошибок multer/Express ──────────────
+// ─── FIX: централизованная обработка ошибок Express/multer/body-parser/CORS ──
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
+
+  // FIX: раньше некорректный JSON в теле запроса (например, обрезанный
+  // fetch с Content-Type: application/json) попадал в этот же обработчик
+  // и возвращал общий 500 вместо понятного 400 "bad request".
+  if (err.type === 'entity.parse.failed' || err instanceof SyntaxError) {
+    return res.status(400).json({ error: 'Некорректный формат JSON в теле запроса' });
+  }
+  if (err.message === 'CORS blocked') {
+    return res.status(403).json({ error: 'CORS: источник запроса не разрешён' });
+  }
   if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'Файл слишком большой (максимум 5 МБ)' });
   if (err.message && err.message.includes('Разрешены только')) return res.status(400).json({ error: err.message });
   logger.error('Express error', { requestId: req.requestId, error: err.message, stack: err.stack });
@@ -915,7 +973,6 @@ async function isGroupMember(userId, groupId) {
 }
 
 // ─── Calls registry ─────────────────────────────────────────────────────────
-// chatKey -> { callId, type: 'dm'|'group', chatKey, groupId?, video, initiator, targetId?, participants: Set<userId> }
 const activeCalls = new Map();
 
 function findCallById(callId) {
@@ -1200,8 +1257,6 @@ io.on('connection', (socket) => {
     try {
       if (!currentUserId) return socket.disconnect();
       if (!friendId) return;
-      // FIX: батчами по 1000, чтобы не блокировать БД при огромной истории
-      // непрочитанных сообщений одним массовым UPDATE.
       const BATCH = 1000;
       let rows;
       do {
@@ -1352,8 +1407,6 @@ io.on('connection', (socket) => {
       }
     } catch (err) {
       logger.error('Leave group error', { socketId: socket.id, error: err.message, stack: err.stack });
-      // FIX: раньше ошибка только логировалась, клиент не узнавал о сбое
-      // и UI мог зависнуть в ложном состоянии "вышел из группы".
       socket.emit('groupError', { reason: 'server_error' });
     }
   });
@@ -1384,8 +1437,6 @@ io.on('connection', (socket) => {
   });
 
   // ─── Calls (WebRTC signaling: DM + Group) ─────────────────────────────────
-  // In-memory registry of active calls. One active call per chat at a time.
-  // chatKey: dm -> `dm:${sortedIds.join(':')}`, group -> `group:${groupId}`
   socket.activeCallKeys = socket.activeCallKeys || new Set();
 
   function dmChatKey(a, b) { return `dm:${[a, b].sort().join(':')}`; }
@@ -1394,7 +1445,6 @@ io.on('connection', (socket) => {
   socket.on('callStart', async ({ toId, groupId, video } = {}) => {
     try {
       if (toId) {
-        // ── DM call ──
         const me = await User.findByPk(currentUserId);
         if (!me || !me.friends.includes(toId)) return socket.emit('callError', { reason: 'not_friend' });
         if (me.blockedUsers.includes(toId)) return socket.emit('callError', { reason: 'blocked' });
@@ -1418,7 +1468,6 @@ io.on('connection', (socket) => {
           from: currentUserId, fromNick: me.nickname
         });
       } else if (groupId) {
-        // ── Group call ──
         if (!(await isGroupMember(currentUserId, groupId))) return socket.emit('callError', { reason: 'not_member' });
         const chatKey = groupChatKey(groupId);
         const me = await User.findByPk(currentUserId);
@@ -1512,45 +1561,10 @@ io.on('connection', (socket) => {
   });
 });
 
-/* ============================================================================
- * FIX (ROOT CAUSE): "relation group_members does not exist" /
- * "column group_id does not exist"
- *
- * Причина: несколько неудачных деплоев подряд (SyntaxError, отсутствующий
- * пакет helmet) падали ДО вызова sequelize.sync(), поэтому схема БД так и не
- * была создана/обновлена, хотя модели Group/GroupMember/messages.groupId уже
- * были в коде. sequelize.sync() без alter создаёт только ПОЛНОСТЬЮ новые
- * таблицы — он не добавляет недостающие колонки к уже существующим таблицам
- * (в данном случае — messages.group_id, потому что таблица messages уже
- * существовала с предыдущего деплоя).
- *
- * ensureSchema() — безопасная, идемпотентная, additive-only миграция:
- * добавляет недостающую колонку/индекс, если их ещё нет. Ничего не удаляет
- * и не меняет типы существующих колонок, поэтому безопасна для постоянного
- * использования на каждом старте сервера (в отличие от alter: true).
- * ==========================================================================*/
+// ─── Schema migration (additive, idempotent) ──────────────────────────────────
 async function ensureSchema() {
   const qi = sequelize.getQueryInterface();
 
-  /* --------------------------------------------------------------------
-   * FIX (ROOT CAUSE #2): "relation group_members does not exist"
-   *
-   * sequelize.sync() создаёт таблицы одним проходом в порядке зависимостей
-   * ассоциаций. Если на каком-то из предыдущих (неудачных) деплоев Postgres
-   * уже успел создать ENUM-тип "enum_group_members_role" (для колонки
-   * GroupMember.role), а сама таблица group_members создана не была —
-   * повторный sync() падает на шаге "CREATE TYPE ... AS ENUM (...)" с
-   * ошибкой "type already exists", и ВЕСЬ sync() прерывается. Из-за этого
-   * ни groups, ни group_members так и не создаются, а сервер всё равно
-   * запускается (ошибка sync() только логируется, см. ниже) — отсюда и
-   * рантайм-ошибка "relation group_members does not exist" при первом же
-   * обращении к таблице.
-   *
-   * Решение: досоздаём groups/group_members здесь напрямую через
-   * идемпотентный raw SQL (IF NOT EXISTS / DO-блок с перехватом
-   * duplicate_object), не полагаясь на sequelize.sync(). Ничего не удаляет
-   * и не трогает существующие данные — безопасно на каждом старте.
-   * ------------------------------------------------------------------ */
   try {
     await sequelize.query(`
       DO $$ BEGIN
@@ -1606,25 +1620,6 @@ async function ensureSchema() {
         await qi.addColumn('messages', 'group_id', { type: DataTypes.UUID, allowNull: true });
       }
 
-      /* ------------------------------------------------------------------
-       * FIX (ROOT CAUSE #4): "null value in column ... violates not-null
-       * constraint" (сначала chat_key, потом to — та же причина)
-       *
-       * Несколько колонок messages в реальной БД были созданы с NOT NULL
-       * ещё до того, как в приложении появились групповые сообщения —
-       * тогда каждое сообщение обязательно было DM (chat_key и to всегда
-       * заполнены). У групповых сообщений chat_key и to всегда null
-       * (вместо них используется group_id). Модель Sequelize объявляет их
-       * как allowNull: true, но sync() без alter НЕ меняет ограничения
-       * уже существующих колонок — поэтому constraint в БД оставался
-       * NOT NULL, и создание группового сообщения падало то на одной,
-       * то на другой колонке.
-       *
-       * Вместо того чтобы чинить по одной колонке за деплой, здесь разом
-       * приводим NULL-констрейнты в БД в соответствие с моделью для всех
-       * полей, которые она объявляет как allowNull: true. Идемпотентно:
-       * если ограничения уже нет — Postgres ничего не делает.
-       * ------------------------------------------------------------------ */
       const nullableColumns = ['chat_key', 'group_id', 'to', 'image'];
       for (const col of nullableColumns) {
         if (cols[col] && cols[col].allowNull === false) {
@@ -1637,9 +1632,6 @@ async function ensureSchema() {
     logger.error('❌ Ошибка миграции (messages.group_id / chat_key)', { error: err.message, stack: err.stack });
   }
 
-  // Индекс по group_id — best effort: если уже есть или таблица только что
-  // создана sync()-ом со своим индексом, addIndex бросит исключение,
-  // которое здесь безопасно игнорируется.
   try {
     await qi.addIndex('messages', ['group_id'], { name: 'messages_group_id' });
   } catch (err) {
@@ -1654,22 +1646,7 @@ const PORT = process.env.PORT || 3000;
   const connected = await connectWithRetry();
   if (connected) {
     if (process.env.NODE_ENV === 'production') {
-      // FIX (ROOT CAUSE #3): sequelize.sync() падал ("column group_id does
-      // not exist" при попытке создать индекс на messages.group_id,
-      // которой ещё нет) — и это исключение прерывало try-блок ДО того,
-      // как выполнялась следующая строка с ensureSchema(). В итоге
-      // миграция groups/group_members/messages.group_id вообще ни разу
-      // не запускалась, хотя ошибка sync() каждый раз логировалась и
-      // сервер всё равно стартовал.
-      //
-      // Теперь sync() и ensureSchema() — в НЕЗАВИСИМЫХ try/catch, и
-      // ensureSchema() (которая сама умеет идемпотентно досоздавать все
-      // недостающие таблицы/колонки через raw SQL) выполняется всегда,
-      // даже если sync() упал.
       try {
-        // sync() без alter создаёт отсутствующие ЦЕЛИКОМ таблицы —
-        // best effort, ошибки здесь не критичны, т.к. ensureSchema()
-        // ниже подстрахует все нужные таблицы/колонки независимо.
         await sequelize.sync();
         logger.info('✅ sequelize.sync() выполнен без ошибок (production)');
       } catch (err) {
