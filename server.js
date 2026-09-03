@@ -42,12 +42,6 @@ if (corsAllowList.length === 0) {
   logger.warn('⚠️  CLIENT_URL не задан — CORS разрешает ЛЮБОЙ origin! (нормально только для локальной разработки)');
 }
 
-// NOTE: original code reads process.env.JWTSECRET here but checks
-// process.env.JWT_SECRET in the warning/production-guard below. Kept as
-// JWT_SECRET everywhere for consistency — this was very likely a bug in the
-// pasted source (two different env var names for the same secret). If your
-// Render environment variable is literally named JWTSECRET, rename it to
-// JWT_SECRET, or tell me and I'll change every reference back.
 const JWT_SECRET = process.env.JWT_SECRET || 'changethissecretinproduction';
 const SALT_ROUNDS = 12;
 
@@ -71,7 +65,6 @@ const MAX_BLOCKED = 200;
 const MAX_FRIEND_REQUESTS = 200;
 const MAX_GROUP_MEMBERS = 50;
 const MAX_GROUPS_PER_USER = 100;
-// FIX #2.5: base64 раздувает данные ровно в 4/3 ≈ 1.3334 раза (раньше было 1.37 — завышено)
 const MAX_IMAGE_BASE64_CHARS = Math.ceil((5 * 1024 * 1024) * (4 / 3));
 const MAX_NICKNAME_LENGTH = 50;
 const MAX_STATUS_LENGTH = 150;
@@ -80,7 +73,6 @@ const MAX_TEXT_LENGTH = 4000;
 const MAX_PASSWORD_LENGTH = 128;
 const MAX_GROUP_NAME_LENGTH = 50;
 
-// FIX #2.3: единый формат UUID для валидации groupId во всех обработчиках
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const io = new Server(server, {
@@ -98,15 +90,11 @@ const io = new Server(server, {
 app.set('trust proxy', 1);
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
-// FIX #2.1: helmet. CSP отключён, т.к. index.html содержит inline-
-// (анти-мигание сессии) и грузит шрифты с Google Fonts — дефолтный CSP это ломает.
-// Остальные security-заголовки (X-Content-Type-Options, HSTS и т.д.) остаются.
 app.use(helmet({
   contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false
 }));
 
-// FIX #4.6: requestId для трассировки запросов в логах
 app.use((req, res, next) => {
   req.requestId = crypto.randomUUID();
   res.setHeader('X-Request-Id', req.requestId);
@@ -119,16 +107,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
-// FIX #2.4 (документация): express-rate-limit и makeSocketLimiter хранят счётчики
-// В ПАМЯТИ ПРОЦЕССА. При горизонтальном масштабировании (несколько инстансов/воркеров)
-// лимиты будут применяться к каждому инстансу отдельно и суммарно станут в N раз мягче.
-// Для production с несколькими воркерами подключить общий store:
-//   const { RedisStore } = require('rate-limit-redis');
-//   const { createClient } = require('redis');
-//   const client = createClient({ url: process.env.REDIS_URL });
-//   await client.connect();
-//   rateLimit({ ..., store: new RedisStore({ sendCommand: (...a) => client.sendCommand(a) }) })
-// Сейчас приложение работает в один процесс — оставляем in-memory.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
@@ -154,7 +132,6 @@ const sequelize = new Sequelize(dbUrl, {
   retry: { max: 3 }
 });
 
-// FIX #3.4: экспоненциальный backoff с jitter вместо постоянной задержки
 async function connectWithRetry(retries = 5, delayMs = 3000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -203,7 +180,6 @@ const Message = sequelize.define('Message', {
     { fields: ['chat_key'] },
     { fields: ['group_id'] },
     { fields: ['created_at'] },
-    // FIX #4.5: индексы по полям, используемым в WHERE (unread-подсчёты, история)
     { fields: ['from'] },
     { fields: ['to'] },
     { fields: ['read'] }
@@ -260,7 +236,6 @@ function isOnline(userId) {
 
 function getChatKey(a, b) { return [a, b].sort().join('::'); }
 
-// FIX #4.1: async/await вместо callback — единообразно с остальным кодом
 async function deleteUploadedFile(publicPath) {
   if (!publicPath || typeof publicPath !== 'string') return;
   const fullPath = path.join(__dirname, 'uploads', path.basename(publicPath));
@@ -275,7 +250,6 @@ async function deleteUploadedFile(publicPath) {
 
 const AVATAR_PATH_RE = /^\/uploads\/[0-9a-f-]{36}\.(jpg|png|webp|gif)$/;
 
-// FIX #2.4: см. комментарий у rateLimit выше — in-memory, не работает при масштабировании
 function makeSocketLimiter(maxPerWindow, windowMs) {
   const hits = new Map();
   setInterval(() => {
@@ -297,15 +271,10 @@ function makeSocketLimiter(maxPerWindow, windowMs) {
   };
 }
 
-// Ограничение частоты отправки заявок в друзья, сообщений и групповых действий
-// (защита сверх express-rate-limit, применяется к сокет-событиям).
 const canSendFriendRequest = makeSocketLimiter(20, 60 * 1000);
 const canSendMessage = makeSocketLimiter(30, 10 * 1000);
 const canGroupAction = makeSocketLimiter(20, 60 * 1000);
 
-// Периодическая уборка "осиротевших" записей onlineUsers — сокеты, которые
-// закрылись без корректного события disconnect (например, при рестарте
-// процесса Socket.IO без полной остановки сервера).
 setInterval(() => {
   const connectedSocketIds = new Set(io.sockets.sockets.keys());
   for (const [userId, socketIds] of Object.entries(onlineUsers)) {
@@ -317,9 +286,6 @@ setInterval(() => {
 }, 60_000);
 
 // ─── Group room helpers (FIX #3.3) ────────────────────────────────────────────
-// Set групп хранится НА СОКЕТЕ (socket.groupIds) и заполняется при подключении,
-// чтобы groupMessage/markGroupRead не ходили в БД на каждое сообщение.
-// Обновляется в addGroupMember / leaveGroup / kickGroupMember / groupDeleted.
 function joinUserToGroupRoom(userId, groupId) {
   const sids = onlineUsers[userId];
   if (!sids) return;
@@ -345,9 +311,6 @@ function leaveUserFromGroupRoom(userId, groupId) {
 }
 
 // ─── JWT Auth Middleware ──────────────────────────────────────────────────────
-// FIX #2.2: короткий in-memory кэш существования пользователя, чтобы JWT удалённого
-// пользователя не оставался валидным до истечения срока. TTL 30с — компромисс между
-// безопасностью и нагрузкой на БД (негативный кэш — 5с).
 const userExistCache = new Map(); // userId -> { ok, exp }
 const USER_EXIST_CACHE_TTL = 30000;
 
@@ -358,7 +321,7 @@ async function userExists(id) {
   const u = await User.findByPk(id);
   const ok = !!u;
   userExistCache.set(id, { ok, exp: now + (ok ? USER_EXIST_CACHE_TTL : 5000) });
-  if (userExistCache.size > 10_000) userExistCache.clear(); // защита от переполнения
+  if (userExistCache.size > 10_000) userExistCache.clear();
   return ok;
 }
 
@@ -497,7 +460,6 @@ app.post('/api/profile/update', authMiddleware, async (req, res) => {
     if (nickname !== undefined && (typeof nickname !== 'string' || nickname.length > MAX_NICKNAME_LENGTH)) {
       return res.status(400).json({ error: `Никнейм максимум ${MAX_NICKNAME_LENGTH} символов` });
     }
-    // FIX #5: пустой никнейм после trim больше не сохраняется
     if (nickname !== undefined && nickname.trim().length === 0) {
       return res.status(400).json({ error: 'Никнейм не может быть пустым' });
     }
@@ -615,7 +577,6 @@ app.get('/api/messages/:userId/:friendId', authMiddleware, async (req, res) => {
   try {
     if (req.user.id !== req.params.userId) return res.status(403).json({ error: 'Нет доступа' });
 
-    // FIX #5: история доступна только между друзьями
     const meUser = await User.findByPk(req.user.id, { attributes: ['id', 'friends'] });
     if (!meUser || !meUser.friends.includes(req.params.friendId)) {
       return res.status(403).json({ error: 'Нет доступа' });
@@ -705,7 +666,6 @@ app.post('/api/groups', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: `Максимум ${MAX_GROUPS_PER_USER} групп` });
     }
 
-    // FIX #4.4: Set вместо includes в цикле — O(N+M) вместо O(N*M)
     const friendSet = new Set(user.friends);
     for (const memberId of memberIds) {
       if (memberId === userId) continue;
@@ -729,7 +689,6 @@ app.post('/api/groups', authMiddleware, async (req, res) => {
       for (const memberId of uniqueMembers) {
         if (memberId !== userId) joinUserToGroupRoom(memberId, group.id);
       }
-      // Участники подтянут актуальные данные через свой loadGroups/addedToGroup
       for (const memberId of uniqueMembers) {
         if (memberId !== userId) io.to(memberId).emit('addedToGroup', { groupId: group.id });
       }
@@ -746,9 +705,6 @@ app.post('/api/groups', authMiddleware, async (req, res) => {
   }
 });
 
-// FIX #3.1: вместо N+1 (по 2 запроса на группу) — 2 запроса суммарно:
-// 1) страницы групп пользователя, 2) ВСЕ участники этих групп одним запросом.
-// FIX #5: лимит + пагинация.
 app.get('/api/groups', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -798,7 +754,6 @@ app.get('/api/groups', authMiddleware, async (req, res) => {
   }
 });
 
-// FIX #4.2: переименование группы (только владелец)
 app.patch('/api/groups/:groupId', authMiddleware, async (req, res) => {
   try {
     const { groupId } = req.params;
@@ -826,7 +781,6 @@ app.patch('/api/groups/:groupId', authMiddleware, async (req, res) => {
   }
 });
 
-// FIX #4.3: аватар группы (только владелец)
 app.post('/api/groups/:groupId/avatar', authMiddleware, upload.single('avatar'), async (req, res) => {
   try {
     const { groupId } = req.params;
@@ -950,10 +904,8 @@ async function isGroupMember(userId, groupId) {
 // ─── Socket.IO ────────────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
   const currentUserId = socket.user.id;
-  // FIX #5: защита от race condition при мгновенном дисконнекте
   if (!currentUserId) return socket.disconnect(true);
 
-  // FIX #3.3: Set групп пользователя живёт на сокете
   socket.groupIds = new Set();
   socket.groupsLoaded = false;
 
@@ -978,8 +930,6 @@ io.on('connection', (socket) => {
         user.friends.forEach(fId => io.to(fId).emit('friendOnline', { id: currentUserId, nickname: user.nickname }));
       }
 
-      // FIX #3.2: memberships запрашивается ОДИН раз и переиспользуется
-      // и для join в комнаты, и для groupIds, и для unread-подсчёта.
       const memberships = await GroupMember.findAll({ where: { userId: currentUserId } });
       for (const m of memberships) {
         socket.join(`group:${m.groupId}`);
@@ -996,7 +946,6 @@ io.on('connection', (socket) => {
         unreadRows.map(r => [r.from, parseInt(r.get('count'), 10)])
       );
 
-      // FIX #1.6: считаем только НЕПРОЧИТАННЫЕ (read: false)
       const groupIds = memberships.map(m => m.groupId);
       let groupUnreadCounts = {};
       if (groupIds.length) {
@@ -1052,8 +1001,6 @@ io.on('connection', (socket) => {
       if (from.blockedUsers.includes(toId)) return socket.emit('friendRequestError', { toId, reason: 'blocked' });
       if (to.friendRequests.length >= MAX_FRIEND_REQUESTS) return socket.emit('friendRequestError', { toId, reason: 'target_limit_reached' });
 
-      // Атомарный UPDATE ... WHERE NOT (уже друзья/заявка/блок) — защищает от
-      // гонки двух параллельных заявок без отдельной блокировки строки.
       const affected = await sequelize.query(
         `UPDATE "users"
          SET friend_requests = array_append(friend_requests, :fromId)
@@ -1089,8 +1036,6 @@ io.on('connection', (socket) => {
       let result;
       try {
         result = await sequelize.transaction(async (t) => {
-          // Принимаем заявку только если она реально есть у меня, и добавляем
-          // fromId в мои друзья, соблюдая лимит MAX_FRIENDS.
           const meResult = await sequelize.query(
             `UPDATE "users"
              SET friend_requests = array_remove(friend_requests, :fromId),
@@ -1106,7 +1051,6 @@ io.on('connection', (socket) => {
           );
           if (!meResult || !meResult.length) return null;
 
-          // Симметрично добавляем меня в друзья к отправителю заявки.
           await sequelize.query(
             `UPDATE "users"
              SET friends = CASE WHEN :myId = ANY(friends) THEN friends ELSE array_append(friends, :myId) END
@@ -1181,7 +1125,6 @@ io.on('connection', (socket) => {
     try {
       if (!currentUserId) return socket.disconnect();
       if (!canSendMessage(currentUserId)) return socket.emit('rateLimited', 'sendMessage');
-      // FIX #1.4: явная ранняя проверка toId
       if (!toId || typeof toId !== 'string') return;
       if (text !== undefined && typeof text !== 'string') return;
       if (image !== undefined && image !== null && typeof image !== 'string') return;
@@ -1229,21 +1172,17 @@ io.on('connection', (socket) => {
     try {
       if (!currentUserId) return socket.disconnect();
       if (!canSendMessage(currentUserId)) return socket.emit('rateLimited', 'sendMessage');
-      // FIX #2.3: валидация формата UUID
       if (!groupId || typeof groupId !== 'string' || !UUID_RE.test(groupId)) return;
-      // FIX #1.3: валидация типа image (как в sendMessage)
       if (text !== undefined && typeof text !== 'string') return;
       if (image !== undefined && image !== null && typeof image !== 'string') return;
       if (!text?.trim() && !image) return;
       if (text && text.trim().length > MAX_TEXT_LENGTH) {
         return socket.emit('sendMessageError', { groupId, reason: 'text_too_long' });
       }
-      // FIX #1.2: проверка размера изображения (как в sendMessage)
       if (image && image.length > MAX_IMAGE_BASE64_CHARS) {
         return socket.emit('sendMessageError', { groupId, reason: 'image_too_large' });
       }
 
-      // FIX #3.3: быстрый путь через socket.groupIds; DB-фолбэк только при промахе
       if (!socket.groupIds.has(groupId)) {
         if (!(await isGroupMember(currentUserId, groupId))) return;
         socket.groupIds.add(groupId);
@@ -1263,7 +1202,6 @@ io.on('connection', (socket) => {
     } catch (err) { logger.error('Group message error', { socketId: socket.id, error: err.message, stack: err.stack }); }
   });
 
-  // FIX #1.5: реальное обнуление непрочитанных в БД
   socket.on('markGroupRead', async (groupId) => {
     try {
       if (!currentUserId) return socket.disconnect();
@@ -1304,8 +1242,6 @@ io.on('connection', (socket) => {
         return socket.emit('groupError', { reason: 'blocked' });
       }
 
-      // FIX #1.8: findOrCreate атомарно защищает от гонки двух параллельных
-      // добавлений (уникальный индекс group_id+user_id) — без исключений
       const [row, created] = await GroupMember.findOrCreate({
         where: { groupId, userId },
         defaults: { role: 'member' }
@@ -1338,15 +1274,12 @@ io.on('connection', (socket) => {
       if (!group) return;
 
       if (membership.role === 'owner') {
-        // FIX #1.7: удаление группы — атомарно, в одной транзакции
         await sequelize.transaction(async (t) => {
           await Message.destroy({ where: { groupId }, transaction: t });
           await GroupMember.destroy({ where: { groupId }, transaction: t });
           await group.destroy({ transaction: t });
         });
 
-        // FIX #1.1: уведомляем комнату и чистим кэш groupIds у всех её сокетов.
-        // Мёртвый findAll после destroy удалён.
         const roomSids = [...(io.sockets.adapter.rooms.get(`group:${groupId}`) || [])];
         io.to(`group:${groupId}`).emit('groupDeleted', { groupId });
         for (const sid of roomSids) {
@@ -1401,6 +1334,51 @@ io.on('connection', (socket) => {
   });
 });
 
+/* ============================================================================
+ * FIX (ROOT CAUSE): "relation group_members does not exist" /
+ * "column group_id does not exist"
+ *
+ * Причина: несколько неудачных деплоев подряд (SyntaxError, отсутствующий
+ * пакет helmet) падали ДО вызова sequelize.sync(), поэтому схема БД так и не
+ * была создана/обновлена, хотя модели Group/GroupMember/messages.groupId уже
+ * были в коде. sequelize.sync() без alter создаёт только ПОЛНОСТЬЮ новые
+ * таблицы — он не добавляет недостающие колонки к уже существующим таблицам
+ * (в данном случае — messages.group_id, потому что таблица messages уже
+ * существовала с предыдущего деплоя).
+ *
+ * ensureSchema() — безопасная, идемпотентная, additive-only миграция:
+ * добавляет недостающую колонку/индекс, если их ещё нет. Ничего не удаляет
+ * и не меняет типы существующих колонок, поэтому безопасна для постоянного
+ * использования на каждом старте сервера (в отличие от alter: true).
+ * ==========================================================================*/
+async function ensureSchema() {
+  const qi = sequelize.getQueryInterface();
+
+  try {
+    const tables = await qi.showAllTables();
+    const tableSet = new Set(tables.map(t => (typeof t === 'string' ? t : t.tableName)));
+
+    if (tableSet.has('messages')) {
+      const cols = await qi.describeTable('messages');
+      if (!cols.group_id) {
+        logger.info('🔧 Миграция: добавляю колонку messages.group_id');
+        await qi.addColumn('messages', 'group_id', { type: DataTypes.UUID, allowNull: true });
+      }
+    }
+  } catch (err) {
+    logger.error('❌ Ошибка миграции (messages.group_id)', { error: err.message, stack: err.stack });
+  }
+
+  // Индекс по group_id — best effort: если уже есть или таблица только что
+  // создана sync()-ом со своим индексом, addIndex бросит исключение,
+  // которое здесь безопасно игнорируется.
+  try {
+    await qi.addIndex('messages', ['group_id'], { name: 'messages_group_id' });
+  } catch (err) {
+    // индекс уже существует — это нормально, ничего не делаем
+  }
+}
+
 // ─── Запуск сервера ───────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 
@@ -1409,8 +1387,14 @@ const PORT = process.env.PORT || 3000;
   if (connected) {
     try {
       if (process.env.NODE_ENV === 'production') {
+        // sync() без alter создаёт отсутствующие ЦЕЛИКОМ таблицы
+        // (в т.ч. groups и group_members, если их ещё нет в БД).
         await sequelize.sync();
-        logger.info('✅ Таблицы проверены (production, без auto-alter)');
+        // ensureSchema() добивает точечные additive-изменения к уже
+        // существующим таблицам (messages.group_id), которые sync() без
+        // alter пропускает. Безопасно вызывать на каждом старте.
+        await ensureSchema();
+        logger.info('✅ Таблицы проверены и синхронизированы (production)');
       } else {
         await sequelize.sync({ alter: true });
         logger.info('✅ Таблицы синхронизированы (dev, alter: true)');
