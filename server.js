@@ -689,11 +689,22 @@ app.post('/api/groups', authMiddleware, async (req, res) => {
       for (const memberId of uniqueMembers) {
         if (memberId !== userId) joinUserToGroupRoom(memberId, group.id);
       }
-      for (const memberId of uniqueMembers) {
-        if (memberId !== userId) io.to(memberId).emit('addedToGroup', { groupId: group.id });
-      }
 
       const groupData = await getGroupWithMembers(group.id);
+
+      // FIX: раньше сюда слался только { groupId }, без самого объекта
+      // группы. Клиент (app.js: socket.on('addedToGroup', ({ group }) => {
+      // if (!group) return; ... })) ждёт именно поле `group` — при
+      // получении только groupId условие `if (!group) return;` тихо
+      // прерывало обработку, и group так и не появлялась в state.groups
+      // у приглашённых участников. Из-за этого чат становился доступен
+      // только после релоуда страницы (state.groups подтягивался через
+      // REST в loadGroups() при инициализации). Теперь шлём полный объект,
+      // как это уже сделано в addGroupMember.
+      for (const memberId of uniqueMembers) {
+        if (memberId !== userId) io.to(memberId).emit('addedToGroup', { group: groupData });
+      }
+
       res.json({ success: true, group: groupData });
     } catch (err) {
       await transaction.rollback();
