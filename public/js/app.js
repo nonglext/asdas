@@ -2,33 +2,30 @@
 
 let me = null;
 let activeFriend = null;
-// Object.create(null) вместо {} — защита от prototype pollution: серверный ID
-// пользователя проходит только regex /^[a-z0-9_]+$/, под который подходит и
-// "__proto__". Если такой ID попадёт сюда как ключ обычного {} объекта
-// (friends[fId] = ...), это подменит прототип объекта friends вместо того,
-// чтобы просто добавить запись. С null-прототипом "__proto__" — обычный ключ.
+let activeGroup = null;
 let friends = Object.create(null);
+let groups = Object.create(null);
 let unread = Object.create(null);
+let groupUnread = Object.create(null);
 let pendingDeleteId = null;
-let chatRequestSeq = 0; // счётчик для защиты openChat от гонки при быстром переключении чатов
-let profileRequestSeq = 0; // защита showUserProfile от гонки при быстром переключении профилей
+let chatRequestSeq = 0;
+let groupChatRequestSeq = 0;
+let profileRequestSeq = 0;
 
 const MAX_MESSAGE_LENGTH = 4000;
-const MAX_AVATAR_SIZE = 5 * 1024 * 1024; // должно совпадать с лимитом multer на сервере
+const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
 const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
-// Раньше: const socket = io()  — без токена. Сервер (io.use в server.js) требует
-// socket.handshake.auth.token и без него сразу рвёт соединение с 'Unauthorized'.
-// Из-за этого ни одно событие (sendFriendRequest, sendMessage и т.д.) не доходило.
-// Укажите здесь реальный URL вашего бэкенда на Render!
-const BACKEND_URL = "https://asdas-p7ht.onrender.com"; 
+const BACKEND_URL = "https://asdas-p7ht.onrender.com";
 
-// Передаем URL первым аргументом
-const socket = io(BACKEND_URL, { 
+const socket = io(BACKEND_URL, {
   autoConnect: false,
-  transports: ['websocket', 'polling'] // Явное указание транспортов для стабильности
+  transports: ['websocket', 'polling']
 });
 const $ = id => document.getElementById(id);
+
+// Иконка коронки для владельца группы
+const CROWN_SVG = '<svg class="gm-crown" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" title="Владелец группы"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg>';
 
 function connectSocket() {
   const token = localStorage.getItem('chatapp_token');
@@ -46,13 +43,14 @@ function esc(s) {
 function fmtTime(iso) {
   return new Date(iso).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
 }
+function fmtDate(iso) {
+  return new Date(iso).toLocaleDateString('ru', { day: 'numeric', month: 'long', year: 'numeric' });
+}
 function setErr(msg) { $('auth-error').textContent = msg || ''; }
 
-// Закрывает все модалки поверх экрана — используется при принудительном разлогине,
-// чтобы истёкший токен (401 / socket 'connect_error') не оставлял модалку висящей
-// поверх экрана входа (аудит, пункт 1).
 function closeAllModals() {
-  ['profile-modal', 'edit-profile-modal', 'blocked-users-modal', 'delete-confirm'].forEach(id => {
+  ['profile-modal', 'edit-profile-modal', 'blocked-users-modal', 'delete-confirm',
+   'create-group-modal', 'group-info-modal', 'add-members-modal'].forEach(id => {
     const el = $(id);
     if (el) el.style.display = 'none';
   });
@@ -60,9 +58,9 @@ function closeAllModals() {
 }
 
 function forceLogoutToLogin(message) {
-  // Общий выход при истёкшем/невалидном токене — используется и REST-, и socket-путём,
-  // чтобы поведение не расходилось (раньше так делал только socket 'connect_error').
-  me = null; activeFriend = null; friends = Object.create(null); unread = Object.create(null);
+  me = null; activeFriend = null; activeGroup = null;
+  friends = Object.create(null); groups = Object.create(null);
+  unread = Object.create(null); groupUnread = Object.create(null);
   if (socket.connected) socket.disconnect();
   localStorage.removeItem('chatapp_id');
   localStorage.removeItem('chatapp_pw');
@@ -75,11 +73,6 @@ function forceLogoutToLogin(message) {
   if (message) setErr(message);
 }
 
-// ─── Auth Fetch (всегда отправляет JWT-токен) ──────────────────────────────────
-// Раньше 401 от REST-запросов (например, из-за истёкшего токена) никак не
-// обрабатывался централизованно — только socket 'connect_error' мог разлогинить.
-// Из-за этого REST-запросы могли молча падать с невнятной ошибкой, пока сокет
-// ещё не переподключился. Теперь любой 401 сразу ведёт на экран входа.
 async function authFetch(url, options = {}) {
   const token = localStorage.getItem('chatapp_token');
   const res = await fetch(url, {
@@ -95,8 +88,8 @@ async function authFetch(url, options = {}) {
   return res;
 }
 
-// Render avatar: image or letter
 function renderAv(el, nickname, avatarUrl) {
+  if (!el) return;
   if (avatarUrl) {
     el.textContent = '';
     const img = document.createElement('img');
@@ -110,19 +103,42 @@ function renderAv(el, nickname, avatarUrl) {
   }
 }
 
+// Аватар группы — сетка из лиц участников (как в Discord)
+function renderGroupAv(el, group) {
+  if (!el) return;
+  el.textContent = '';
+  el.classList.add('group-av');
+  const members = (group.members || []).slice(0, 4);
+  if (!members.length) { el.textContent = '#'; return; }
+  const grid = document.createElement('div');
+  grid.className = 'group-av-grid g' + members.length;
+  members.forEach(m => {
+    const cell = document.createElement('div');
+    cell.className = 'group-av-cell';
+    if (m.avatar) {
+      const img = document.createElement('img');
+      img.src = m.avatar; img.alt = ''; img.loading = 'lazy';
+      img.onerror = () => { cell.textContent = av(m.nickname); };
+      cell.appendChild(img);
+    } else {
+      cell.textContent = av(m.nickname);
+    }
+    grid.appendChild(cell);
+  });
+  el.appendChild(grid);
+}
+
 // ─── Password toggle ──────────────────────────────────────────────────────────
 document.querySelectorAll('.pw-toggle').forEach(btn => {
   btn.addEventListener('click', () => {
     const input = $(btn.dataset.target);
     input.type = input.type === 'password' ? 'text' : 'password';
     const svg = btn.querySelector('svg');
-    if (svg) {
-      svg.style.opacity = input.type === 'text' ? '0.5' : '1';
-    }
+    if (svg) svg.style.opacity = input.type === 'text' ? '0.5' : '1';
   });
 });
 
-// ─── Tabs ─────────────────────────────────────────────────────────────────────
+// ─── Auth Tabs ────────────────────────────────────────────────────────────────
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -130,6 +146,17 @@ document.querySelectorAll('.tab').forEach(tab => {
     tab.classList.add('active');
     $('tab-' + tab.dataset.tab).classList.add('active');
     setErr('');
+  });
+});
+
+// ─── Sidebar Tabs (DM / Groups) ──────────────────────────────────────────────
+document.querySelectorAll('.sidebar-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    const isGroups = tab.dataset.stab === 'groups';
+    $('dm-panel').style.display = isGroups ? 'none' : '';
+    $('groups-panel').style.display = isGroups ? '' : 'none';
   });
 });
 
@@ -148,7 +175,7 @@ $('btn-register').addEventListener('click', async () => {
   const btn = $('btn-register');
   btn.disabled = true; btn.textContent = 'Загрузка…';
   try {
-    const res = await fetch('/api/register', {
+    const res = await fetch(BACKEND_URL + '/api/register', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId, nickname, password })
     });
@@ -173,7 +200,7 @@ $('btn-login').addEventListener('click', async () => {
   const btn = $('btn-login');
   btn.disabled = true; btn.textContent = 'Загрузка…';
   try {
-    const res = await fetch('/api/login', {
+    const res = await fetch(BACKEND_URL + '/api/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId, password })
     });
@@ -193,11 +220,6 @@ $('btn-login').addEventListener('click', async () => {
 function saveAndLogin(user, userId, password, token) {
   me = user;
   localStorage.setItem('chatapp_id', userId);
-  // Раньше здесь же сохранялся пароль в открытом виде (chatapp_pw) и на каждой
-  // перезагрузке страницы он заново отправлялся на /api/login — это и давало
-  // "мигание" формы входа (страница ждала ответ сети, прежде чем показать чат),
-  // а хранить пароль в localStorage в принципе небезопасно. Теперь храним только
-  // токен и кэш профиля — вход при перезагрузке идёт по токену через сокет.
   localStorage.removeItem('chatapp_pw');
   if (token) localStorage.setItem('chatapp_token', token);
   localStorage.setItem('chatapp_profile', JSON.stringify(user));
@@ -210,7 +232,8 @@ function enterApp(user) {
   $('my-id').textContent   = '@' + user.id;
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   $('app-screen').classList.add('active');
-  connectSocket(); // было: socket.emit('auth', user.id) — сервер это событие не слушал
+  connectSocket();
+  loadGroups();
 }
 
 // ─── Logout ───────────────────────────────────────────────────────────────────
@@ -219,21 +242,35 @@ $('btn-logout').addEventListener('click', () => {
   $('friends-list').innerHTML = emptyFriendsHTML();
   $('requests-list').innerHTML = '';
   $('requests-section').style.display = 'none';
-  $('chat-window').style.display = 'none';
-  $('chat-placeholder').style.display = '';
+  $('groups-list').innerHTML = emptyGroupsHTML();
+  closeActiveChat();
 });
+
+function closeActiveChat() {
+  activeFriend = null;
+  activeGroup = null;
+  $('chat-placeholder').style.display = '';
+  $('chat-window').style.display = 'none';
+  $('group-chat-window').style.display = 'none';
+}
 
 function emptyFriendsHTML() {
   return `<div class="empty-state">
-    <div class="empty-icon">
-      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
-    </div>
+    <div class="empty-icon"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg></div>
     <div class="empty-title">Нет контактов</div>
     <div class="empty-sub">Найди кого-нибудь через поиск</div>
   </div>`;
 }
 
-// ─── Me card → open edit profile ─────────────────────────────────────────────
+function emptyGroupsHTML() {
+  return `<div class="empty-state">
+    <div class="empty-icon"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg></div>
+    <div class="empty-title">Нет групп</div>
+    <div class="empty-sub">Создай группу кнопкой +</div>
+  </div>`;
+}
+
+// ─── Me card → edit profile ───────────────────────────────────────────────────
 $('me-card').addEventListener('click', (e) => {
   if (e.target.closest('#btn-logout')) return;
   if (me) openEditProfileModal();
@@ -251,7 +288,7 @@ $('search-input').addEventListener('blur', () => setTimeout(closeDrop, 200));
 
 async function doSearch(q) {
   try {
-    const res = await authFetch('/api/search?q=' + encodeURIComponent(q));
+    const res = await authFetch(BACKEND_URL + '/api/search?q=' + encodeURIComponent(q));
     if (!res.ok) throw new Error();
     const list = await res.json();
     const drop = $('search-results');
@@ -274,7 +311,6 @@ async function doSearch(q) {
           <div class="s-id">@${esc(u.id)}</div>
         </div>
         <button class="btn-add" ${isFriend?'disabled':''}>${isFriend?'✓ Друг':'+ Добавить'}</button>`;
-
       renderAv(el.querySelector('.s-mini-av'), u.nickname, u.avatar);
 
       el.querySelector('.btn-add').addEventListener('click', e => {
@@ -304,10 +340,8 @@ function closeDrop() { $('search-results').classList.remove('open'); $('search-i
 socket.on('profile', profile => {
   me = { ...me, ...profile };
   localStorage.setItem('chatapp_profile', JSON.stringify(me));
-  // Object.assign в null-прототипный объект — НЕ спред {...}, потому что {...obj}
-  // всегда создаёт обычный объект с Object.prototype и свёл бы на нет защиту
-  // от prototype pollution через unread[fId], где fId может быть "__proto__".
-  unread = Object.assign(Object.create(null), profile.unreadCounts || {}); // раньше не подтягивались — не было бейджей после захода/реконнекта
+  unread = Object.assign(Object.create(null), profile.unreadCounts || {});
+  groupUnread = Object.assign(Object.create(null), profile.groupUnreadCounts || {});
   renderAv($('my-avatar'), me.nickname, me.avatar);
   $('my-nick').textContent = me.nickname;
   (profile.friends || []).forEach(fId => {
@@ -316,16 +350,14 @@ socket.on('profile', profile => {
   renderRequests(profile.friendRequests || []);
   renderFriendsList();
   fetchNicknames(profile.friends || []);
-  // Если чат был открыт в момент дисконнекта — переоткрываем, чтобы подтянуть
-  // возможные messageDeleted/новые сообщения, пропущенные во время оффлайна (аудит, пункт 1)
+  loadGroups();
   if (activeFriend) openChat(activeFriend);
+  if (activeGroup) openGroupChat(activeGroup);
 });
 
 async function fetchNicknames(ids) {
-  // Раньше запросы шли последовательно (await в цикле) — при большом списке друзей
-  // это N последовательных round-trip'ов подряд. Грузим параллельно.
   const results = await Promise.allSettled(
-    ids.map(id => authFetch('/api/profile/' + encodeURIComponent(id)).then(async res => {
+    ids.map(id => authFetch(BACKEND_URL + '/api/profile/' + encodeURIComponent(id)).then(async res => {
       if (!res.ok) throw new Error('not ok');
       return { id, data: await res.json() };
     }))
@@ -342,9 +374,6 @@ async function fetchNicknames(ids) {
 socket.on('friendRequest', req => {
   if (!me) return;
   if (!me.friendRequests) me.friendRequests = [];
-  // Защита от дублей: сервер может повторно прислать это событие при реконнекте,
-  // а актуальный список заявок уже приходит в 'profile' — без проверки заявка
-  // могла задвоиться в UI (аудит, пункт 3).
   const already = me.friendRequests.some(r => (r.id || r) === req.id);
   if (!already) {
     me.friendRequests.push({ id: req.id, nickname: req.nickname });
@@ -353,8 +382,6 @@ socket.on('friendRequest', req => {
 });
 socket.on('requestSent', () => {});
 socket.on('friendRequestError', ({ reason }) => {
-  // Раньше эта ошибка вообще не обрабатывалась на клиенте — кнопка "Запрос отправлен"
-  // так и оставалась disabled, даже если сервер реально не создал заявку.
   const addBtn = $('btn-add-friend');
   if (addBtn && addBtn.style.display !== 'none') {
     addBtn.textContent = 'Добавить в друзья';
@@ -390,9 +417,6 @@ socket.on('friendAdded', user => {
   renderFriendsList();
 });
 socket.on('friendRemoved', ({ id }) => {
-  // Приходит, когда собеседник нас заблокировал (или иначе разорвал дружбу) —
-  // раньше это обновлялось только на его стороне, а у нас список друзей
-  // "протухал" молча, из-за чего повторная заявка потом отклонялась как already_friends.
   if (me?.friends) me.friends = me.friends.filter(fid => fid !== id);
   delete friends[id];
   delete unread[id];
@@ -405,46 +429,123 @@ socket.on('friendRemoved', ({ id }) => {
 });
 socket.on('friendOnline', u => {
   if (friends[u.id]) { friends[u.id].online = true; updateStatus(u.id, true); }
+  renderGroupsList();
+  if (activeGroup && groups[activeGroup]) {
+    const g = groups[activeGroup];
+    const m = g.members.find(x => x.id === u.id);
+    if (m) { m.online = true; renderGroupMembersPanel(g); }
+  }
 });
 socket.on('friendOffline', id => {
   if (friends[id]) { friends[id].online = false; updateStatus(id, false); }
-});
-socket.on('newMessage', ({ chatWith, msg }) => {
-  if (activeFriend === chatWith) { appendMsg(msg); scrollMsgs(); }
-  else { unread[chatWith] = (unread[chatWith]||0) + 1; refreshFriendItem(chatWith); }
-});
-socket.on('messageDeleted', ({ messageId, chatWith }) => {
-  const wrap = document.querySelector(`[data-msgid="${CSS.escape(messageId)}"]`);
-  if (wrap) {
-    const bubble = wrap.querySelector('.msg');
-    if (bubble) {
-      bubble.classList.add('deleted-msg');
-      bubble.innerHTML = '<em>Сообщение удалено</em>';
-    }
-    const delBtn = wrap.querySelector('.msg-del-btn');
-    if (delBtn) delBtn.remove();
+  renderGroupsList();
+  if (activeGroup && groups[activeGroup]) {
+    const g = groups[activeGroup];
+    const m = g.members.find(x => x.id === id);
+    if (m) { m.online = false; renderGroupMembersPanel(g); }
   }
 });
-// Раньше сервер эмитил 'rateLimited' при спаме сообщений, а клиент это событие
-// вообще не слушал — пользователь просто не понимал, почему сообщение "зависло".
+socket.on('newMessage', ({ chatWith, msg }) => {
+  if (activeFriend === chatWith) { appendMsg(msg, 'messages'); scrollMsgs('messages'); }
+  else { unread[chatWith] = (unread[chatWith]||0) + 1; refreshFriendItem(chatWith); }
+});
+
+// Удаление сообщения — работает и в DM, и в группах
+socket.on('messageDeleted', ({ messageId }) => {
+  const wrap = document.querySelector(`[data-msgid="${CSS.escape(messageId)}"]`);
+  if (!wrap) return;
+  const delBtn = wrap.querySelector('.msg-del-btn');
+  if (delBtn) delBtn.remove();
+  const bubble = wrap.querySelector('.msg');
+  if (bubble) {
+    bubble.classList.add('deleted-msg');
+    bubble.innerHTML = '<em>Сообщение удалено</em>';
+  }
+  const gText = wrap.querySelector('.g-msg-text');
+  if (gText) {
+    wrap.classList.add('deleted');
+    gText.textContent = 'Сообщение удалено';
+  }
+});
+
 socket.on('rateLimited', (kind) => {
   if (kind === 'sendMessage') {
     showTransientNotice('Слишком много сообщений, подождите немного');
   }
 });
-// Новое серверное событие (лимит размера картинки в sendMessage) — раньше клиент
-// его не обрабатывал вовсе, сообщение просто пропадало без объяснения.
 socket.on('sendMessageError', ({ reason }) => {
-  if (reason === 'image_too_large') {
-    showTransientNotice('Изображение слишком большое');
+  if (reason === 'image_too_large') showTransientNotice('Изображение слишком большое');
+  else if (reason === 'text_too_long') showTransientNotice('Сообщение слишком длинное');
+  else showTransientNotice('Не удалось отправить сообщение');
+});
+
+// ─── Group Socket Events ──────────────────────────────────────────────────────
+socket.on('addedToGroup', ({ group }) => {
+  if (!group) return;
+  groups[group.id] = group;
+  renderGroupsList();
+  showTransientNotice(`Вас добавили в группу «${group.name}»`);
+});
+
+socket.on('newGroupMessage', ({ groupId, msg }) => {
+  if (activeGroup === groupId) {
+    appendGroupMsg(msg);
+    scrollMsgs('group-messages');
   } else {
-    showTransientNotice('Не удалось отправить сообщение');
+    groupUnread[groupId] = (groupUnread[groupId]||0) + 1;
+    refreshGroupItem(groupId);
   }
 });
 
+socket.on('groupMemberJoined', ({ groupId, user }) => {
+  const g = groups[groupId];
+  if (!g) return;
+  if (!g.members.some(m => m.id === user.id)) g.members.push(user);
+  renderGroupsList();
+  if (activeGroup === groupId) {
+    updateGroupChatHeader(g);
+    renderGroupMembersPanel(g);
+    showTransientNotice(`${user.nickname} присоединился к группе`);
+  }
+});
+
+socket.on('groupMemberLeft', ({ groupId, userId }) => {
+  const g = groups[groupId];
+  if (!g) return;
+  g.members = g.members.filter(m => m.id !== userId);
+  renderGroupsList();
+  if (activeGroup === groupId) {
+    updateGroupChatHeader(g);
+    renderGroupMembersPanel(g);
+  }
+});
+
+socket.on('groupDeleted', ({ groupId }) => {
+  delete groups[groupId];
+  delete groupUnread[groupId];
+  renderGroupsList();
+  if (activeGroup === groupId) {
+    activeGroup = null;
+    $('chat-placeholder').style.display = 'flex';
+    $('group-chat-window').style.display = 'none';
+  }
+});
+
+socket.on('groupError', ({ reason }) => {
+  const messages = {
+    not_found: 'Группа не найдена',
+    not_member: 'Вы не участник группы',
+    not_owner: 'Только владелец может это делать',
+    limit_reached: 'Достигнут лимит участников',
+    not_friends: 'Можно добавлять только друзей',
+    already_member: 'Пользователь уже в группе',
+    blocked: 'Невозможно добавить пользователя',
+    rate_limited: 'Слишком много действий, подождите'
+  };
+  showTransientNotice(messages[reason] || 'Ошибка группы');
+});
+
 function showTransientNotice(text) {
-  // Лёгкий неблокирующий тост вместо alert() — не прерывает набор текста в поле ввода.
-  // Стилизация — через класс .transient-notice в styles.css, а не inline (см. аудит стиля, пункт 5).
   let el = $('transient-notice');
   if (!el) {
     el = document.createElement('div');
@@ -455,10 +556,10 @@ function showTransientNotice(text) {
   el.textContent = text;
   el.classList.add('show');
   clearTimeout(el._hideTimer);
-  el._hideTimer = setTimeout(() => { el.classList.remove('show'); }, 2500);
+  el._hideTimer = setTimeout(() => { el.classList.remove('show'); }, 3000);
 }
 
-// ─── Render ───────────────────────────────────────────────────────────────────
+// ─── Render: Requests ─────────────────────────────────────────────────────────
 function renderRequests(reqs) {
   const sec = $('requests-section');
   const list = $('requests-list');
@@ -487,6 +588,7 @@ function renderRequests(reqs) {
   });
 }
 
+// ─── Render: Friends ──────────────────────────────────────────────────────────
 function renderFriendsList() {
   const list = $('friends-list');
   const ids = Object.keys(friends);
@@ -496,11 +598,6 @@ function renderFriendsList() {
 }
 
 function buildFriendEl(id) {
-  // Раньше здесь искался старый DOM-узел для "переиспользования", но оба места
-  // вызова (renderFriendsList — после innerHTML='', refreshFriendItem — после
-  // old.remove()) уже гарантированно его удаляют, так что `old` всегда был null
-  // и ветка переиспользования никогда не срабатывала (аудит, пункт 4). Убрали
-  // мёртвый код — элемент всегда создаётся заново, поведение не изменилось.
   const f = friends[id]; if (!f) return;
   const list = $('friends-list');
   const u = unread[id]||0;
@@ -517,7 +614,6 @@ function buildFriendEl(id) {
     ${u?`<div class="f-unread">${u}</div>`:''}`;
 
   const avEl = el.querySelector('.f-av');
-  // prepend letter/img before dot
   const dot = avEl.querySelector('.f-dot');
   const span = document.createElement('span');
   span.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:50%';
@@ -552,10 +648,60 @@ function updateStatus(id, online) {
   }
 }
 
-// ─── Chat ─────────────────────────────────────────────────────────────────────
+// ─── Render Groups ────────────────────────────────────────────────────────────
+async function loadGroups() {
+  try {
+    const res = await authFetch(BACKEND_URL + '/api/groups');
+    if (!res.ok) return;
+    const list = await res.json();
+    groups = Object.create(null);
+    list.forEach(g => { groups[g.id] = g; });
+    renderGroupsList();
+  } catch(e) {}
+}
+
+function renderGroupsList() {
+  const list = $('groups-list');
+  const ids = Object.keys(groups);
+  if (!ids.length) { list.innerHTML = emptyGroupsHTML(); return; }
+  list.innerHTML = '';
+  ids.forEach(id => buildGroupEl(id));
+}
+
+function buildGroupEl(id) {
+  const g = groups[id]; if (!g) return;
+  const list = $('groups-list');
+  const u = groupUnread[id]||0;
+  const onlineCount = (g.members||[]).filter(m => m.online).length;
+
+  const el = document.createElement('div');
+  el.className = 'friend-item group-item' + (activeGroup===id?' active':'');
+  el.dataset.gid = id;
+  el.innerHTML = `
+    <div class="f-av group-av-slot"></div>
+    <div class="f-info">
+      <div class="f-nick">${esc(g.name)}</div>
+      <div class="f-stat">${(g.members||[]).length} уч. · ${onlineCount} онлайн</div>
+    </div>
+    ${u?`<div class="f-unread">${u}</div>`:''}`;
+
+  renderGroupAv(el.querySelector('.group-av-slot'), g);
+  el.onclick = () => openGroupChat(id);
+  list.appendChild(el);
+}
+
+function refreshGroupItem(id) {
+  const list = $('groups-list');
+  const old = list.querySelector(`[data-gid="${CSS.escape(id)}"]`);
+  if (old) old.remove();
+  buildGroupEl(id);
+}
+
+// ─── DM Chat ──────────────────────────────────────────────────────────────────
 async function openChat(id) {
   if (!me || !id) return;
   activeFriend = id;
+  activeGroup = null;
   unread[id] = 0;
   document.querySelectorAll('.friend-item').forEach(el => el.classList.toggle('active', el.dataset.fid===id));
   refreshFriendItem(id);
@@ -567,26 +713,21 @@ async function openChat(id) {
   $('chat-status').className   = 'chat-head-status' + (f.online?' on':'');
 
   $('chat-placeholder').style.display = 'none';
+  $('group-chat-window').style.display = 'none';
   $('chat-window').style.display = 'flex';
 
-  // Mobile: show chat panel
   if (window.innerWidth <= 640) {
     document.querySelector('.sidebar').classList.add('hidden');
     document.querySelector('.chat-main').classList.remove('hidden');
+    $('btn-back').style.display = '';
   }
 
   $('messages').innerHTML = '<div style="text-align:center;color:var(--text3);padding:24px;font-size:13px">Загрузка…</div>';
 
-  // Защита от гонки: если пользователь быстро переключился на другой чат,
-  // ответ на более старый запрос не должен перезаписать уже открытый новый чат
-  // (раньше при быстром клике по двум друзьям подряд могла отрисоваться чужая история).
   const requestSeq = ++chatRequestSeq;
-
   try {
-    // encodeURIComponent на обоих id — единообразно с остальными REST-вызовами
-    // (/api/search, /api/profile/:id и т.д.), которые уже кодируют id в пути.
-    const res = await authFetch(`/api/messages/${encodeURIComponent(me.id)}/${encodeURIComponent(id)}`);
-    if (requestSeq !== chatRequestSeq) return; // чат уже сменился — этот ответ устарел
+    const res = await authFetch(`${BACKEND_URL}/api/messages/${encodeURIComponent(me.id)}/${encodeURIComponent(id)}`);
+    if (requestSeq !== chatRequestSeq) return;
     if (!res.ok) throw new Error();
     const history = await res.json();
     if (requestSeq !== chatRequestSeq) return;
@@ -594,9 +735,9 @@ async function openChat(id) {
     if (!history || !history.length) {
       $('messages').innerHTML = '<div style="text-align:center;color:var(--text3);padding:24px;font-size:13px">Напишите первым! 👋</div>';
     } else {
-      history.forEach(m => appendMsg(m, false));
+      history.forEach(m => appendMsg(m, 'messages'));
     }
-    scrollMsgs();
+    scrollMsgs('messages');
   } catch(e) {
     if (requestSeq !== chatRequestSeq) return;
     $('messages').innerHTML = '<div style="text-align:center;color:var(--red);padding:24px;font-size:13px">Ошибка загрузки</div>';
@@ -605,7 +746,7 @@ async function openChat(id) {
   $('msg-input').focus();
 }
 
-function appendMsg(msg, doScroll=true) {
+function appendMsg(msg, containerId, doScroll=true) {
   if (!me) return;
   const isMine = msg.from === me.id;
   const isDeleted = msg.deleted;
@@ -626,7 +767,6 @@ function appendMsg(msg, doScroll=true) {
 
   wrap.appendChild(bubble);
 
-  // Delete button (only for own non-deleted messages)
   if (isMine && !isDeleted && msgId) {
     const delBtn = document.createElement('button');
     delBtn.className = 'msg-del-btn';
@@ -639,40 +779,135 @@ function appendMsg(msg, doScroll=true) {
     wrap.appendChild(delBtn);
   }
 
-  $('messages').appendChild(wrap);
-  if (doScroll) scrollMsgs();
+  $(containerId).appendChild(wrap);
+  if (doScroll) scrollMsgs(containerId);
 }
 
-function scrollMsgs() { const m = $('messages'); m.scrollTop = m.scrollHeight; }
+function scrollMsgs(containerId) {
+  const m = $(containerId);
+  if (m) m.scrollTop = m.scrollHeight;
+}
 
-// ─── Delete message ───────────────────────────────────────────────────────────
-function openDeleteConfirm(msgId) {
-  pendingDeleteId = msgId;
-  $('delete-confirm').style.display = 'flex';
-}
-function closeDeleteConfirm() {
-  pendingDeleteId = null;
-  $('delete-confirm').style.display = 'none';
-}
-$('btn-confirm-delete').addEventListener('click', async () => {
-  if (!pendingDeleteId || !me) return;
-  // Важно: сохраняем id ДО closeDeleteConfirm() — она обнуляет pendingDeleteId,
-  // а он читался прямо в шаблонной строке fetch ниже. Из-за этого запрос уходил
-  // на DELETE /api/messages/null → "Некорректный ID сообщения" (см. скриншоты).
-  const idToDelete = pendingDeleteId;
-  closeDeleteConfirm();
-  try {
-    const res = await authFetch(`/api/messages/${encodeURIComponent(idToDelete)}`, { method: 'DELETE' });
-    if (!res.ok) {
-      const d = await res.json();
-      alert(d.error || 'Ошибка удаления');
-    }
-  } catch(e) {
-    alert('Ошибка сети');
+// ─── Group Chat ───────────────────────────────────────────────────────────────
+async function openGroupChat(groupId) {
+  if (!me || !groupId || !groups[groupId]) return;
+  activeGroup = groupId;
+  activeFriend = null;
+  groupUnread[groupId] = 0;
+
+  document.querySelectorAll('.friend-item').forEach(el => el.classList.remove('active'));
+  refreshGroupItem(groupId);
+
+  const g = groups[groupId];
+  updateGroupChatHeader(g);
+  renderGroupMembersPanel(g);
+  $('group-msg-input').placeholder = 'Написать в ' + g.name;
+
+  $('chat-placeholder').style.display = 'none';
+  $('chat-window').style.display = 'none';
+  $('group-chat-window').style.display = 'flex';
+
+  if (window.innerWidth <= 640) {
+    document.querySelector('.sidebar').classList.add('hidden');
+    document.querySelector('.chat-main').classList.remove('hidden');
+    $('btn-back-group').style.display = '';
   }
+
+  $('group-messages').innerHTML = '<div style="text-align:center;color:var(--text3);padding:24px;font-size:13px">Загрузка…</div>';
+
+  const requestSeq = ++groupChatRequestSeq;
+  try {
+    const res = await authFetch(`${BACKEND_URL}/api/groups/${encodeURIComponent(groupId)}/messages`);
+    if (requestSeq !== groupChatRequestSeq) return;
+    if (!res.ok) throw new Error();
+    const history = await res.json();
+    if (requestSeq !== groupChatRequestSeq) return;
+    $('group-messages').innerHTML = '';
+    if (!history || !history.length) {
+      $('group-messages').innerHTML = '<div style="text-align:center;color:var(--text3);padding:24px;font-size:13px">Начните общение в группе! 👋</div>';
+    } else {
+      history.forEach(m => appendGroupMsg(m, false));
+    }
+    scrollMsgs('group-messages');
+  } catch(e) {
+    if (requestSeq !== groupChatRequestSeq) return;
+    $('group-messages').innerHTML = '<div style="text-align:center;color:var(--red);padding:24px;font-size:13px">Ошибка загрузки</div>';
+  }
+  socket.emit('markGroupRead', groupId);
+  $('group-msg-input').focus();
+}
+
+function updateGroupChatHeader(g) {
+  renderGroupAv($('group-chat-avatar'), g);
+  $('group-chat-name').textContent = g.name;
+  const membersCount = (g.members||[]).length;
+  const onlineCount = (g.members||[]).filter(m => m.online).length;
+  $('group-chat-members-count').textContent = `${membersCount} участников · ${onlineCount} онлайн`;
+}
+
+// Discord-style сообщение в группе: аватар + ник (+коронка) + время + текст
+function appendGroupMsg(msg, doScroll=true) {
+  if (!me) return;
+  const g = groups[activeGroup];
+  const isMine = msg.from === me.id;
+  const isDeleted = msg.deleted;
+  const msgId = msg._id || msg.id || '';
+
+  const sender = g?.members?.find(m => m.id === msg.from);
+  const senderNick = sender?.nickname || msg.from;
+  const isOwner = g?.ownerId === msg.from;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'g-msg' + (isMine ? ' mine' : '') + (isDeleted ? ' deleted' : '');
+  if (msgId) wrap.dataset.msgid = msgId;
+
+  const avEl = document.createElement('div');
+  avEl.className = 'g-msg-av';
+  renderAv(avEl, senderNick, sender?.avatar || null);
+  if (!isMine) avEl.style.cursor = 'pointer';
+  if (!isMine) avEl.addEventListener('click', () => showUserProfile(msg.from));
+  wrap.appendChild(avEl);
+
+  const body = document.createElement('div');
+  body.className = 'g-msg-body';
+
+  const head = document.createElement('div');
+  head.className = 'g-msg-head';
+  head.innerHTML = `
+    <span class="g-msg-nick">${esc(senderNick)}</span>
+    ${isOwner ? CROWN_SVG : ''}
+    <span class="g-msg-time">${fmtTime(msg.time || msg.createdAt)}</span>`;
+  body.appendChild(head);
+
+  const text = document.createElement('div');
+  text.className = 'g-msg-text';
+  text.textContent = isDeleted ? 'Сообщение удалено' : (msg.text || '');
+  body.appendChild(text);
+
+  wrap.appendChild(body);
+
+  if (isMine && !isDeleted && msgId) {
+    const delBtn = document.createElement('button');
+    delBtn.className = 'msg-del-btn';
+    delBtn.title = 'Удалить';
+    delBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>`;
+    delBtn.addEventListener('click', (e) => { e.stopPropagation(); openDeleteConfirm(msgId); });
+    wrap.appendChild(delBtn);
+  }
+
+  $('group-messages').appendChild(wrap);
+  if (doScroll) scrollMsgs('group-messages');
+}
+
+// Клик по шапке группы → инфо
+$('group-chat-head-click').addEventListener('click', () => {
+  if (activeGroup) openGroupInfoModal(activeGroup);
+});
+$('btn-group-info').addEventListener('click', () => {
+  if (activeGroup) openGroupInfoModal(activeGroup);
 });
 
-// ─── Send message ─────────────────────────────────────────────────────────────
+// ─── Send DM message ──────────────────────────────────────────────────────────
 $('btn-send').onclick = sendMsg;
 $('msg-input').addEventListener('keydown', e => { if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendMsg(); } });
 
@@ -688,18 +923,55 @@ function sendMsg() {
   $('msg-input').focus();
 }
 
+// ─── Send Group message ───────────────────────────────────────────────────────
+$('btn-group-send').onclick = sendGroupMsg;
+$('group-msg-input').addEventListener('keydown', e => { if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendGroupMsg(); } });
+
+function sendGroupMsg() {
+  const text = $('group-msg-input').value.trim();
+  if (!text || !activeGroup) return;
+  if (text.length > MAX_MESSAGE_LENGTH) {
+    showTransientNotice(`Сообщение слишком длинное (максимум ${MAX_MESSAGE_LENGTH} символов)`);
+    return;
+  }
+  socket.emit('groupMessage', { groupId: activeGroup, text });
+  $('group-msg-input').value = '';
+  $('group-msg-input').focus();
+}
+
+// ─── Delete message ───────────────────────────────────────────────────────────
+function openDeleteConfirm(msgId) {
+  pendingDeleteId = msgId;
+  $('delete-confirm').style.display = 'flex';
+}
+function closeDeleteConfirm() {
+  pendingDeleteId = null;
+  $('delete-confirm').style.display = 'none';
+}
+$('btn-confirm-delete').addEventListener('click', async () => {
+  if (!pendingDeleteId || !me) return;
+  const idToDelete = pendingDeleteId;
+  closeDeleteConfirm();
+  try {
+    const res = await authFetch(`${BACKEND_URL}/api/messages/${encodeURIComponent(idToDelete)}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const d = await res.json();
+      alert(d.error || 'Ошибка удаления');
+    }
+  } catch(e) {
+    alert('Ошибка сети');
+  }
+});
+
 // ─── Profile: view other user ─────────────────────────────────────────────────
 $('chat-head-click').addEventListener('click', () => {
   if (activeFriend) showUserProfile(activeFriend);
 });
 
 async function showUserProfile(userId) {
-  // Защита от гонки, аналогично openChat: быстрые клики по разным профилям подряд
-  // не должны дать более старому ответу перезаписать уже открытый новый профиль
-  // (аудит, пункт 5).
   const requestSeq = ++profileRequestSeq;
   try {
-    const res = await authFetch('/api/profile/' + encodeURIComponent(userId));
+    const res = await authFetch(BACKEND_URL + '/api/profile/' + encodeURIComponent(userId));
     if (requestSeq !== profileRequestSeq) return;
     if (!res.ok) return;
     const u = await res.json();
@@ -727,10 +999,6 @@ async function showUserProfile(userId) {
     const addBtn = $('btn-add-friend');
     const isFriend = me?.friends?.includes(userId);
     const isMe = userId === me?.id;
-    // Кнопка — один и тот же DOM-элемент для всех профилей, поэтому её текст/disabled
-    // нужно сбрасывать при каждом открытии модалки, иначе после первого клика "Добавить"
-    // она навсегда остаётся "Запрос отправлен" + disabled для любого другого пользователя
-    // (в т.ч. после блокировки/разблокировки и попытки добавить снова).
     addBtn.textContent = 'Добавить в друзья';
     addBtn.disabled = false;
     addBtn.style.display = (isFriend || isMe) ? 'none' : '';
@@ -749,12 +1017,6 @@ async function showUserProfile(userId) {
       blockBtn.disabled = false;
       blockBtn.className = 'btn-secondary' + (isBlocked ? '' : ' btn-danger-outline');
       blockBtn.textContent = isBlocked ? 'Разблокировать' : 'Заблокировать';
-      // Раньше после успешной блокировки кнопка вешала onclick, который просто
-      // заново вызывал showUserProfile(userId) — это не разблокировало пользователя,
-      // а лишь перерисовывало модалку. Реальный unblock срабатывал только со
-      // второго клика, когда уже отрабатывала ветка isBlocked ниже. Теперь both
-      // ветки (block/unblock) используют один и тот же обработчик performUnblock/
-      // performBlock, назначенный один раз (аудит, пункт 2).
       blockBtn.onclick = () => isBlocked ? performUnblock(userId) : performBlock(userId);
     }
 
@@ -764,17 +1026,17 @@ async function showUserProfile(userId) {
 
 async function performUnblock(userId) {
   try {
-    const res = await authFetch(`/api/users/${encodeURIComponent(userId)}/unblock`, { method: 'POST' });
+    const res = await authFetch(`${BACKEND_URL}/api/users/${encodeURIComponent(userId)}/unblock`, { method: 'POST' });
     if (!res.ok) return alert('Ошибка разблокировки');
     if (me.blockedUsers) me.blockedUsers = me.blockedUsers.filter(id => id !== userId);
-    showUserProfile(userId); // перерисовать модалку с обновлённым состоянием кнопки
+    showUserProfile(userId);
   } catch (e) { alert('Ошибка сети'); }
 }
 
 async function performBlock(userId) {
   if (!confirm(`Заблокировать @${userId}?`)) return;
   try {
-    const res = await authFetch(`/api/users/${encodeURIComponent(userId)}/block`, { method: 'POST' });
+    const res = await authFetch(`${BACKEND_URL}/api/users/${encodeURIComponent(userId)}/block`, { method: 'POST' });
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
       return alert(d.error || 'Ошибка блокировки');
@@ -790,14 +1052,13 @@ async function performBlock(userId) {
       $('chat-placeholder').style.display = 'flex';
       $('chat-window').style.display = 'none';
     }
-    showUserProfile(userId); // перерисовать модалку с кнопкой "Разблокировать"
+    showUserProfile(userId);
   } catch (e) { alert('Ошибка сети'); }
 }
 
 function closeProfileModal() { $('profile-modal').style.display = 'none'; }
 window.closeProfileModal = closeProfileModal;
 
-// Click outside to close
 $('profile-modal').addEventListener('click', e => {
   if (e.target === $('profile-modal')) closeProfileModal();
 });
@@ -818,28 +1079,21 @@ $('edit-profile-modal').addEventListener('click', e => {
   if (e.target === $('edit-profile-modal')) closeEditProfileModal();
 });
 
-// Avatar upload
 $('avatar-input').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file || !me) return;
-
-  // Быстрая проверка на клиенте — раньше о слишком большом/неподходящем файле
-  // узнавали только после полной отправки на сервер и ответа 400/413.
   if (!ALLOWED_AVATAR_TYPES.includes(file.type)) {
     alert('Разрешены только изображения (jpeg, png, webp, gif)');
-    e.target.value = '';
-    return;
+    e.target.value = ''; return;
   }
   if (file.size > MAX_AVATAR_SIZE) {
     alert('Файл слишком большой (максимум 5MB)');
-    e.target.value = '';
-    return;
+    e.target.value = ''; return;
   }
-
   const formData = new FormData();
   formData.append('avatar', file);
   try {
-    const res = await authFetch('/api/upload/avatar', { method: 'POST', body: formData });
+    const res = await authFetch(BACKEND_URL + '/api/upload/avatar', { method: 'POST', body: formData });
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
       return alert(d.error || 'Ошибка загрузки аватара');
@@ -853,7 +1107,6 @@ $('avatar-input').addEventListener('change', async (e) => {
   e.target.value = '';
 });
 
-// Save profile
 $('btn-save-profile').addEventListener('click', async () => {
   if (!me) return;
   const nickname = $('edit-nick').value.trim();
@@ -863,7 +1116,7 @@ $('btn-save-profile').addEventListener('click', async () => {
   const btn = $('btn-save-profile');
   btn.disabled = true; btn.textContent = 'Сохранение…';
   try {
-    const res = await authFetch('/api/profile/update', {
+    const res = await authFetch(BACKEND_URL + '/api/profile/update', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ nickname, status, bio })
     });
@@ -880,7 +1133,7 @@ $('btn-save-profile').addEventListener('click', async () => {
   finally { btn.disabled = false; btn.textContent = 'Сохранить'; }
 });
 
-// ─── Blocked users list (как в Discord) ───────────────────────────────────────
+// ─── Blocked users ────────────────────────────────────────────────────────────
 $('btn-open-blocked')?.addEventListener('click', () => {
   closeEditProfileModal();
   openBlockedUsersModal();
@@ -891,10 +1144,10 @@ async function openBlockedUsersModal() {
   const list = $('blocked-users-list');
   list.innerHTML = '<div class="blocked-users-empty">Загрузка…</div>';
   try {
-    const res = await authFetch('/api/users/blocked');
+    const res = await authFetch(BACKEND_URL + '/api/users/blocked');
     if (!res.ok) throw new Error();
     const users = await res.json();
-    me.blockedUsers = users.map(u => u.id); // держим в актуальном состоянии
+    me.blockedUsers = users.map(u => u.id);
     renderBlockedUsersList(users);
   } catch (e) {
     list.innerHTML = '<div class="blocked-users-empty" style="color:var(--red)">Ошибка загрузки</div>';
@@ -928,7 +1181,7 @@ function renderBlockedUsersList(users) {
     renderAv(el.querySelector('.f-av'), u.nickname, u.avatar);
     el.querySelector('.btn-unblock').addEventListener('click', async () => {
       try {
-        const res = await authFetch(`/api/users/${encodeURIComponent(u.id)}/unblock`, { method: 'POST' });
+        const res = await authFetch(`${BACKEND_URL}/api/users/${encodeURIComponent(u.id)}/unblock`, { method: 'POST' });
         if (!res.ok) return alert('Ошибка разблокировки');
         if (me.blockedUsers) me.blockedUsers = me.blockedUsers.filter(id => id !== u.id);
         el.remove();
@@ -941,21 +1194,287 @@ function renderBlockedUsersList(users) {
   });
 }
 
-// ─── Mobile back button ───────────────────────────────────────────────────────
-$('btn-back')?.addEventListener('click', () => {
-  // Раньше только сбрасывался activeFriend и переключались .sidebar/.chat-main,
-  // но #chat-window/#chat-placeholder и .active-класс в списке друзей не
-  // приводились в порядок — при возврате на десктопную ширину было видно
-  // рассинхронизированное состояние (аудит, пункт 6).
+// ─── Create Group Modal ───────────────────────────────────────────────────────
+let selectedGroupMembers = new Set();
+
+$('btn-create-group').addEventListener('click', () => {
+  if (!me) return;
+  selectedGroupMembers = new Set();
+  $('group-name-input').value = '';
+  $('group-selected-count').textContent = 'выбрано: 0';
+  renderGroupFriendsPicker();
+  $('create-group-modal').style.display = 'flex';
+});
+
+function closeCreateGroupModal() { $('create-group-modal').style.display = 'none'; }
+window.closeCreateGroupModal = closeCreateGroupModal;
+
+$('create-group-modal').addEventListener('click', e => {
+  if (e.target === $('create-group-modal')) closeCreateGroupModal();
+});
+
+function renderGroupFriendsPicker() {
+  const picker = $('group-friends-picker');
+  const ids = Object.keys(friends);
+  if (!ids.length) {
+    picker.innerHTML = '<div class="empty-state" style="padding:16px"><div class="empty-sub">Сначала добавь друзей</div></div>';
+    return;
+  }
+  picker.innerHTML = '';
+  ids.forEach(id => {
+    const f = friends[id];
+    const el = document.createElement('div');
+    el.className = 'picker-item' + (selectedGroupMembers.has(id) ? ' selected' : '');
+    el.innerHTML = `
+      <div class="f-av" style="width:32px;height:32px;font-size:12px"></div>
+      <div style="flex:1;min-width:0">
+        <div class="f-nick" style="font-size:13px">${esc(f.nickname)}</div>
+        <div class="f-stat" style="font-size:11px">@${esc(id)}</div>
+      </div>
+      <div class="picker-check">${selectedGroupMembers.has(id) ? '✓' : ''}</div>`;
+    renderAv(el.querySelector('.f-av'), f.nickname, f.avatar);
+    el.addEventListener('click', () => {
+      if (selectedGroupMembers.has(id)) selectedGroupMembers.delete(id);
+      else selectedGroupMembers.add(id);
+      $('group-selected-count').textContent = 'выбрано: ' + selectedGroupMembers.size;
+      renderGroupFriendsPicker();
+    });
+    picker.appendChild(el);
+  });
+}
+
+$('btn-confirm-create-group').addEventListener('click', async () => {
+  const name = $('group-name-input').value.trim();
+  if (!name || name.length < 2) return showTransientNotice('Название минимум 2 символа');
+  if (selectedGroupMembers.size < 1) return showTransientNotice('Выберите хотя бы одного друга');
+
+  const btn = $('btn-confirm-create-group');
+  btn.disabled = true; btn.textContent = 'Создание…';
+  try {
+    const res = await authFetch(BACKEND_URL + '/api/groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, memberIds: [...selectedGroupMembers] })
+    });
+    const data = await res.json();
+    if (!res.ok) return showTransientNotice(data.error || 'Ошибка создания группы');
+    closeCreateGroupModal();
+    await loadGroups();
+    document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
+    document.querySelector('[data-stab="groups"]').classList.add('active');
+    $('dm-panel').style.display = 'none';
+    $('groups-panel').style.display = '';
+    if (data.group) openGroupChat(data.group.id);
+  } catch(e) {
+    showTransientNotice('Ошибка сети');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Создать группу';
+  }
+});
+
+// ─── Group Info Modal ─────────────────────────────────────────────────────────
+function openGroupInfoModal(groupId) {
+  const g = groups[groupId];
+  if (!g) return;
+
+  renderGroupAv($('group-info-avatar'), g);
+  $('group-info-name').textContent = g.name;
+  $('group-info-created').textContent = 'Создана ' + fmtDate(g.createdAt || Date.now());
+  $('group-info-count').textContent = (g.members||[]).length;
+
+  const isOwner = g.ownerId === me?.id;
+  $('group-info-owner-actions').style.display = isOwner ? '' : 'none';
+
+  renderGroupInfoMembers(g);
+  $('group-info-modal').style.display = 'flex';
+}
+
+function renderGroupInfoMembers(g) {
+  const list = $('group-info-members');
+  list.innerHTML = '';
+  (g.members||[]).forEach(m => {
+    const el = document.createElement('div');
+    el.className = 'group-member-item';
+    el.innerHTML = `
+      <div class="f-av" style="width:32px;height:32px;font-size:12px">${m.online?'<div class="f-dot"></div>':''}</div>
+      <div style="flex:1;min-width:0">
+        <div class="f-nick" style="font-size:13px">${esc(m.nickname)} ${m.role==='owner'?'<span class="owner-badge">👑</span>':''}</div>
+        <div class="f-stat" style="font-size:11px">@${esc(m.id)}</div>
+      </div>
+      ${m.id !== me?.id && g.ownerId === me?.id ? '<button class="btn-kick" title="Удалить из группы">✕</button>' : ''}`;
+    renderAv(el.querySelector('.f-av'), m.nickname, m.avatar);
+    el.querySelector('.f-av').style.position = 'relative';
+    const kickBtn = el.querySelector('.btn-kick');
+    if (kickBtn) {
+      kickBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (confirm(`Удалить ${m.nickname} из группы?`)) {
+          socket.emit('kickGroupMember', { groupId: g.id, userId: m.id });
+        }
+      });
+    }
+    if (m.id !== me?.id) {
+      el.style.cursor = 'pointer';
+      el.addEventListener('click', () => {
+        closeGroupInfoModal();
+        showUserProfile(m.id);
+      });
+    }
+    list.appendChild(el);
+  });
+}
+
+function closeGroupInfoModal() { $('group-info-modal').style.display = 'none'; }
+window.closeGroupInfoModal = closeGroupInfoModal;
+
+$('group-info-modal').addEventListener('click', e => {
+  if (e.target === $('group-info-modal')) closeGroupInfoModal();
+});
+
+$('btn-leave-group').addEventListener('click', () => {
+  if (!activeGroup) return;
+  const g = groups[activeGroup];
+  const isOwner = g?.ownerId === me?.id;
+  const msg = isOwner
+    ? 'Вы владелец группы. Группа будет УДАЛЁНА для всех. Продолжить?'
+    : 'Покинуть группу?';
+  if (!confirm(msg)) return;
+  socket.emit('leaveGroup', activeGroup);
+  closeGroupInfoModal();
+});
+
+// ─── Add Members Modal ────────────────────────────────────────────────────────
+let selectedAddMembers = new Set();
+
+$('btn-add-members').addEventListener('click', () => {
+  if (!activeGroup || !groups[activeGroup]) return;
+  selectedAddMembers = new Set();
+  $('add-members-count').textContent = 'выбрано: 0';
+  renderAddMembersPicker();
+  closeGroupInfoModal();
+  $('add-members-modal').style.display = 'flex';
+});
+
+function closeAddMembersModal() { $('add-members-modal').style.display = 'none'; }
+window.closeAddMembersModal = closeAddMembersModal;
+
+$('add-members-modal').addEventListener('click', e => {
+  if (e.target === $('add-members-modal')) closeAddMembersModal();
+});
+
+function renderAddMembersPicker() {
+  const picker = $('add-members-picker');
+  const g = groups[activeGroup];
+  if (!g) return;
+  const memberIds = new Set((g.members||[]).map(m => m.id));
+  const candidates = Object.keys(friends).filter(id => !memberIds.has(id));
+
+  if (!candidates.length) {
+    picker.innerHTML = '<div class="empty-state" style="padding:16px"><div class="empty-sub">Все друзья уже в группе</div></div>';
+    return;
+  }
+  picker.innerHTML = '';
+  candidates.forEach(id => {
+    const f = friends[id];
+    const el = document.createElement('div');
+    el.className = 'picker-item' + (selectedAddMembers.has(id) ? ' selected' : '');
+    el.innerHTML = `
+      <div class="f-av" style="width:32px;height:32px;font-size:12px"></div>
+      <div style="flex:1;min-width:0">
+        <div class="f-nick" style="font-size:13px">${esc(f.nickname)}</div>
+        <div class="f-stat" style="font-size:11px">@${esc(id)}</div>
+      </div>
+      <div class="picker-check">${selectedAddMembers.has(id) ? '✓' : ''}</div>`;
+    renderAv(el.querySelector('.f-av'), f.nickname, f.avatar);
+    el.addEventListener('click', () => {
+      if (selectedAddMembers.has(id)) selectedAddMembers.delete(id);
+      else selectedAddMembers.add(id);
+      $('add-members-count').textContent = 'выбрано: ' + selectedAddMembers.size;
+      renderAddMembersPicker();
+    });
+    picker.appendChild(el);
+  });
+}
+
+$('btn-confirm-add-members').addEventListener('click', () => {
+  if (!activeGroup || !selectedAddMembers.size) return;
+  selectedAddMembers.forEach(userId => {
+    socket.emit('addGroupMember', { groupId: activeGroup, userId });
+  });
+  closeAddMembersModal();
+  showTransientNotice('Приглашения отправлены');
+});
+
+// ─── Panel участников (правая колонка Discord-style) ──────────────────────────
+function renderGroupMembersPanel(g) {
+  if (!g) return;
+  const countEl = $('gm-count');
+  const list = $('group-members-list');
+  if (!countEl || !list) return;
+
+  countEl.textContent = (g.members||[]).length;
+  list.innerHTML = '';
+
+  // Владелец сверху, потом онлайн, потом оффлайн, по алфавиту
+  const sorted = [...(g.members||[])].sort((a,b) => {
+    if (a.role === 'owner') return -1;
+    if (b.role === 'owner') return 1;
+    if (a.online !== b.online) return a.online ? -1 : 1;
+    return (a.nickname||'').localeCompare(b.nickname||'');
+  });
+
+  sorted.forEach(m => {
+    const el = document.createElement('div');
+    el.className = 'gm-item' + (m.online ? '' : ' offline');
+    el.innerHTML = `
+      <div class="gm-av"></div>
+      <div class="gm-name">${esc(m.nickname)}</div>
+      ${m.role === 'owner' ? CROWN_SVG : ''}`;
+    const avEl = el.querySelector('.gm-av');
+    renderAv(avEl, m.nickname, m.avatar);
+    if (m.online) {
+      const dot = document.createElement('div');
+      dot.className = 'f-dot';
+      avEl.appendChild(dot);
+    }
+    if (m.id !== me?.id) el.addEventListener('click', () => showUserProfile(m.id));
+    list.appendChild(el);
+  });
+
+  // Кнопка "Добавить участников" — только у владельца
+  const inviteBtn = $('btn-invite-group');
+  if (inviteBtn) inviteBtn.style.display = (g.ownerId === me?.id) ? '' : 'none';
+}
+
+// Кнопка свернуть/показать панель участников
+$('btn-toggle-members').addEventListener('click', () => {
+  $('group-members-panel').classList.toggle('hidden');
+});
+
+// Кнопка "Добавить участников" в панели
+$('btn-invite-group').addEventListener('click', () => {
+  if (!activeGroup || !groups[activeGroup]) return;
+  selectedAddMembers = new Set();
+  $('add-members-count').textContent = 'выбрано: 0';
+  renderAddMembersPicker();
+  $('add-members-modal').style.display = 'flex';
+});
+
+// ─── Mobile back buttons ──────────────────────────────────────────────────────
+$('btn-back')?.addEventListener('click', goBackMobile);
+$('btn-back-group')?.addEventListener('click', goBackMobile);
+
+function goBackMobile() {
   activeFriend = null;
+  activeGroup = null;
   document.querySelector('.sidebar').classList.remove('hidden');
   document.querySelector('.chat-main').classList.add('hidden');
   document.querySelectorAll('.friend-item').forEach(el => el.classList.remove('active'));
   $('chat-window').style.display = 'none';
+  $('group-chat-window').style.display = 'none';
   $('chat-placeholder').style.display = 'flex';
-});
+}
 
-// Handle resize
 window.addEventListener('resize', () => {
   if (window.innerWidth > 640) {
     document.querySelector('.sidebar')?.classList.remove('hidden');
@@ -964,12 +1483,6 @@ window.addEventListener('resize', () => {
 });
 
 // ─── Auto-login ───────────────────────────────────────────────────────────────
-// Раньше при каждой загрузке страницы отправлялся POST /api/login с сохранённым
-// паролем, и пока не приходил ответ — на экране было видно форму входа/регистрации
-// (мигание). Теперь если есть токен и кэшированный профиль — сразу открываем
-// приложение и подключаем сокет; сокет сам провалидирует токен и досинхронизирует
-// актуальные данные через событие 'profile'. Если токен невалиден — сработает
-// уже существующий обработчик socket.on('connect_error').
 (() => {
   const token = localStorage.getItem('chatapp_token');
   const cached = localStorage.getItem('chatapp_profile');

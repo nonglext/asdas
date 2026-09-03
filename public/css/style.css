@@ -15,7 +15,7 @@
   --accent-bg2: rgba(124,110,245,0.2);
   --text: #e8e8f0;
   --text2: #8888a8;
-  --text3: #6f6f95; /* было #5a5a7a — светлее для контраста ~4.5:1 на мелком тексте (WCAG AA) */
+  --text3: #6f6f95;
   --green: #34d399;
   --red: #f87171;
   --shadow: 0 8px 32px rgba(0,0,0,0.5);
@@ -26,12 +26,9 @@
   --sidebar-w: 300px;
   --font: 'Inter', system-ui, sans-serif;
 
-  /* Общие градиенты — раньше дублировались побуквенно в 6+ местах;
-     теперь единая точка правки (см. аудит, пункт 4) */
   --accent-gradient: linear-gradient(135deg, var(--accent), #a78bfa);
   --neutral-avatar-gradient: linear-gradient(135deg, #5a5a8a, #7a7aaa);
 
-  /* Единая шкала z-index вместо разрозненных магических чисел (аудит, пункт 6) */
   --z-dropdown: 100;
   --z-toast: 500;
   --z-popup: 500;
@@ -49,8 +46,6 @@ html, body {
   overflow: hidden;
 }
 
-/* Уважаем системную настройку "уменьшить движение" — раньше анимации
-   (fadeIn/slideUp модалок, transition кнопок) всегда работали в полную силу */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
@@ -60,9 +55,6 @@ html, body {
   }
 }
 
-/* Универсальный видимый фокус для клавиатурной навигации — раньше был только
-   у text-полей (через border-color/box-shadow), а кнопки/карточки друзей/
-   результаты поиска фокус вообще не показывали (аудит, пункт 2) */
 .icon-btn:focus-visible,
 .btn-primary:focus-visible,
 .btn-secondary:focus-visible,
@@ -73,12 +65,16 @@ html, body {
 .btn-danger-sm:focus-visible,
 .btn-ghost-sm:focus-visible,
 .btn-link-row:focus-visible,
+.btn-invite:focus-visible,
+.sidebar-tab:focus-visible,
+.sidebar-tab-add:focus-visible,
 .tab:focus-visible,
 .pw-toggle:focus-visible,
 .modal-close-btn:focus-visible,
 .friend-item:focus-visible,
 .s-item:focus-visible,
-.msg-del-btn:focus-visible {
+.msg-del-btn:focus-visible,
+.gm-item:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -135,7 +131,6 @@ html, body {
 }
 .auth-logo-text { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
 
-/* Tabs */
 .tabs {
   display: flex;
   background: var(--bg2);
@@ -154,7 +149,6 @@ html, body {
 .tab-content { display: none; }
 .tab-content.active { display: flex; flex-direction: column; gap: 16px; }
 
-/* Fields */
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field label { font-size: 13px; font-weight: 500; color: var(--text2); }
 .hint { font-weight: 400; font-size: 11px; color: var(--text3); margin-left: 4px; }
@@ -189,7 +183,6 @@ html, body {
 }
 .pw-toggle:hover { color: var(--text); }
 
-/* Buttons */
 .btn-primary {
   background: var(--accent-gradient);
   color: #fff;
@@ -251,7 +244,6 @@ html, body {
   border-bottom: 1px solid var(--border);
 }
 
-/* Me card */
 .me-card {
   display: flex;
   align-items: center;
@@ -291,7 +283,6 @@ html, body {
 
 .logout-btn:hover { color: var(--red) !important; }
 
-/* Search */
 .search-box {
   position: relative;
   display: flex;
@@ -316,7 +307,6 @@ html, body {
 #search-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
 #search-input::placeholder { color: var(--text3); }
 
-/* Search dropdown */
 .search-drop {
   position: absolute; top: calc(100% + 6px); left: 0; right: 0;
   background: var(--bg2);
@@ -367,7 +357,39 @@ html, body {
 .btn-add:hover { background: var(--accent-bg2); }
 .btn-add:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* Sidebar body */
+/* Sidebar tabs (DM / Groups) */
+.sidebar-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg2);
+  border-radius: 10px;
+  padding: 3px;
+}
+.sidebar-tab {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  background: none; border: none; color: var(--text3);
+  font-family: var(--font); font-size: 12px; font-weight: 600;
+  padding: 7px 6px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.sidebar-tab.active { background: var(--bg3); color: var(--text); box-shadow: var(--shadow-sm); }
+.sidebar-tab:hover:not(.active) { color: var(--text); background: rgba(255,255,255,0.03); }
+.sidebar-tab-add {
+  width: 30px; height: 30px;
+  background: none; border: none;
+  color: var(--green); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 7px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+.sidebar-tab-add:hover { background: rgba(52,211,153,0.12); }
+
 .sidebar-body { flex: 1; overflow-y: auto; padding: 12px 8px; display: flex; flex-direction: column; gap: 4px; }
 .sidebar-body::-webkit-scrollbar { width: 4px; }
 .sidebar-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
@@ -378,7 +400,6 @@ html, body {
   display: flex; align-items: center; gap: 6px;
 }
 
-/* Friend requests */
 .req-card {
   display: flex; align-items: center; gap: 10px;
   padding: 10px; border-radius: var(--radius-sm);
@@ -405,7 +426,6 @@ html, body {
 }
 .btn-no:hover { background: rgba(248,113,113,0.22); }
 
-/* Friend items */
 .friend-item {
   display: flex; align-items: center; gap: 10px;
   padding: 10px; border-radius: var(--radius-sm);
@@ -456,7 +476,6 @@ html, body {
   padding: 0 5px;
 }
 
-/* Empty state */
 .empty-state {
   display: flex; flex-direction: column; align-items: center;
   gap: 8px; padding: 40px 20px; text-align: center; color: var(--text3);
@@ -466,7 +485,7 @@ html, body {
 .empty-sub { font-size: 12px; }
 
 /* ─── Chat Main ─────────────────────────────────────────────────────────────── */
-.chat-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+.chat-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); min-width: 0; }
 
 .chat-empty {
   flex: 1; display: flex; flex-direction: column;
@@ -477,9 +496,8 @@ html, body {
 .chat-empty-title { font-size: 18px; font-weight: 600; color: var(--text2); }
 .chat-empty-sub { font-size: 13px; }
 
-.chat-window { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.chat-window { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
 
-/* Chat header */
 .chat-head {
   display: flex; align-items: center; gap: 12px;
   padding: 14px 20px;
@@ -502,25 +520,23 @@ html, body {
 .chat-head-status { font-size: 12px; color: var(--text3); margin-top: 1px; }
 .chat-head-status.on { color: var(--green); }
 
-/* Messages */
 .messages {
   flex: 1; overflow-y: auto;
   padding: 20px;
   display: flex; flex-direction: column; gap: 6px;
+  min-height: 0;
 }
 .messages::-webkit-scrollbar { width: 4px; }
 .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
 .msg {
-  /* min(70%, 560px) — на узких экранах ведёт себя как раньше (70%), но на
-     широких/4K не растягивает короткое сообщение на пол-экрана (аудит, пункт 3) */
   max-width: min(70%, 560px);
   padding: 10px 14px;
   border-radius: 16px;
   font-size: 14px;
   line-height: 1.5;
   word-break: break-word;
-  overflow-wrap: anywhere; /* аккуратнее переносит длинные URL/токены, чем один word-break */
+  overflow-wrap: anywhere;
   position: relative;
 }
 .msg.mine {
@@ -536,19 +552,10 @@ html, body {
   border-bottom-left-radius: 4px;
   border: 1px solid var(--border);
 }
-.msg.deleted-msg {
-  opacity: 0.45;
-  font-style: italic;
-}
-.msg-time {
-  font-size: 10px;
-  opacity: 0.65;
-  margin-top: 4px;
-  text-align: right;
-}
+.msg.deleted-msg { opacity: 0.45; font-style: italic; }
+.msg-time { font-size: 10px; opacity: 0.65; margin-top: 4px; text-align: right; }
 .msg.theirs .msg-time { text-align: left; }
 
-/* Delete button on message */
 .msg-wrap {
   display: flex;
   align-items: flex-end;
@@ -570,14 +577,10 @@ html, body {
 .msg-wrap:hover .msg-del-btn { opacity: 1; }
 .msg-del-btn:hover { background: rgba(248,113,113,0.2); color: var(--red); border-color: rgba(248,113,113,0.3); }
 
-/* На устройствах без hover (телефоны/планшеты) :hover никогда не срабатывает —
-   кнопка удаления была фактически недостижима с тачскрина. Показываем её
-   постоянно (полупрозрачно), раз навести курсор физически невозможно (аудит, пункт 1) */
 @media (hover: none) {
   .msg-del-btn { opacity: 0.6; }
 }
 
-/* Message bar */
 .msg-bar {
   display: flex; align-items: center; gap: 10px;
   padding: 14px 20px;
@@ -585,7 +588,7 @@ html, body {
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
-#msg-input {
+#msg-input, #group-msg-input {
   flex: 1;
   background: var(--bg2);
   border: 1px solid var(--border);
@@ -596,9 +599,10 @@ html, body {
   padding: 10px 16px;
   outline: none;
   transition: border-color 0.2s, box-shadow 0.2s;
+  min-width: 0;
 }
-#msg-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
-#msg-input::placeholder { color: var(--text3); }
+#msg-input:focus, #group-msg-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+#msg-input::placeholder, #group-msg-input::placeholder { color: var(--text3); }
 
 .send-btn {
   width: 42px; height: 42px;
@@ -632,6 +636,8 @@ html, body {
   position: relative;
   box-shadow: var(--shadow);
   animation: slideUp 0.2s ease;
+  max-height: 90vh;
+  overflow-y: auto;
 }
 @keyframes slideUp { from { transform: translateY(16px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
@@ -642,12 +648,12 @@ html, body {
   border-radius: 8px; color: var(--text2);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; transition: all 0.2s;
+  z-index: 2;
 }
 .modal-close-btn:hover { background: var(--bg4); color: var(--text); }
 
 .modal-title { font-size: 18px; font-weight: 700; margin-bottom: 20px; }
 
-/* View profile modal */
 .modal-profile-header {
   display: flex; flex-direction: column; align-items: center;
   gap: 8px; padding: 8px 0 20px; text-align: center;
@@ -674,7 +680,6 @@ html, body {
 .profile-info-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text3); }
 .profile-info-value { font-size: 14px; color: var(--text); word-break: break-word; }
 
-/* Edit profile modal */
 .edit-avatar-wrap {
   display: flex; justify-content: center;
   margin-bottom: 20px; position: relative; width: fit-content; margin-left: auto; margin-right: auto;
@@ -701,27 +706,16 @@ html, body {
 .avatar-upload-btn:hover { opacity: 0.85; }
 .avatar-upload-btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* Скрытый <input type="file"> для загрузки аватара: display:none убирает элемент
-   и из accessibility-дерева (скринридеры его не видят и не могут активировать
-   через клавиатуру/жест). Этот паттерн держит поле технически видимым для AT,
-   визуально скрывая его обычным пользователям (аудит, пункт 11). */
 .visually-hidden-input {
-  position: absolute;
-  width: 1px; height: 1px;
-  padding: 0; margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 
-.edit-profile-actions {
-  display: flex; gap: 10px; margin-top: 20px;
-}
+.edit-profile-actions { display: flex; gap: 10px; margin-top: 20px; }
 .edit-profile-actions .btn-primary,
 .edit-profile-actions .btn-secondary { flex: 1; }
 
-/* Open "blocked users" link row (edit profile modal) */
 .btn-link-row {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   width: 100%; background: none; border: none;
@@ -732,14 +726,12 @@ html, body {
 }
 .btn-link-row:hover { background: var(--bg2); color: var(--red); }
 
-/* Block button when target is already blocked → outlined red, matches "destructive but reversible" */
 .btn-secondary.btn-danger-outline {
   border-color: rgba(248,113,113,0.35);
   color: var(--red);
 }
 .btn-secondary.btn-danger-outline:hover { background: rgba(248,113,113,0.12); }
 
-/* Blocked users modal */
 .blocked-users-list {
   display: flex; flex-direction: column; gap: 6px;
   max-height: 360px; overflow-y: auto;
@@ -765,7 +757,6 @@ html, body {
 .btn-unblock:hover { background: rgba(124,110,245,0.22); }
 .blocked-users-empty { text-align: center; color: var(--text3); padding: 24px 8px; font-size: 13px; }
 
-/* ─── Delete confirm popup ──────────────────────────────────────────────────── */
 .delete-confirm-popup {
   position: fixed;
   bottom: 80px;
@@ -799,10 +790,6 @@ html, body {
 }
 .btn-ghost-sm:hover { background: var(--bg3); }
 
-/* ─── Transient toast notice ────────────────────────────────────────────────── */
-/* Раньше создавался и стилизовался прямо в JS через style.cssText — единственное
-   место в приложении, стилизованное не через CSS-классы. Перенесено сюда,
-   JS теперь только переключает класс .show (аудит, пункт 5). */
 .transient-notice {
   position: fixed;
   bottom: 20px; left: 50%; transform: translateX(-50%);
@@ -820,6 +807,225 @@ html, body {
 }
 .transient-notice.show { opacity: 1; }
 
+/* Friends picker (moдалки) */
+.friends-picker {
+  max-height: 220px; overflow-y: auto;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px;
+}
+.picker-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 6px;
+  cursor: pointer; transition: background 0.15s;
+}
+.picker-item:hover { background: var(--bg3); }
+.picker-item.selected { background: var(--accent-bg); }
+.picker-check {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 2px solid var(--text3);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; color: transparent;
+  flex-shrink: 0; transition: all 0.2s;
+}
+.picker-item.selected .picker-check {
+  border-color: var(--accent); background: var(--accent); color: white;
+}
+
+/* Group members list (info modal) */
+.group-members-list {
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: 250px; overflow-y: auto;
+}
+.group-member-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px; border-radius: var(--radius-sm);
+  transition: background 0.15s;
+}
+.group-member-item:hover { background: var(--bg3); }
+.owner-badge { color: #f0b232; font-size: 12px; }
+.btn-kick {
+  width: 24px; height: 24px;
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text3); font-size: 12px;
+  transition: all 0.2s; flex-shrink: 0;
+  background: none; border: none; cursor: pointer;
+}
+.btn-kick:hover { background: rgba(248,113,113,0.15); color: var(--red); }
+
+/* ═══ Группы: Discord-style ═══════════════════════════════════════════════ */
+
+/* Аватар группы — скруглённый квадрат с сеткой лиц */
+.chat-head-avatar.group-av,
+.modal-avatar.group-av,
+.f-av.group-av {
+  border-radius: 12px !important;
+  overflow: hidden;
+}
+
+.group-av-grid {
+  display: grid;
+  width: 100%; height: 100%;
+  gap: 1px; background: var(--border2);
+  border-radius: 12px; overflow: hidden;
+}
+.group-av-grid.g1 { grid-template: 1fr / 1fr; }
+.group-av-grid.g2 { grid-template: 1fr / 1fr 1fr; }
+.group-av-grid.g3 { grid-template: 1fr 1fr / 1fr 1fr; }
+.group-av-grid.g3 .group-av-cell:first-child { grid-column: 1 / -1; }
+.group-av-grid.g4 { grid-template: 1fr 1fr / 1fr 1fr; }
+.group-av-cell {
+  background: var(--neutral-avatar-gradient);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; color: #fff; overflow: hidden;
+}
+.group-av-cell img { width: 100%; height: 100%; object-fit: cover; }
+
+/* Раскладка группового чата: сообщения + участники */
+.group-chat-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+}
+.group-chat-left {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Панель участников справа */
+.group-members-panel {
+  width: 250px;
+  min-width: 250px;
+  background: var(--bg1);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.group-members-panel.hidden { display: none; }
+#group-members-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gm-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 8px; border-radius: var(--radius-sm);
+  cursor: pointer; transition: background .15s;
+}
+.gm-item:hover { background: var(--bg2); }
+.gm-item.offline { opacity: .55; }
+
+.gm-av {
+  width: 32px; height: 32px; border-radius: 50%;
+  background: var(--neutral-avatar-gradient);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 12px; color: #fff;
+  position: relative; overflow: hidden; flex-shrink: 0;
+}
+.gm-av img { width: 100%; height: 100%; object-fit: cover; }
+
+/* Точка онлайн-статуса в панели участников */
+.gm-av .f-dot {
+  width: 10px; height: 10px;
+  border: 2px solid var(--bg1);
+  border-style: solid;
+  background: var(--green);
+}
+
+.gm-name {
+  flex: 1; min-width: 0;
+  font-size: 13px; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gm-crown {
+  color: #f0b232;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.btn-invite {
+  margin: 10px;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  background: var(--bg3); border: 1px solid var(--border);
+  color: var(--text2); border-radius: var(--radius-sm);
+  font-family: var(--font); font-size: 13px; font-weight: 500;
+  padding: 9px; cursor: pointer; transition: all .2s;
+  flex-shrink: 0;
+}
+.btn-invite:hover { background: var(--bg4); color: var(--text); }
+
+/* Сообщения в группе (Discord-style) */
+.group-messages {
+  padding: 16px 20px;
+  gap: 2px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.g-msg {
+  display: flex; gap: 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  position: relative;
+  transition: background .12s;
+}
+.g-msg:hover { background: var(--bg1); }
+.g-msg.deleted { opacity: .6; }
+.g-msg-av {
+  width: 40px; height: 40px; border-radius: 50%;
+  background: var(--neutral-avatar-gradient);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 15px; color: #fff;
+  flex-shrink: 0; overflow: hidden; margin-top: 2px;
+}
+.g-msg-av img { width: 100%; height: 100%; object-fit: cover; }
+.g-msg-body { flex: 1; min-width: 0; }
+.g-msg-head {
+  display: flex; align-items: baseline;
+  gap: 6px; flex-wrap: wrap;
+  margin-bottom: 2px;
+}
+.g-msg-nick {
+  font-weight: 600; font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+}
+.g-msg-nick:hover { text-decoration: underline; }
+.g-msg.mine .g-msg-nick { color: var(--accent); }
+.g-msg-time {
+  font-size: 11px; color: var(--text3); font-weight: 400;
+}
+.g-msg-text {
+  font-size: 14px; line-height: 1.45;
+  word-break: break-word; overflow-wrap: anywhere;
+  color: var(--text);
+}
+.g-msg.deleted .g-msg-text {
+  font-style: italic; color: var(--text3); opacity: .8;
+}
+.g-msg .msg-del-btn {
+  position: absolute; top: 8px; right: 8px;
+}
+
+/* Скрываем правую панель на планшетах и телефонах */
+@media (max-width: 900px) {
+  .group-members-panel { display: none; }
+  #btn-toggle-members { display: none; }
+}
+
 /* ─── Scrollbar global ──────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -827,9 +1033,6 @@ html, body {
 ::-webkit-scrollbar-thumb:hover { background: var(--border2); }
 
 /* ─── Responsive (tablet / mid-width) ───────────────────────────────────────── */
-/* Раньше был единственный breakpoint на 640px — на планшетах в портретной
-   ориентации (например, iPad ~768px) фикс. сайдбар 300px мог смотреться тесно
-   рядом с чатом (аудит, пункт 8). */
 @media (min-width: 641px) and (max-width: 900px) {
   :root { --sidebar-w: 260px; }
 }
@@ -856,4 +1059,5 @@ html, body {
 
   .msg { max-width: 85%; }
   .auth-box { padding: 28px 20px; }
+  .g-msg-av { width: 36px; height: 36px; font-size: 13px; }
 }
