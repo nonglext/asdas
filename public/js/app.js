@@ -1960,11 +1960,11 @@ async function startCall({ toId, groupId, video }) {
 function openCallOverlay(statusText) {
   callState.active = true;
   const overlay = $('call-overlay');
-  syncVoiceOverlayPosition();
   overlay.classList.toggle('voice-mode', !callState.video);
   overlay.classList.toggle('video-mode', callState.video);
   $('call-overlay-mode').textContent = callState.video ? 'ВИДЕОКАНАЛ' : 'ГОЛОСОВОЙ КАНАЛ';
   overlay.style.display = 'flex';
+  syncVoiceOverlayPosition();
   $('call-overlay-title').textContent = callState.isGroup
     ? (state.groups[callState.groupId]?.name || 'Групповой звонок')
     : callPeerName(callState.peerFriendId);
@@ -1977,8 +1977,9 @@ function syncVoiceOverlayPosition() {
   const sidebar = document.querySelector('.sidebar');
   if (!overlay || !sidebar) return;
 
-  const chatHead = [...document.querySelectorAll('.chat-head, .group-chat-head')]
-    .find(element => getComputedStyle(element).display !== 'none');
+  const chatWindow = [...document.querySelectorAll('.chat-window')]
+    .find(element => getComputedStyle(element).display !== 'none' && element.getBoundingClientRect().height > 0);
+  const chatHead = chatWindow?.querySelector('.chat-head');
   const top = chatHead ? chatHead.getBoundingClientRect().bottom : 0;
   overlay.style.setProperty('--call-top', `${Math.max(0, top)}px`);
   if (window.innerWidth <= 640) return;
