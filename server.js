@@ -79,6 +79,9 @@ const MAX_TEXT_LENGTH = 4000;
 // нет). Поднято до 8. При желании ужесточить дальше — добавить проверку
 // на наличие цифр/букв разных регистров через отдельную функцию.
 const MIN_PASSWORD_LENGTH = 8;
+const ACCESS_TOKEN_TTL = '15m';
+const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_SESSIONS_PER_USER = 10;
 const MAX_PASSWORD_LENGTH = 128;
 const MAX_GROUP_NAME_LENGTH = 50;
 
@@ -186,6 +189,14 @@ const User = sequelize.define('User', {
   blockedUsers: { type: DataTypes.ARRAY(DataTypes.STRING), defaultValue: [] }
 }, { timestamps: true, underscored: true, tableName: 'users' });
 
+const Session = sequelize.define('Session', {
+  id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  userId: { type: DataTypes.STRING, allowNull: false },
+  refreshTokenHash: { type: DataTypes.STRING, allowNull: false, unique: true },
+  userAgent: { type: DataTypes.TEXT }, ip: { type: DataTypes.STRING },
+  expiresAt: { type: DataTypes.DATE, allowNull: false }, revokedAt: { type: DataTypes.DATE }
+}, { timestamps: true, underscored: true, tableName: 'sessions', indexes: [{fields:['user_id']},{fields:['expires_at']}] });
+
 const Message = sequelize.define('Message', {
   id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
   chatKey: { type: DataTypes.STRING, allowNull: true },
@@ -196,7 +207,9 @@ const Message = sequelize.define('Message', {
   image: { type: DataTypes.TEXT, defaultValue: null },
   type: { type: DataTypes.ENUM('text', 'image'), defaultValue: 'text' },
   read: { type: DataTypes.BOOLEAN, defaultValue: false },
-  deleted: { type: DataTypes.BOOLEAN, defaultValue: false }
+  deleted: { type: DataTypes.BOOLEAN, defaultValue: false },
+  edited: { type: DataTypes.BOOLEAN, defaultValue: false },
+  reactions: { type: DataTypes.JSONB, defaultValue: {} }
 }, {
   timestamps: true, underscored: true, tableName: 'messages',
   indexes: [
@@ -233,6 +246,8 @@ Group.hasMany(GroupMember, { foreignKey: 'groupId', onDelete: 'CASCADE' });
 GroupMember.belongsTo(Group, { foreignKey: 'groupId' });
 GroupMember.belongsTo(User, { foreignKey: 'userId' });
 User.hasMany(GroupMember, { foreignKey: 'userId' });
+User.hasMany(Session, { foreignKey: 'userId', onDelete: 'CASCADE' });
+Session.belongsTo(User, { foreignKey: 'userId' });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const onlineUsers = {}; // userId -> Set
@@ -354,34 +369,20 @@ function leaveUserFromGroupRoom(userId, groupId) {
   }
 }
 
-// ─── JWT Auth Middleware ──────────────────────────────────────────────────────
-const userExistCache = new Map(); // userId -> { ok, exp }
+// ─── JWT + Refresh Session Auth ───────────────────────────────────────────────
+const userExistCache = new Map();
 const USER_EXIST_CACHE_TTL = 30000;
-
-async function userExists(id) {
-  const now = Date.now();
-  const hit = userExistCache.get(id);
-  if (hit && hit.exp > now) return hit.ok;
-  const u = await User.findByPk(id);
-  const ok = !!u;
-  userExistCache.set(id, { ok, exp: now + (ok ? USER_EXIST_CACHE_TTL : 5000) });
-  if (userExistCache.size > 10_000) userExistCache.clear();
-  return ok;
-}
-
-async function authMiddleware(req, res, next) {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'Не авторизован' });
-  try {
-    req.user = jwt.verify(token, JWT_SECRET);
-  } catch {
-    return res.status(401).json({ error: 'Токен недействителен или истёк' });
-  }
-  if (!(await userExists(req.user.id))) {
-    return res.status(401).json({ error: 'Пользователь не найден' });
-  }
-  next();
-}
+async function userExists(id){const now=Date.now(),hit=userExistCache.get(id);if(hit&&hit.exp>now)return hit.ok;const ok=!!(await User.findByPk(id));userExistCache.set(id,{ok,exp:now+(ok?USER_EXIST_CACHE_TTL:5000)});return ok;}
+const hashRefreshToken=t=>crypto.createHash('sha256').update(t).digest('hex');
+const makeRefreshToken=()=>crypto.randomBytes(48).toString('base64url');
+const signAccessToken=(id,sid)=>jwt.sign({id,sid,typ:'access'},JWT_SECRET,{expiresIn:ACCESS_TOKEN_TTL});
+async function createSession(user,req){const raw=makeRefreshToken();const session=await Session.create({userId:user.id,refreshTokenHash:hashRefreshToken(raw),userAgent:req.get('user-agent')?.slice(0,1000),ip:req.ip,expiresAt:new Date(Date.now()+REFRESH_TOKEN_TTL_MS)});const rows=await Session.findAll({where:{userId:user.id,revokedAt:null},order:[['createdAt','DESC']]});for(const x of rows.slice(MAX_SESSIONS_PER_USER))await x.update({revokedAt:new Date()});return {accessToken:signAccessToken(user.id,session.id),refreshToken:raw,sessionId:session.id};}
+async function authMiddleware(req,res,next){const token=req.headers.authorization?.split(' ')[1];if(!token)return res.status(401).json({error:'Не авторизован'});try{const payload=jwt.verify(token,JWT_SECRET);if(payload.typ!=='access'||!payload.sid)throw 0;const session=await Session.findOne({where:{id:payload.sid,userId:payload.id,revokedAt:null}});if(!session||new Date(session.expiresAt)<=new Date())throw 0;req.user=payload;req.session=session;}catch{return res.status(401).json({error:'Сессия истекла'});}if(!(await userExists(req.user.id)))return res.status(401).json({error:'Пользователь не найден'});next();}
+app.post('/api/refresh',async(req,res)=>{try{const raw=typeof req.body?.refreshToken==='string'?req.body.refreshToken:'';const session=await Session.findOne({where:{refreshTokenHash:hashRefreshToken(raw),revokedAt:null}});if(!session||new Date(session.expiresAt)<=new Date())return res.status(401).json({error:'Refresh token недействителен'});const user=await User.findByPk(session.userId);if(!user)return res.status(401).json({error:'Пользователь не найден'});const next=makeRefreshToken();await session.update({refreshTokenHash:hashRefreshToken(next),expiresAt:new Date(Date.now()+REFRESH_TOKEN_TTL_MS)});res.json({accessToken:signAccessToken(user.id,session.id),refreshToken:next});}catch(e){logger.error('Refresh error',{error:e.message});res.status(500).json({error:'Ошибка обновления сессии'});}});
+app.post('/api/logout',authMiddleware,async(req,res)=>{await Session.update({revokedAt:new Date()},{where:{id:req.session.id}});res.json({success:true});});
+app.post('/api/logout-all',authMiddleware,async(req,res)=>{await Session.update({revokedAt:new Date()},{where:{userId:req.user.id,revokedAt:null}});res.json({success:true});});
+app.get('/api/sessions',authMiddleware,async(req,res)=>{const rows=await Session.findAll({where:{userId:req.user.id,revokedAt:null},order:[['createdAt','DESC']]});res.json(rows.map(x=>({id:x.id,current:x.id===req.session.id,userAgent:x.userAgent,ip:x.ip,createdAt:x.createdAt,expiresAt:x.expiresAt})));});
+app.delete('/api/sessions/:id',authMiddleware,async(req,res)=>{const[n]=await Session.update({revokedAt:new Date()},{where:{id:req.params.id,userId:req.user.id,revokedAt:null}});res.json({success:n>0});});
 
 // ─── File Upload ──────────────────────────────────────────────────────────────
 if (!fs.existsSync('uploads')) fs.mkdirSync('uploads');
@@ -426,9 +427,9 @@ app.post('/api/register', authLimiter, async (req, res) => {
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
     const user = await User.create({ id, nickname: nick, passwordHash, friends: [], friendRequests: [], blockedUsers: [] });
 
-    const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '7d' });
+    const tokens = await createSession(user, req);
     res.json({
-      success: true, token,
+      success: true, token: tokens.accessToken, refreshToken: tokens.refreshToken, sessionId: tokens.sessionId,
       user: { id: user.id, nickname: user.nickname, avatar: user.avatar, status: user.status, friends: user.friends, friendRequests: user.friendRequests, blockedUsers: user.blockedUsers }
     });
   } catch (err) {
@@ -452,9 +453,9 @@ app.post('/api/login', authLimiter, async (req, res) => {
     const match = await bcrypt.compare(password, user ? user.passwordHash : DUMMY_PASSWORD_HASH);
     if (!user || !match) return res.status(401).json({ error: 'Неверный ID или пароль' });
 
-    const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '7d' });
+    const tokens = await createSession(user, req);
     res.json({
-      success: true, token,
+      success: true, token: tokens.accessToken, refreshToken: tokens.refreshToken, sessionId: tokens.sessionId,
       user: { id: user.id, nickname: user.nickname, avatar: user.avatar, status: user.status, bio: user.bio, friends: user.friends, friendRequests: user.friendRequests, blockedUsers: user.blockedUsers }
     });
   } catch (err) {
@@ -1016,6 +1017,8 @@ function emitGroupVoiceState(groupId, target) {
 }
 
 // ─── Socket.IO ────────────────────────────────────────────────────────────────
+function formatMessage(m){const x=m.toJSON?m.toJSON():m;return {...x,_id:x.id,time:x.createdAt};}
+function broadcastMessageUpdate(msg,event,payload){if(msg.groupId)io.to(`group:${msg.groupId}`).emit(event,{messageId:msg.id,msg:payload});else{io.to(msg.from).emit(event,{messageId:msg.id,msg:payload});if(msg.to)io.to(msg.to).emit(event,{messageId:msg.id,msg:payload});}}
 io.on('connection', (socket) => {
   const currentUserId = socket.user.id;
   if (!currentUserId) return socket.disconnect(true);
@@ -1297,11 +1300,16 @@ io.on('connection', (socket) => {
             type: sequelize.QueryTypes.SELECT
           }
         );
+        if (rows.length) io.to(friendId).emit('messageRead',{messageIds:rows.map(r=>r.id),by:currentUserId});
       } while (rows.length === BATCH);
     } catch (err) { logger.error('Mark read error', { socketId: socket.id, error: err.message, stack: err.stack }); }
   });
 
   // ─── Group Messages ─────────────────────────────────────────────────────────
+  socket.on('typing',async({toId,groupId,isTyping}={})=>{if(!currentUserId)return;if(toId&&toId!==currentUserId){io.to(toId).emit('typing',{from:currentUserId,isTyping:!!isTyping});}else if(groupId&&await isGroupMember(currentUserId,groupId)){socket.to(`group:${groupId}`).emit('groupTyping',{groupId,from:currentUserId,isTyping:!!isTyping});}});
+  socket.on('editMessage',async({messageId,text}={})=>{if(!messageId||typeof text!=='string')return;const msg=await Message.findByPk(messageId);if(!msg||msg.from!==currentUserId||msg.deleted)return socket.emit('messageActionError',{reason:'forbidden'});text=text.trim();if(!text||text.length>MAX_TEXT_LENGTH)return;msg.text=text;msg.edited=true;await msg.save();broadcastMessageUpdate(msg,'messageEdited',formatMessage(msg));});
+  socket.on('reactMessage',async({messageId,emoji}={})=>{if(!messageId||typeof emoji!=='string')return;const msg=await Message.findByPk(messageId);if(!msg||msg.deleted)return;const reactions={...(msg.reactions||{})};const users=Array.isArray(reactions[emoji])?[...reactions[emoji]]:[];const i=users.indexOf(currentUserId);if(i>=0)users.splice(i,1);else users.push(currentUserId);if(users.length)reactions[emoji]=users;else delete reactions[emoji];msg.reactions=reactions;await msg.save();broadcastMessageUpdate(msg,'messageReaction',formatMessage(msg));});
+
   socket.on('groupMessage', async ({ groupId, text, image } = {}) => {
     try {
       if (!currentUserId) return socket.disconnect();
@@ -1601,6 +1609,8 @@ io.on('connection', (socket) => {
 });
 
 // ─── Schema migration (additive, idempotent) ──────────────────────────────────
+setInterval(()=>Session.destroy({where:{expiresAt:{[Op.lt]:new Date()}}}).catch(e=>logger.warn('session cleanup failed',{error:e.message})),3600000).unref();
+
 async function ensureSchema() {
   const qi = sequelize.getQueryInterface();
 
@@ -1654,6 +1664,8 @@ async function ensureSchema() {
 
     if (tableSet.has('messages')) {
       const cols = await qi.describeTable('messages');
+      if (!cols.edited) await qi.addColumn('messages','edited',{type:DataTypes.BOOLEAN,allowNull:false,defaultValue:false});
+      if (!cols.reactions) await qi.addColumn('messages','reactions',{type:DataTypes.JSONB,allowNull:false,defaultValue:{}});
       if (!cols.group_id) {
         logger.info('🔧 Миграция: добавляю колонку messages.group_id');
         await qi.addColumn('messages', 'group_id', { type: DataTypes.UUID, allowNull: true });
@@ -1670,6 +1682,12 @@ async function ensureSchema() {
   } catch (err) {
     logger.error('❌ Ошибка миграции (messages.group_id / chat_key)', { error: err.message, stack: err.stack });
   }
+
+  try {
+    await sequelize.query(`CREATE TABLE IF NOT EXISTS "sessions" ("id" UUID PRIMARY KEY, "user_id" VARCHAR(255) NOT NULL, "refresh_token_hash" VARCHAR(255) NOT NULL UNIQUE, "user_agent" TEXT, "ip" VARCHAR(255), "expires_at" TIMESTAMPTZ NOT NULL, "revoked_at" TIMESTAMPTZ, "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(), "updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+    await sequelize.query(`CREATE INDEX IF NOT EXISTS "sessions_user_id" ON "sessions" ("user_id")`);
+    await sequelize.query(`CREATE INDEX IF NOT EXISTS "sessions_expires_at" ON "sessions" ("expires_at")`);
+  } catch (err) { logger.error('❌ Ошибка миграции sessions',{error:err.message,stack:err.stack}); }
 
   try {
     await qi.addIndex('messages', ['group_id'], { name: 'messages_group_id' });
