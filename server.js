@@ -153,7 +153,7 @@ async function connectWithRetry(retries = 5, delayMs = 3000) {
 // ─── Models ───────────────────────────────────────────────────────────────────
 const User = sequelize.define('User', {
   id: { type: DataTypes.STRING, primaryKey: true, allowNull: false },
-  nickname: { type: DataTypes.STRING, allowNull: false },
+  nickname: { type: DataTypes.STRING(MAX_NICKNAME_LENGTH), allowNull: false },
   passwordHash: { type: DataTypes.STRING, allowNull: false },
   avatar: { type: DataTypes.STRING, defaultValue: null },
   status: { type: DataTypes.STRING(150), defaultValue: 'Привет! Я использую ChatApp' },
@@ -832,8 +832,10 @@ app.get('/api/groups/:groupId/messages', authMiddleware, async (req, res) => {
     }
 
     const messages = await Message.findAll({ where, order: [['createdAt', 'DESC']], limit: limitNum });
+    // FIX: добавлен groupId в ответ, чтобы фронт мог однозначно определить,
+    // что это сообщение группового чата (раньше приходилось угадывать по контексту).
     res.json(messages.reverse().map(m => ({
-      _id: m.id, from: m.from, to: m.to, text: m.text, image: m.image,
+      _id: m.id, from: m.from, to: m.to, groupId: m.groupId, text: m.text, image: m.image,
       type: m.type, deleted: m.deleted, time: m.createdAt.toISOString()
     })));
   } catch (err) {
@@ -1160,10 +1162,25 @@ io.on('connection', (socket) => {
     try {
       if (!currentUserId) return socket.disconnect();
       if (!friendId) return;
-      await Message.update(
-        { read: true },
-        { where: { chatKey: getChatKey(currentUserId, friendId), to: currentUserId, read: false, groupId: null } }
-      );
+      // FIX: батчами по 1000, чтобы не блокировать БД при огромной истории
+      // непрочитанных сообщений одним массовым UPDATE.
+      const BATCH = 1000;
+      let rows;
+      do {
+        rows = await sequelize.query(
+          `UPDATE "messages" SET read = true
+           WHERE id IN (
+             SELECT id FROM "messages"
+             WHERE chat_key = :chatKey AND "to" = :toId AND read = false AND group_id IS NULL
+             LIMIT :batch
+           )
+           RETURNING id`,
+          {
+            replacements: { chatKey: getChatKey(currentUserId, friendId), toId: currentUserId, batch: BATCH },
+            type: sequelize.QueryTypes.SELECT
+          }
+        );
+      } while (rows.length === BATCH);
     } catch (err) { logger.error('Mark read error', { socketId: socket.id, error: err.message, stack: err.stack }); }
   });
 
@@ -1295,7 +1312,12 @@ io.on('connection', (socket) => {
         socket.leave(`group:${groupId}`);
         io.to(`group:${groupId}`).emit('groupMemberLeft', { groupId, userId: currentUserId });
       }
-    } catch (err) { logger.error('Leave group error', { socketId: socket.id, error: err.message, stack: err.stack }); }
+    } catch (err) {
+      logger.error('Leave group error', { socketId: socket.id, error: err.message, stack: err.stack });
+      // FIX: раньше ошибка только логировалась, клиент не узнавал о сбое
+      // и UI мог зависнуть в ложном состоянии "вышел из группы".
+      socket.emit('groupError', { reason: 'server_error' });
+    }
   });
 
   socket.on('kickGroupMember', async ({ groupId, userId } = {}) => {
@@ -1317,7 +1339,10 @@ io.on('connection', (socket) => {
 
       io.to(`group:${groupId}`).emit('groupMemberLeft', { groupId, userId });
       io.to(userId).emit('groupDeleted', { groupId });
-    } catch (err) { logger.error('Kick member error', { socketId: socket.id, error: err.message, stack: err.stack }); }
+    } catch (err) {
+      logger.error('Kick member error', { socketId: socket.id, error: err.message, stack: err.stack });
+      socket.emit('groupError', { reason: 'server_error' });
+    }
   });
 
   // ─── Disconnect ────────────────────────────────────────────────────────────
