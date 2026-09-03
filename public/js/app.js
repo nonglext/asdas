@@ -3,7 +3,7 @@
 /* ============================================================================
  * CONFIG
  * ==========================================================================*/
-const BACKEND_URL = window.CHATAPP_BACKEND_URL || window.location.origin;
+const BACKEND_URL = "https://asdas-p7ht.onrender.com";
 const MAX_MESSAGE_LENGTH = 4000;
 const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
 const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -38,7 +38,6 @@ const state = {
   // (e.g. user clicks friend A then B before A's history request resolves).
   seq: { chat: 0, groupChat: 0, profile: 0 },
   loggingOut: false,
-  refreshToken: localStorage.getItem('chatapp_refresh_token') || null,
 };
 
 function resetState() {
@@ -51,7 +50,6 @@ function resetState() {
   state.groupUnread = Object.create(null);
   state.groupVoiceCalls = Object.create(null);
   state.pendingDeleteId = null;
-  state.refreshToken = null;
 }
 
 /* ============================================================================
@@ -147,7 +145,6 @@ function forceLogoutToLogin(message) {
   if (socket.connected) socket.disconnect();
   localStorage.removeItem('chatapp_id');
   localStorage.removeItem('chatapp_token');
-  localStorage.removeItem('chatapp_refresh_token');
   localStorage.removeItem('chatapp_profile');
   document.documentElement.classList.remove('has-session');
   closeAllModals();
@@ -178,25 +175,26 @@ function forceLogoutToLogin(message) {
  */
 class AuthError extends Error {}
 
-async function authFetch(url, options = {}, retry = true) {
+async function authFetch(url, options = {}) {
   const token = localStorage.getItem('chatapp_token');
-  const res = await fetch(url, { ...options, headers: { ...(options.headers || {}), ...(token ? {Authorization:'Bearer '+token} : {}) } });
-  if (res.status === 401 && retry && localStorage.getItem('chatapp_refresh_token')) {
-    try {
-      const rr = await fetch(BACKEND_URL+'/api/refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({refreshToken:localStorage.getItem('chatapp_refresh_token')})});
-      const rd = await rr.json().catch(()=>({}));
-      if(rr.ok && rd.accessToken){localStorage.setItem('chatapp_token',rd.accessToken);if(rd.refreshToken)localStorage.setItem('chatapp_refresh_token',rd.refreshToken);connectSocket();return authFetch(url,options,false);}
-    } catch(e) {}
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
+    },
+  });
+  if (res.status === 401 && state.me) {
+    forceLogoutToLogin('Сессия истекла, войдите снова');
+    throw new AuthError('Session expired');
   }
-  if(res.status===401 && state.me){forceLogoutToLogin('Сессия истекла, войдите снова');throw new AuthError('Session expired');}
   return res;
 }
 
-function saveAndLogin(user, userId, token, refreshToken) {
+function saveAndLogin(user, userId, token) {
   state.me = user;
   localStorage.setItem('chatapp_id', userId);
   if (token) localStorage.setItem('chatapp_token', token);
-  if (refreshToken) localStorage.setItem('chatapp_refresh_token', refreshToken);
   localStorage.setItem('chatapp_profile', JSON.stringify(user));
   enterApp(user);
 }
@@ -210,8 +208,6 @@ function enterApp(user) {
   document.documentElement.classList.add('has-session');
   connectSocket();
   loadGroups();
-  bindTypingInput('msg-input',()=>state.activeFriend?{toId:state.activeFriend}:null);
-  bindTypingInput('group-msg-input',()=>state.activeGroup?{groupId:state.activeGroup}:null);
 }
 
 /* ============================================================================
@@ -355,7 +351,7 @@ $('btn-register').addEventListener('click', async () => {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return setErr(data.error || 'Ошибка регистрации');
-      saveAndLogin(data.user, userId, data.token, data.refreshToken);
+      saveAndLogin(data.user, userId, data.token);
     } catch (e) {
       setErr('Ошибка сети');
     }
@@ -377,7 +373,7 @@ $('btn-login').addEventListener('click', async () => {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return setErr(data.error || 'Ошибка входа');
-      saveAndLogin(data.user, userId, data.token, data.refreshToken);
+      saveAndLogin(data.user, userId, data.token);
     } catch (e) {
       setErr('Ошибка сети');
     }
@@ -391,7 +387,9 @@ $('btn-login').addEventListener('click', async () => {
   $(id).addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-register').click(); })
 );
 
-$('btn-logout').addEventListener('click', async () => { try { await authFetch(BACKEND_URL+'/api/logout',{method:'POST'}); } catch(e) {} forceLogoutToLogin(); });
+$('btn-logout').addEventListener('click', () => {
+  forceLogoutToLogin();
+});
 
 function closeActiveChat() {
   state.activeFriend = null;
@@ -637,13 +635,6 @@ function syncGroupMemberPresence(userId, online) {
     renderGroupMembersPanel(g);
   }
 }
-
-socket.on('typing',({from,isTyping})=>{if(from===state.activeFriend)setTypingIndicator(isTyping?'печатает…':'');});
-socket.on('groupTyping',({groupId,from,isTyping})=>{if(groupId===state.activeGroup){const m=state.groups[groupId]?.members?.find(x=>x.id===from);setTypingIndicator(isTyping?`${m?.nickname||from} печатает…`:'');}});
-socket.on('messageEdited',({messageId,msg})=>{const w=document.querySelector(`[data-msgid="${CSS.escape(messageId)}"]`);const b=w?.querySelector('.msg, .g-msg-text');if(b)b.textContent=msg.text;});
-socket.on('messageReaction',({messageId,msg})=>{const w=document.querySelector(`[data-msgid="${CSS.escape(messageId)}"]`);if(!w)return;let r=w.querySelector('.msg-reactions');if(!r){r=document.createElement('div');r.className='msg-reactions';w.appendChild(r);}r.textContent=Object.entries(msg.reactions||{}).map(([e,u])=>`${e} ${u.length}`).join('  ');});
-
-socket.on('messageRead',({messageIds})=>{(messageIds||[]).forEach(id=>{const w=document.querySelector(`[data-msgid=\"${CSS.escape(id)}\"]`);if(w)w.classList.add('read');});});
 
 socket.on('newMessage', ({ chatWith, msg }) => {
   if (state.activeFriend === chatWith) {
@@ -1003,9 +994,6 @@ function enterMobileChatView(backBtnId) {
 /* ============================================================================
  * DM CHAT
  * ==========================================================================*/
-function setTypingIndicator(text='') { let el=$('chatapp-typing'); if(!el){el=document.createElement('div');el.id='chatapp-typing';el.className='chatapp-typing';$('chat-window')?.appendChild(el);} el.textContent=text;el.classList.toggle('show',!!text); }
-function bindTypingInput(inputId,targetGetter){const input=$(inputId);if(!input||input.dataset.typingBound)return;input.dataset.typingBound='1';let timer;input.addEventListener('input',()=>{const target=targetGetter();if(!target)return;const typing=!!input.value.trim();socket.emit('typing',{...target,isTyping:typing});clearTimeout(timer);timer=setTimeout(()=>socket.emit('typing',{...target,isTyping:false}),1200);});}
-
 async function openChat(id) {
   if (!state.me || !id) return;
   state.activeFriend = id;
@@ -1132,11 +1120,9 @@ function appendMsg(msg, containerId, doScroll = true) {
   text.className = 'g-msg-text';
   text.textContent = isDeleted ? 'Сообщение удалено' : (msg.text || '');
   body.appendChild(text);
-  if (msg.edited && !isDeleted) { const edited=document.createElement('span'); edited.className='edited-label'; edited.textContent=' изменено'; text.appendChild(edited); }
-  if (msg.reactions && Object.keys(msg.reactions).length) { const reactions=document.createElement('div'); reactions.className='msg-reactions'; reactions.textContent=Object.entries(msg.reactions).map(([e,u])=>`${e} ${u.length}`).join('  '); body.appendChild(reactions); }
 
   wrap.appendChild(body);
-  wrap.addEventListener('contextmenu', e=>{ if(!msgId||isDeleted)return; e.preventDefault(); const emoji=prompt('Реакция (например 👍 ❤️ 😂):','👍'); if(emoji)socket.emit('reactMessage',{messageId:msgId,emoji:emoji.trim().slice(0,16)}); });
+
   if (isMine && !isDeleted && msgId) {
     const delBtn = document.createElement('button');
     delBtn.className = 'msg-del-btn';
@@ -1981,25 +1967,16 @@ window.addEventListener('resize', () => {
 /* ============================================================================
  * AUTO-LOGIN
  * ==========================================================================*/
-(async () => {
+(() => {
   const token = localStorage.getItem('chatapp_token');
   const cached = localStorage.getItem('chatapp_profile');
-  if (cached && localStorage.getItem('chatapp_refresh_token')) {
+  if (token && cached) {
     try {
       state.me = JSON.parse(cached);
-      if (!token) throw new Error('no access token');
       enterApp(state.me);
-      // Validate/refresh silently so a browser opened after access-token expiry
-      // reconnects without forcing the user to log in again.
-      const r = await authFetch(BACKEND_URL+'/api/health');
-      if (!r.ok) throw new Error('session invalid');
     } catch (e) {
-      try {
-        const rr=await fetch(BACKEND_URL+'/api/refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({refreshToken:localStorage.getItem('chatapp_refresh_token')})});
-        const rd=await rr.json().catch(()=>({}));
-        if(rr.ok&&rd.accessToken){localStorage.setItem('chatapp_token',rd.accessToken);if(rd.refreshToken)localStorage.setItem('chatapp_refresh_token',rd.refreshToken);state.me=JSON.parse(cached);enterApp(state.me);return;}
-      } catch (_) {}
-      forceLogoutToLogin('Сессия истекла, войдите снова');
+      localStorage.removeItem('chatapp_profile');
+      document.documentElement.classList.remove('has-session');
     }
   } else {
     document.documentElement.classList.remove('has-session');
@@ -2600,4 +2577,3 @@ socket.on('callSignal', async ({ callId, from, data }) => {
     console.error('callSignal error', e);
   }
 });
-(function addProductionUX(){const st=document.createElement('style');st.textContent='.chatapp-typing{position:absolute;left:24px;bottom:72px;opacity:0;transition:.18s;color:var(--text3);font-size:12px;pointer-events:none}.chatapp-typing.show{opacity:1}.msg-reactions{font-size:11px;opacity:.8;margin-top:4px}.chatapp-music{position:fixed;right:18px;bottom:18px;z-index:9999;display:flex;gap:8px;align-items:center;padding:10px 12px;border-radius:14px;background:rgba(20,20,24,.92);backdrop-filter:blur(16px);box-shadow:0 12px 40px rgba(0,0,0,.28);font-size:12px}.chatapp-music button{border:0;background:transparent;color:inherit;cursor:pointer}.chatapp-music input{width:90px}';document.head.appendChild(st);const p=document.createElement('div');p.className='chatapp-music';p.innerHTML='<span>🎵</span><span id="music-name">Музыка</span><button id="music-prev">◀</button><button id="music-play">▶</button><button id="music-next">▶</button><input id="music-volume" type="range" min="0" max="1" step=".01" value=".8">';document.body.appendChild(p);const a=new Audio();a.volume=.8;let q=[],i=0;const render=()=>{$('music-name').textContent=q[i]?.name||'Музыка';$('music-play').textContent=a.paused?'▶':'Ⅱ'};$('music-play').onclick=()=>{if(!a.src){showTransientNotice('Музыкальная очередь пока пуста');return}a.paused?a.play():a.pause();render()};$('music-volume').oninput=e=>a.volume=+e.target.value;$('music-next').onclick=()=>{if(q.length){i=(i+1)%q.length;a.src=q[i].url;a.play();render()}};$('music-prev').onclick=()=>{if(q.length){i=(i-1+q.length)%q.length;a.src=q[i].url;a.play();render()}};a.onended=()=>$('music-next').click();window.ChatAppMusic={setQueue(items){q=Array.isArray(items)?items:[];i=0;if(q[0])a.src=q[0].url;render()},play(url,name='Музыка'){a.src=url;$('music-name').textContent=name;a.play();render()}};})();
