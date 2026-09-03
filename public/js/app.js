@@ -8,13 +8,17 @@ const MAX_MESSAGE_LENGTH = 4000;
 const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
 const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
-// Keep browser audio processing enabled so calls don't produce echo/noise
-// for users without headsets. (Previously disabled — caused feedback loops
-// on speaker playback.)
+// Echo cancellation + noise suppression stay on so calls don't produce
+// feedback/noise for users without headsets. autoGainControl is OFF on
+// purpose: AGC actively boosts mic gain to hit a target loudness, which
+// means it also amplifies room/background noise when nobody is talking.
+// That pushed our volume-based "speaking" detector (see SPEAKING_THRESHOLD
+// below) above threshold almost permanently, making the speaking ring glow
+// constantly instead of only while someone is actually talking.
 const RAW_AUDIO_CONSTRAINTS = {
   echoCancellation: true,
   noiseSuppression: true,
-  autoGainControl: true
+  autoGainControl: false
 };
 
 // Иконка коронки для владельца группы
@@ -2082,7 +2086,13 @@ function makeCallTile(id, nickname, avatarUrl, stream, isLocal) {
  * CALL: индикатор "говорит сейчас" — реальный анализ громкости через Web
  * Audio API, а не статичная всегда включённая подсветка.
  * ==========================================================================*/
-const SPEAKING_THRESHOLD = 0.045; // порог RMS громкости, начиная с которого считаем, что человек говорит
+// Гистерезис вместо одного порога: чтобы включить индикатор, громкость
+// должна подняться выше ON, а чтобы выключить — опуститься ниже OFF (ниже,
+// чем ON). Без этого зазора сигнал, колеблющийся около границы (например,
+// негромкий фоновый шум), заставлял бы индикатор мигать или залипать
+// включённым почти постоянно.
+const SPEAKING_THRESHOLD_ON = 0.06;
+const SPEAKING_THRESHOLD_OFF = 0.035;
 const speakingMonitors = Object.create(null); // id ('local' | peerId) -> { ctx, analyser, data, source, stream, raf }
 
 function setSpeakingUI(id, isSpeaking) {
@@ -2141,7 +2151,10 @@ function startSpeakingMonitor(id, stream) {
       sumSquares += v * v;
     }
     const rms = Math.sqrt(sumSquares / data.length);
-    const isSpeaking = rms > SPEAKING_THRESHOLD;
+    // While already "speaking", require the level to drop below the lower
+    // OFF threshold before turning off; while silent, require it to rise
+    // above the higher ON threshold before turning on.
+    const isSpeaking = wasSpeaking ? rms > SPEAKING_THRESHOLD_OFF : rms > SPEAKING_THRESHOLD_ON;
     if (isSpeaking !== wasSpeaking) {
       wasSpeaking = isSpeaking;
       setSpeakingUI(id, isSpeaking);
