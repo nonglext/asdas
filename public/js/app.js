@@ -1751,3 +1751,374 @@ socket.on('disconnect', reason => {
     showTransientNotice('Соединение потеряно, переподключение…');
   }
 });
+/* ============================================================================
+ * CALLS (WebRTC: DM 1:1 + Group mesh)
+ * ==========================================================================*/
+const RTC_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' }
+  ]
+};
+
+const callState = {
+  active: false,
+  callId: null,
+  chatKey: null,
+  isGroup: false,
+  groupId: null,
+  peerFriendId: null,   // for DM
+  video: false,
+  localStream: null,
+  micOn: true,
+  camOn: true,
+  peers: Object.create(null), // peerId -> { pc, stream }
+  pendingIncoming: null,      // { callId, chatKey, isGroup, groupId, video, from, fromNick }
+  ringTimer: null,
+};
+
+function callPeerName(peerId) {
+  if (callState.isGroup) {
+    const g = state.groups[callState.groupId];
+    const m = g?.members?.find(m => m.id === peerId);
+    return m?.nickname || peerId;
+  }
+  const f = state.friends[peerId];
+  return f?.nickname || (peerId === callState.peerFriendId ? callState.peerFriendName : peerId);
+}
+
+function callPeerAvatar(peerId) {
+  if (callState.isGroup) {
+    const g = state.groups[callState.groupId];
+    const m = g?.members?.find(m => m.id === peerId);
+    return m?.avatar || null;
+  }
+  const f = state.friends[peerId];
+  return f?.avatar || null;
+}
+
+async function startCall({ toId, groupId, video }) {
+  if (callState.active || callState.pendingIncoming) {
+    showTransientNotice('Уже есть активный звонок');
+    return;
+  }
+  try {
+    callState.localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: !!video });
+  } catch (e) {
+    showTransientNotice('Не удалось получить доступ к камере/микрофону');
+    return;
+  }
+  callState.video = !!video;
+  callState.isGroup = !!groupId;
+  callState.groupId = groupId || null;
+  callState.peerFriendId = toId || null;
+  if (toId) callState.peerFriendName = state.friends[toId]?.nickname || toId;
+
+  socket.emit('callStart', { toId, groupId, video: !!video });
+  openCallOverlay('соединение…');
+}
+
+function openCallOverlay(statusText) {
+  callState.active = true;
+  $('call-overlay').style.display = 'flex';
+  $('call-overlay-title').textContent = callState.isGroup
+    ? (state.groups[callState.groupId]?.name || 'Групповой звонок')
+    : callPeerName(callState.peerFriendId);
+  $('call-overlay-status').textContent = statusText || '';
+  renderCallGrid();
+}
+
+function closeCallOverlay() {
+  $('call-overlay').style.display = 'none';
+  $('incoming-call-modal').style.display = 'none';
+  clearTimeout(callState.ringTimer);
+
+  if (callState.localStream) {
+    callState.localStream.getTracks().forEach(t => t.stop());
+  }
+  Object.values(callState.peers).forEach(p => {
+    try { p.pc.close(); } catch (e) {}
+  });
+
+  callState.active = false;
+  callState.callId = null;
+  callState.chatKey = null;
+  callState.isGroup = false;
+  callState.groupId = null;
+  callState.peerFriendId = null;
+  callState.video = false;
+  callState.localStream = null;
+  callState.micOn = true;
+  callState.camOn = true;
+  callState.peers = Object.create(null);
+  callState.pendingIncoming = null;
+
+  $('call-video-grid').innerHTML = '';
+}
+
+function renderCallGrid() {
+  const grid = $('call-video-grid');
+  grid.innerHTML = '';
+
+  // Local tile
+  grid.appendChild(makeCallTile('local', state.me?.nickname || 'Я', state.me?.avatar, callState.localStream, true));
+
+  // Remote tiles
+  for (const [peerId, p] of Object.entries(callState.peers)) {
+    grid.appendChild(makeCallTile(peerId, callPeerName(peerId), callPeerAvatar(peerId), p.stream, false));
+  }
+}
+
+function makeCallTile(id, nickname, avatarUrl, stream, isLocal) {
+  const tile = document.createElement('div');
+  const hasVideo = callState.video && stream && stream.getVideoTracks().some(t => t.enabled);
+  tile.className = 'call-tile' + (isLocal ? ' local' : '') + (hasVideo ? '' : ' audio-only');
+  tile.dataset.peer = id;
+
+  if (stream) {
+    const video = document.createElement('video');
+    video.autoplay = true;
+    video.playsInline = true;
+    if (isLocal) video.muted = true;
+    video.srcObject = stream;
+    tile.appendChild(video);
+  }
+
+  const avWrap = document.createElement('div');
+  avWrap.className = 'call-tile-avatar';
+  renderAv(avWrap, nickname, avatarUrl);
+  tile.appendChild(avWrap);
+
+  const label = document.createElement('div');
+  label.className = 'call-tile-nick';
+  label.textContent = isLocal ? `${nickname} (вы)` : nickname;
+  tile.appendChild(label);
+
+  return tile;
+}
+
+function createPeerConnection(peerId) {
+  const pc = new RTCPeerConnection(RTC_CONFIG);
+  callState.peers[peerId] = callState.peers[peerId] || {};
+  callState.peers[peerId].pc = pc;
+
+  if (callState.localStream) {
+    callState.localStream.getTracks().forEach(track => pc.addTrack(track, callState.localStream));
+  }
+
+  pc.onicecandidate = e => {
+    if (e.candidate) {
+      socket.emit('callSignal', { callId: callState.callId, to: peerId, data: { type: 'ice', candidate: e.candidate } });
+    }
+  };
+
+  pc.ontrack = e => {
+    callState.peers[peerId].stream = e.streams[0];
+    renderCallGrid();
+  };
+
+  pc.onconnectionstatechange = () => {
+    if (['failed', 'closed', 'disconnected'].includes(pc.connectionState) && callState.peers[peerId]) {
+      // let peerLeft / cleanup handle full teardown; just refresh UI
+    }
+  };
+
+  return pc;
+}
+
+async function connectToPeer(peerId, shouldOffer) {
+  const pc = createPeerConnection(peerId);
+  if (shouldOffer) {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    socket.emit('callSignal', { callId: callState.callId, to: peerId, data: { type: 'offer', sdp: offer } });
+  }
+}
+
+function teardownPeer(peerId) {
+  const p = callState.peers[peerId];
+  if (p?.pc) { try { p.pc.close(); } catch (e) {} }
+  delete callState.peers[peerId];
+  renderCallGrid();
+}
+
+/* ── Outgoing UI hooks ─────────────────────────────────────────────────── */
+$('btn-call-audio').addEventListener('click', () => {
+  if (state.activeFriend) startCall({ toId: state.activeFriend, video: false });
+});
+$('btn-call-video').addEventListener('click', () => {
+  if (state.activeFriend) startCall({ toId: state.activeFriend, video: true });
+});
+$('btn-group-call-audio').addEventListener('click', () => {
+  if (state.activeGroup) startCall({ groupId: state.activeGroup, video: false });
+});
+$('btn-group-call-video').addEventListener('click', () => {
+  if (state.activeGroup) startCall({ groupId: state.activeGroup, video: true });
+});
+
+$('btn-call-hangup').addEventListener('click', () => {
+  if (callState.callId) socket.emit('callLeave', { callId: callState.callId });
+  closeCallOverlay();
+});
+
+$('btn-call-toggle-mic').addEventListener('click', () => {
+  if (!callState.localStream) return;
+  callState.micOn = !callState.micOn;
+  callState.localStream.getAudioTracks().forEach(t => { t.enabled = callState.micOn; });
+  $('btn-call-toggle-mic').classList.toggle('active-off', !callState.micOn);
+});
+
+$('btn-call-toggle-cam').addEventListener('click', () => {
+  if (!callState.localStream || !callState.video) return;
+  callState.camOn = !callState.camOn;
+  callState.localStream.getVideoTracks().forEach(t => { t.enabled = callState.camOn; });
+  $('btn-call-toggle-cam').classList.toggle('active-off', !callState.camOn);
+  renderCallGrid();
+});
+
+/* ── Incoming call UI ──────────────────────────────────────────────────── */
+function showIncomingCall(info) {
+  callState.pendingIncoming = info;
+  const nick = info.isGroup
+    ? (state.groups[info.groupId]?.name || 'Групповой звонок')
+    : (info.fromNick || info.from);
+  $('incoming-call-nick').textContent = nick;
+  $('incoming-call-sub').textContent = info.isGroup
+    ? `${info.fromNick || 'Кто-то'} начал(а) ${info.video ? 'видео' : 'аудио'}звонок`
+    : `входящий ${info.video ? 'видео' : 'аудио'}звонок…`;
+  const avEl = $('incoming-call-avatar');
+  const avatarUrl = info.isGroup ? null : (state.friends[info.from]?.avatar || null);
+  renderAv(avEl, nick, avatarUrl);
+  $('incoming-call-modal').style.display = 'flex';
+}
+
+$('btn-call-accept').addEventListener('click', async () => {
+  const info = callState.pendingIncoming;
+  if (!info) return;
+  $('incoming-call-modal').style.display = 'none';
+
+  try {
+    callState.localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: !!info.video });
+  } catch (e) {
+    showTransientNotice('Не удалось получить доступ к камере/микрофону');
+    socket.emit('callReject', { callId: info.callId });
+    callState.pendingIncoming = null;
+    return;
+  }
+
+  callState.callId = info.callId;
+  callState.chatKey = info.chatKey;
+  callState.isGroup = info.isGroup;
+  callState.groupId = info.groupId || null;
+  callState.peerFriendId = info.isGroup ? null : info.from;
+  callState.peerFriendName = info.fromNick;
+  callState.video = !!info.video;
+  callState.pendingIncoming = null;
+
+  openCallOverlay('соединение…');
+  socket.emit('callJoin', { callId: info.callId });
+});
+
+$('btn-call-decline').addEventListener('click', () => {
+  const info = callState.pendingIncoming;
+  if (!info) return;
+  socket.emit('callReject', { callId: info.callId });
+  callState.pendingIncoming = null;
+  $('incoming-call-modal').style.display = 'none';
+});
+
+/* ── Server events ─────────────────────────────────────────────────────── */
+socket.on('callStarted', ({ callId, chatKey }) => {
+  callState.callId = callId;
+  callState.chatKey = chatKey;
+  $('call-overlay-status').textContent = 'ожидание ответа…';
+  if (!callState.isGroup) {
+    socket.emit('callJoin', { callId }); // initiator also joins as participant #1
+  } else {
+    socket.emit('callJoin', { callId });
+  }
+});
+
+socket.on('incomingCall', (info) => {
+  if (callState.active || callState.pendingIncoming) {
+    // Busy — auto-decline group invites silently, or reject DM
+    if (!info.isGroup) socket.emit('callReject', { callId: info.callId });
+    return;
+  }
+  showIncomingCall(info);
+});
+
+socket.on('callParticipants', async ({ callId, chatKey, video, participants }) => {
+  callState.callId = callId;
+  callState.chatKey = chatKey;
+  callState.video = !!video;
+  $('call-overlay-status').textContent = 'в звонке';
+  for (const peerId of participants) {
+    const shouldOffer = state.me.id < peerId;
+    await connectToPeer(peerId, shouldOffer);
+  }
+  renderCallGrid();
+});
+
+socket.on('peerJoined', async ({ peerId }) => {
+  if (!callState.active || peerId === state.me.id) return;
+  $('call-overlay-status').textContent = 'в звонке';
+  const shouldOffer = state.me.id < peerId;
+  await connectToPeer(peerId, shouldOffer);
+  renderCallGrid();
+});
+
+socket.on('peerLeft', ({ peerId }) => {
+  if (peerId === state.me.id) return;
+  teardownPeer(peerId);
+  if (!callState.isGroup) {
+    showTransientNotice('Собеседник завершил звонок');
+    closeCallOverlay();
+  }
+});
+
+socket.on('callRejected', ({ peerId }) => {
+  if (!callState.isGroup) {
+    showTransientNotice('Звонок отклонён');
+    closeCallOverlay();
+  }
+});
+
+socket.on('callError', ({ reason }) => {
+  const messages = {
+    offline: 'Пользователь не в сети',
+    busy: 'Уже есть активный звонок в этом чате',
+    not_friend: 'Вы не друзья',
+    blocked: 'Действие недоступно',
+    not_member: 'Вы не участник группы',
+    not_found: 'Звонок уже завершён',
+    forbidden: 'Недостаточно прав',
+    server_error: 'Ошибка сервера'
+  };
+  showTransientNotice(messages[reason] || 'Ошибка звонка');
+  if (callState.active && !Object.keys(callState.peers).length) closeCallOverlay();
+});
+
+socket.on('callSignal', async ({ from, data }) => {
+  if (!callState.active) return;
+  let peer = callState.peers[from];
+  if (!peer || !peer.pc) {
+    await connectToPeer(from, false);
+    peer = callState.peers[from];
+  }
+  const pc = peer.pc;
+  try {
+    if (data.type === 'offer') {
+      await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit('callSignal', { callId: callState.callId, to: from, data: { type: 'answer', sdp: answer } });
+    } else if (data.type === 'answer') {
+      await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+    } else if (data.type === 'ice' && data.candidate) {
+      await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+    }
+  } catch (e) {
+    console.error('callSignal error', e);
+  }
+});

@@ -914,6 +914,33 @@ async function isGroupMember(userId, groupId) {
   return !!(await GroupMember.findOne({ where: { userId, groupId } }));
 }
 
+// ─── Calls registry ─────────────────────────────────────────────────────────
+// chatKey -> { callId, type: 'dm'|'group', chatKey, groupId?, video, initiator, targetId?, participants: Set<userId> }
+const activeCalls = new Map();
+
+function findCallById(callId) {
+  if (!callId) return null;
+  for (const call of activeCalls.values()) {
+    if (call.callId === callId) return call;
+  }
+  return null;
+}
+
+function leaveCall(socket, userId, callId) {
+  const call = findCallById(callId);
+  if (!call) return;
+  if (!call.participants.has(userId)) return;
+
+  call.participants.delete(userId);
+  socket.leave(`call:${call.callId}`);
+  socket.activeCallKeys.delete(call.chatKey);
+  io.to(`call:${call.callId}`).emit('peerLeft', { callId: call.callId, peerId: userId });
+
+  if (call.participants.size === 0) {
+    activeCalls.delete(call.chatKey);
+  }
+}
+
 // ─── Socket.IO ────────────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
   const currentUserId = socket.user.id;
@@ -1356,9 +1383,124 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ─── Calls (WebRTC signaling: DM + Group) ─────────────────────────────────
+  // In-memory registry of active calls. One active call per chat at a time.
+  // chatKey: dm -> `dm:${sortedIds.join(':')}`, group -> `group:${groupId}`
+  socket.activeCallKeys = socket.activeCallKeys || new Set();
+
+  function dmChatKey(a, b) { return `dm:${[a, b].sort().join(':')}`; }
+  function groupChatKey(groupId) { return `group:${groupId}`; }
+
+  socket.on('callStart', async ({ toId, groupId, video } = {}) => {
+    try {
+      if (toId) {
+        // ── DM call ──
+        const me = await User.findByPk(currentUserId);
+        if (!me || !me.friends.includes(toId)) return socket.emit('callError', { reason: 'not_friend' });
+        if (me.blockedUsers.includes(toId)) return socket.emit('callError', { reason: 'blocked' });
+        if (!isOnline(toId)) return socket.emit('callError', { reason: 'offline' });
+
+        const chatKey = dmChatKey(currentUserId, toId);
+        if (activeCalls.has(chatKey)) return socket.emit('callError', { reason: 'busy' });
+
+        const callId = crypto.randomUUID();
+        activeCalls.set(chatKey, {
+          callId, type: 'dm', chatKey, video: !!video,
+          initiator: currentUserId, targetId: toId,
+          participants: new Set([currentUserId])
+        });
+        socket.join(`call:${callId}`);
+        socket.activeCallKeys.add(chatKey);
+
+        socket.emit('callStarted', { callId, chatKey });
+        io.to(toId).emit('incomingCall', {
+          callId, chatKey, isGroup: false, video: !!video,
+          from: currentUserId, fromNick: me.nickname
+        });
+      } else if (groupId) {
+        // ── Group call ──
+        if (!(await isGroupMember(currentUserId, groupId))) return socket.emit('callError', { reason: 'not_member' });
+        const chatKey = groupChatKey(groupId);
+        const me = await User.findByPk(currentUserId);
+
+        let call = activeCalls.get(chatKey);
+        if (!call) {
+          call = {
+            callId: crypto.randomUUID(), type: 'group', chatKey, groupId, video: !!video,
+            initiator: currentUserId, participants: new Set()
+          };
+          activeCalls.set(chatKey, call);
+          io.to(`group:${groupId}`).except(socket.id).emit('incomingCall', {
+            callId: call.callId, chatKey, isGroup: true, groupId, video: !!video,
+            from: currentUserId, fromNick: me.nickname
+          });
+        }
+        socket.emit('callStarted', { callId: call.callId, chatKey });
+      } else {
+        socket.emit('callError', { reason: 'bad_request' });
+      }
+    } catch (err) {
+      logger.error('callStart error', { error: err.message });
+      socket.emit('callError', { reason: 'server_error' });
+    }
+  });
+
+  socket.on('callJoin', async ({ callId } = {}) => {
+    try {
+      const call = findCallById(callId);
+      if (!call) return socket.emit('callError', { reason: 'not_found', callId });
+
+      if (call.type === 'dm') {
+        if (currentUserId !== call.initiator && currentUserId !== call.targetId) {
+          return socket.emit('callError', { reason: 'forbidden', callId });
+        }
+      } else {
+        if (!(await isGroupMember(currentUserId, call.groupId))) {
+          return socket.emit('callError', { reason: 'forbidden', callId });
+        }
+      }
+
+      const existingPeers = [...call.participants].filter(id => id !== currentUserId);
+      call.participants.add(currentUserId);
+      socket.join(`call:${call.callId}`);
+      socket.activeCallKeys.add(call.chatKey);
+
+      socket.emit('callParticipants', { callId: call.callId, chatKey: call.chatKey, video: call.video, participants: existingPeers });
+      socket.to(`call:${call.callId}`).emit('peerJoined', { callId: call.callId, peerId: currentUserId });
+    } catch (err) {
+      logger.error('callJoin error', { error: err.message });
+      socket.emit('callError', { reason: 'server_error' });
+    }
+  });
+
+  socket.on('callReject', ({ callId } = {}) => {
+    const call = findCallById(callId);
+    if (!call) return;
+    socket.to(`call:${call.callId}`).emit('callRejected', { callId: call.callId, peerId: currentUserId });
+    if (call.type === 'dm' && call.participants.size <= 1) {
+      activeCalls.delete(call.chatKey);
+    }
+  });
+
+  socket.on('callSignal', ({ callId, to, data } = {}) => {
+    const call = findCallById(callId);
+    if (!call || !call.participants.has(currentUserId) || !to) return;
+    io.to(to).emit('callSignal', { callId: call.callId, from: currentUserId, data });
+  });
+
+  socket.on('callLeave', ({ callId } = {}) => {
+    leaveCall(socket, currentUserId, callId);
+  });
+
   // ─── Disconnect ────────────────────────────────────────────────────────────
   socket.on('disconnect', async () => {
     if (expiryTimer) clearTimeout(expiryTimer);
+
+    for (const chatKey of [...socket.activeCallKeys]) {
+      const call = [...activeCalls.values()].find(c => c.chatKey === chatKey);
+      if (call) leaveCall(socket, currentUserId, call.callId);
+    }
+
     const wentOffline = markOffline(currentUserId, socket.id);
     if (!wentOffline) return;
 
