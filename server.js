@@ -1465,23 +1465,30 @@ async function ensureSchema() {
       }
 
       /* ------------------------------------------------------------------
-       * FIX (ROOT CAUSE #4): "null value in column chat_key ... violates
-       * not-null constraint"
+       * FIX (ROOT CAUSE #4): "null value in column ... violates not-null
+       * constraint" (сначала chat_key, потом to — та же причина)
        *
-       * Колонка messages.chat_key в реальной БД была создана с NOT NULL
-       * ещё до того, как в приложении появились групповые сообщения (у
-       * них chatKey всегда null, вместо этого заполняется group_id).
-       * Модель Sequelize объявляет chatKey как allowNull: true (дефолт),
-       * но sync() без alter НЕ меняет ограничения уже существующих
-       * колонок — поэтому constraint в БД так и оставался NOT NULL, и
-       * любая попытка создать групповое сообщение падала с ошибкой.
+       * Несколько колонок messages в реальной БД были созданы с NOT NULL
+       * ещё до того, как в приложении появились групповые сообщения —
+       * тогда каждое сообщение обязательно было DM (chat_key и to всегда
+       * заполнены). У групповых сообщений chat_key и to всегда null
+       * (вместо них используется group_id). Модель Sequelize объявляет их
+       * как allowNull: true, но sync() без alter НЕ меняет ограничения
+       * уже существующих колонок — поэтому constraint в БД оставался
+       * NOT NULL, и создание группового сообщения падало то на одной,
+       * то на другой колонке.
        *
-       * Снимаем NOT NULL идемпотентно: если ограничения уже нет — Postgres
-       * просто ничего не делает (без ошибки).
+       * Вместо того чтобы чинить по одной колонке за деплой, здесь разом
+       * приводим NULL-констрейнты в БД в соответствие с моделью для всех
+       * полей, которые она объявляет как allowNull: true. Идемпотентно:
+       * если ограничения уже нет — Postgres ничего не делает.
        * ------------------------------------------------------------------ */
-      if (cols.chat_key && cols.chat_key.allowNull === false) {
-        logger.info('🔧 Миграция: снимаю NOT NULL с messages.chat_key');
-        await sequelize.query(`ALTER TABLE "messages" ALTER COLUMN "chat_key" DROP NOT NULL;`);
+      const nullableColumns = ['chat_key', 'group_id', 'to', 'image'];
+      for (const col of nullableColumns) {
+        if (cols[col] && cols[col].allowNull === false) {
+          logger.info(`🔧 Миграция: снимаю NOT NULL с messages.${col}`);
+          await sequelize.query(`ALTER TABLE "messages" ALTER COLUMN "${col}" DROP NOT NULL;`);
+        }
       }
     }
   } catch (err) {
