@@ -1715,6 +1715,7 @@ function goBackMobile() {
 }
 
 window.addEventListener('resize', () => {
+  syncVoiceOverlayPosition();
   if (window.innerWidth > 640) {
     document.querySelector('.sidebar')?.classList.remove('hidden');
     document.querySelector('.chat-main')?.classList.remove('hidden');
@@ -1831,6 +1832,7 @@ async function startCall({ toId, groupId, video }) {
 function openCallOverlay(statusText) {
   callState.active = true;
   const overlay = $('call-overlay');
+  syncVoiceOverlayPosition();
   overlay.classList.toggle('voice-mode', !callState.video);
   overlay.classList.toggle('video-mode', callState.video);
   $('call-overlay-mode').textContent = callState.video ? 'ВИДЕОКАНАЛ' : 'ГОЛОСОВОЙ КАНАЛ';
@@ -1842,10 +1844,21 @@ function openCallOverlay(statusText) {
   renderCallGrid();
 }
 
+function syncVoiceOverlayPosition() {
+  const overlay = $('call-overlay');
+  const sidebar = document.querySelector('.sidebar');
+  if (!overlay || !sidebar || window.innerWidth <= 640) return;
+
+  const sidebarRect = sidebar.getBoundingClientRect();
+  const sidebarVisible = sidebarRect.width > 0 && !sidebar.classList.contains('hidden');
+  overlay.style.setProperty('--call-left', sidebarVisible ? `${sidebarRect.right}px` : '0px');
+}
+
 function closeCallOverlay() {
   const overlay = $('call-overlay');
   overlay.style.display = 'none';
   overlay.classList.remove('voice-mode', 'video-mode');
+  overlay.style.removeProperty('--call-left');
   $('incoming-call-modal').style.display = 'none';
   clearTimeout(callState.ringTimer);
 
