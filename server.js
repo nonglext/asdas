@@ -1463,9 +1463,29 @@ async function ensureSchema() {
         logger.info('🔧 Миграция: добавляю колонку messages.group_id');
         await qi.addColumn('messages', 'group_id', { type: DataTypes.UUID, allowNull: true });
       }
+
+      /* ------------------------------------------------------------------
+       * FIX (ROOT CAUSE #4): "null value in column chat_key ... violates
+       * not-null constraint"
+       *
+       * Колонка messages.chat_key в реальной БД была создана с NOT NULL
+       * ещё до того, как в приложении появились групповые сообщения (у
+       * них chatKey всегда null, вместо этого заполняется group_id).
+       * Модель Sequelize объявляет chatKey как allowNull: true (дефолт),
+       * но sync() без alter НЕ меняет ограничения уже существующих
+       * колонок — поэтому constraint в БД так и оставался NOT NULL, и
+       * любая попытка создать групповое сообщение падала с ошибкой.
+       *
+       * Снимаем NOT NULL идемпотентно: если ограничения уже нет — Postgres
+       * просто ничего не делает (без ошибки).
+       * ------------------------------------------------------------------ */
+      if (cols.chat_key && cols.chat_key.allowNull === false) {
+        logger.info('🔧 Миграция: снимаю NOT NULL с messages.chat_key');
+        await sequelize.query(`ALTER TABLE "messages" ALTER COLUMN "chat_key" DROP NOT NULL;`);
+      }
     }
   } catch (err) {
-    logger.error('❌ Ошибка миграции (messages.group_id)', { error: err.message, stack: err.stack });
+    logger.error('❌ Ошибка миграции (messages.group_id / chat_key)', { error: err.message, stack: err.stack });
   }
 
   // Индекс по group_id — best effort: если уже есть или таблица только что
