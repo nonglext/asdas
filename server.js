@@ -178,6 +178,23 @@ app.get('/api/user/profile', authenticateToken, async (req, res) => {
     }
 });
 
+app.patch('/api/user/profile', authenticateToken, async (req, res) => {
+    try {
+        const username = typeof req.body.username === 'string' ? req.body.username.trim() : '';
+        if (username.length < 3 || username.length > 32) {
+            return res.status(400).json({ error: 'Username must be 3-32 characters long' });
+        }
+        const user = await userDB.updateProfile(req.user.id, username);
+        res.json(user);
+    } catch (error) {
+        console.error('Profile update error:', error);
+        if (error.code === '23505') {
+            return res.status(409).json({ error: 'Username is already taken' });
+        }
+        res.status(500).json({ error: 'Failed to update profile' });
+    }
+});
+
 app.get('/api/users', authenticateToken, async (req, res) => {
     try {
         const users = await userDB.getAll();

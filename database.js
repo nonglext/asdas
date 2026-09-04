@@ -274,6 +274,14 @@ const userDB = {
         await pool.query('UPDATE users SET status = $1 WHERE id = $2', [status, id]);
     },
 
+    updateProfile: async (id, username) => {
+        const { rows } = await pool.query(
+            'UPDATE users SET username = $1 WHERE id = $2 RETURNING id, username, email, avatar, status',
+            [username, id]
+        );
+        return rows[0];
+    },
+
     getAll: async () => {
         const { rows } = await pool.query('SELECT id, username, email, avatar, status FROM users');
         return rows;

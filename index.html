@@ -82,13 +82,13 @@
         </div>
         
         <div class="user-panel">
-            <div class="user-info">
+            <button class="user-info" id="profileBtn" type="button" aria-expanded="false">
                 <div class="user-avatar">U</div>
                 <div class="user-details">
                     <div class="username">User#0001</div>
                     <div class="user-status">Online</div>
                 </div>
-            </div>
+            </button>
             <div class="user-controls">
                 <button class="control-btn" id="muteBtn" title="Mute">
                     <svg class="icon-normal" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C10.895 2 10 2.895 10 4V12C10 13.105 10.895 14 12 14C13.105 14 14 13.105 14 12V4C14 2.895 13.105 2 12 2ZM19 10V12C19 15.866 15.866 19 12 19C8.134 19 5 15.866 5 12V10H3V12C3 16.418 6.269 20.099 10.5 20.856V24H13.5V20.856C17.731 20.099 21 16.418 21 12V10H19Z"/></svg>
@@ -102,6 +102,34 @@
                     <svg width="20" height="20" viewBox="0 0 24 24">
                         <path fill="currentColor" d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
                     </svg>
+                </button>
+            </div>
+        </div>
+        <div class="profile-popover" id="profilePopover" aria-hidden="true">
+            <div class="profile-banner"></div>
+            <div class="profile-identity">
+                <div class="profile-avatar user-avatar">U</div>
+                <div class="profile-name">
+                    <strong class="profile-username">User</strong>
+                    <span class="profile-tag">Online</span>
+                </div>
+            </div>
+            <div class="profile-body">
+                <div class="profile-about">ABOUT ME</div>
+                <div class="profile-empty">No bio yet.</div>
+                <div class="profile-divider"></div>
+                <button class="profile-action" id="profileEditBtn" type="button">
+                    <span class="profile-action-icon">✎</span>
+                    <span>Edit profile</span>
+                </button>
+                <button class="profile-action" id="profileStatusBtn" type="button">
+                    <span class="status-dot"></span>
+                    <span>Set status</span>
+                    <span class="profile-chevron">›</span>
+                </button>
+                <button class="profile-action profile-logout" id="profileLogoutBtn" type="button">
+                    <span class="profile-action-icon">↪</span>
+                    <span>Log out</span>
                 </button>
             </div>
         </div>

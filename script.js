@@ -1258,6 +1258,11 @@ function initializeUserControls() {
     const muteBtn = document.getElementById('muteBtn');
     const deafenBtn = document.getElementById('deafenBtn');
     const settingsBtn = document.getElementById('settingsBtn');
+    const profileBtn = document.getElementById('profileBtn');
+    const profilePopover = document.getElementById('profilePopover');
+    const profileLogoutBtn = document.getElementById('profileLogoutBtn');
+    const profileStatusBtn = document.getElementById('profileStatusBtn');
+    const profileEditBtn = document.getElementById('profileEditBtn');
 
     muteBtn.addEventListener('click', () => {
         isMuted = !isMuted;
@@ -1291,6 +1296,62 @@ function initializeUserControls() {
             logout();
         }
     });
+
+    if (profileBtn && profilePopover) {
+        const closeProfile = () => {
+            profilePopover.classList.remove('open');
+            profilePopover.setAttribute('aria-hidden', 'true');
+            profileBtn.setAttribute('aria-expanded', 'false');
+        };
+
+        profileBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const isOpen = profilePopover.classList.toggle('open');
+            profilePopover.setAttribute('aria-hidden', String(!isOpen));
+            profileBtn.setAttribute('aria-expanded', String(isOpen));
+            if (isOpen) {
+                document.querySelector('.profile-username').textContent = currentUser.username;
+                document.querySelector('.profile-tag').textContent = currentUser.status || 'Online';
+                document.querySelector('.profile-avatar').textContent =
+                    currentUser.avatar || currentUser.username.charAt(0).toUpperCase();
+            }
+        });
+
+        profilePopover.addEventListener('click', event => event.stopPropagation());
+        document.addEventListener('click', closeProfile);
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape') closeProfile();
+        });
+        profileLogoutBtn.addEventListener('click', () => {
+            closeProfile();
+            if (confirm('Do you want to logout?')) logout();
+        });
+        profileStatusBtn.addEventListener('click', () => {
+            const status = prompt('Set your status:', currentUser.status || 'Online');
+            if (!status || !status.trim()) return;
+            currentUser.status = status.trim();
+            localStorage.setItem('currentUser', JSON.stringify(currentUser));
+            document.querySelector('.profile-tag').textContent = currentUser.status;
+            document.querySelector('.user-status').textContent = currentUser.status;
+        });
+        profileEditBtn.addEventListener('click', async () => {
+            const username = prompt('Change username:', currentUser.username);
+            if (!username || username.trim() === currentUser.username) return;
+            try {
+                const response = await apiFetchJson('/api/user/profile', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: username.trim() })
+                });
+                currentUser.username = response.username;
+                localStorage.setItem('currentUser', JSON.stringify(currentUser));
+                updateUserInfo();
+                document.querySelector('.profile-username').textContent = response.username;
+            } catch (error) {
+                notifyError(error.message || 'Failed to update profile', error);
+            }
+        });
+    }
 }
 
 // ---------------------------------------------------------------------
