@@ -24,6 +24,7 @@ let currentDMUserId = null;
 let currentChannelId = null;          // real DB id of the active text channel
 let currentServerChannels = [];       // channels of the server currently open
 let currentVoiceChannelId = null;
+let messagesLoadRequest = 0;
 
 // ---------------------------------------------------------------------
 // Small utilities
@@ -89,6 +90,13 @@ function notifyError(message, error) {
     if (error) console.error(message, error);
     else console.error(message);
     alert(message);
+}
+
+function animateView(element, display = 'flex') {
+    if (!element) return;
+    element.style.display = display;
+    element.classList.remove('view-enter');
+    requestAnimationFrame(() => element.classList.add('view-enter'));
 }
 
 // ---------------------------------------------------------------------
@@ -734,7 +742,7 @@ async function startDM(friendId, friendUsername) {
     currentServerId = null;
 
     document.getElementById('friendsView').style.display = 'none';
-    document.getElementById('chatView').style.display = 'flex';
+    animateView(document.getElementById('chatView'));
     document.getElementById('channelsView').style.display = 'none';
     document.getElementById('dmListView').style.display = 'block';
 
@@ -755,7 +763,7 @@ function showFriendsView() {
     currentDMUserId = null;
     currentServerId = null;
 
-    document.getElementById('friendsView').style.display = 'flex';
+    animateView(document.getElementById('friendsView'));
     document.getElementById('chatView').style.display = 'none';
     document.getElementById('channelsView').style.display = 'none';
     document.getElementById('dmListView').style.display = 'block';
@@ -772,7 +780,7 @@ async function showServerView(server) {
     currentDMUserId = null;
 
     document.getElementById('friendsView').style.display = 'none';
-    document.getElementById('chatView').style.display = 'flex';
+    animateView(document.getElementById('chatView'));
     document.getElementById('channelsView').style.display = 'block';
     document.getElementById('dmListView').style.display = 'none';
 
@@ -933,10 +941,13 @@ function switchChannel(channel) {
 
 async function loadChannelMessages(channelId) {
     const messagesContainer = document.getElementById('messagesContainer');
+    const requestId = ++messagesLoadRequest;
     messagesContainer.innerHTML = '';
+    messagesContainer.classList.add('is-loading');
 
     try {
         const messages = await apiFetchJson(`/api/messages/${channelId}`);
+        if (requestId !== messagesLoadRequest || currentChannelId !== channelId) return;
         messages.forEach(message => {
             addMessageToUI({
                 id: message.id,
@@ -948,6 +959,10 @@ async function loadChannelMessages(channelId) {
         });
     } catch (error) {
         console.error('Error loading messages:', error);
+    } finally {
+        if (requestId === messagesLoadRequest) {
+            messagesContainer.classList.remove('is-loading');
+        }
     }
 
     scrollToBottom();
@@ -996,7 +1011,7 @@ function addMessageToUI(message) {
 
     const avatar = document.createElement('div');
     avatar.className = 'message-avatar';
-    avatar.textContent = message.avatar;
+    avatar.textContent = message.avatar || (message.author || '?').charAt(0).toUpperCase();
 
     const content = document.createElement('div');
     content.className = 'message-content';
@@ -1065,6 +1080,7 @@ function addMessageToUI(message) {
 
 function formatTimestamp(date) {
     const messageDate = new Date(date);
+    if (Number.isNaN(messageDate.getTime())) return '';
     const hours = messageDate.getHours().toString().padStart(2, '0');
     const minutes = messageDate.getMinutes().toString().padStart(2, '0');
     return `Today at ${hours}:${minutes}`;
@@ -1102,6 +1118,7 @@ function showEmojiPickerForMessage(messageId) {
 }
 
 function createEmojiPicker(emojis, onSelect) {
+    document.querySelectorAll('.emoji-picker').forEach(existingPicker => existingPicker.remove());
     const picker = document.createElement('div');
     picker.className = 'emoji-picker';
 

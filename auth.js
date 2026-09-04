@@ -70,9 +70,9 @@ function toggleMode(e) {
 async function handleSubmit(e) {
     e.preventDefault();
     
-    const email = document.getElementById('email').value;
+    const email = document.getElementById('email').value.trim();
     const password = document.getElementById('password').value;
-    const username = document.getElementById('username').value;
+    const username = document.getElementById('username').value.trim();
     const confirmPassword = document.getElementById('confirmPassword').value;
     
     // Validation
@@ -105,7 +105,28 @@ async function handleSubmit(e) {
     }
 }
 
+function setSubmitState(isLoading) {
+    const submitBtn = document.getElementById('submitBtn');
+    if (!submitBtn) return;
+    submitBtn.disabled = isLoading;
+    submitBtn.classList.toggle('is-loading', isLoading);
+    submitBtn.textContent = isLoading
+        ? (isLoginMode ? 'Logging in…' : 'Creating account…')
+        : (isLoginMode ? 'Log In' : 'Register');
+}
+
+async function parseResponse(response) {
+    const text = await response.text();
+    if (!text) return {};
+    try {
+        return JSON.parse(text);
+    } catch (error) {
+        throw new Error(`Server returned an invalid response (${response.status})`);
+    }
+}
+
 async function login(email, password) {
+    setSubmitState(true);
     try {
         const response = await fetch('/api/login', {
             method: 'POST',
@@ -115,7 +136,7 @@ async function login(email, password) {
             body: JSON.stringify({ email, password })
         });
         
-        const data = await response.json();
+        const data = await parseResponse(response);
         
         if (!response.ok) {
             showError(data.error || 'Login failed');
@@ -134,11 +155,16 @@ async function login(email, password) {
         
     } catch (error) {
         console.error('Login error:', error);
-        showError('Network error. Please try again.');
+        showError(error.message.includes('Server returned')
+            ? 'The server returned an unexpected response. Please try again.'
+            : 'Network error. Please try again.');
+    } finally {
+        setSubmitState(false);
     }
 }
 
 async function register(username, email, password) {
+    setSubmitState(true);
     try {
         const response = await fetch('/api/register', {
             method: 'POST',
@@ -148,7 +174,7 @@ async function register(username, email, password) {
             body: JSON.stringify({ username, email, password })
         });
         
-        const data = await response.json();
+        const data = await parseResponse(response);
         
         if (!response.ok) {
             showError(data.error || 'Registration failed');
@@ -167,7 +193,11 @@ async function register(username, email, password) {
         
     } catch (error) {
         console.error('Registration error:', error);
-        showError('Network error. Please try again.');
+        showError(error.message.includes('Server returned')
+            ? 'The server returned an unexpected response. Please try again.'
+            : 'Network error. Please try again.');
+    } finally {
+        setSubmitState(false);
     }
 }
 
