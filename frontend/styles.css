@@ -1,0 +1,10 @@
+/* Modular stylesheet entrypoint. Keep imports ordered to preserve the cascade. */
+@import url("styles/01-foundation.css");
+@import url("styles/02-layout.css");
+@import url("styles/03-chat.css");
+@import url("styles/04-calls.css");
+@import url("styles/05-friends.css");
+@import url("styles/06-responsive-dm.css");
+@import url("styles/07-social.css");
+@import url("styles/08-animations.css");
+@import url("styles/09-final-overrides.css");

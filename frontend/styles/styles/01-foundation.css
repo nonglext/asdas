@@ -1,0 +1,52 @@
+:root {
+    --bg-tertiary: #1e1f22;   /* server list */
+    --bg-secondary: #2b2d31;  /* channel list */
+    --bg-primary: #313338;    /* main chat area */
+    --bg-elevated: #2b2d31;
+    --bg-input: #383a40;
+    --bg-hover: #3a3c43;
+    --bg-active: #404249;
+    --bg-user-panel: #232428;
+    --bg-dm-shell: #090506;
+    --bg-dm-panel: #5b5a5d;
+    --bg-server-hover: #35373d;
+
+    --accent: #5865f2;
+    --accent-hover: #4752c4;
+    --accent-glow: rgba(88, 101, 242, 0.45);
+    --accent-gradient: linear-gradient(135deg, #5865f2 0%, #7289da 100%);
+
+    --green: #23a55a;
+    --red: #f23f43;
+    --red-gradient: linear-gradient(135deg, #ed4245 0%, #f04747 100%);
+    --green-gradient: linear-gradient(135deg, #23a55a 0%, #3ba55d 100%);
+
+    --text-primary: #f2f3f5;
+    --text-secondary: #b5bac1;
+    --text-muted: #949ba4;
+    --text-faint: #6d6f78;
+
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 16px;
+
+    --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Whitney', 'gg sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    background-color: var(--bg-primary);
+    color: var(--text-secondary);
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+

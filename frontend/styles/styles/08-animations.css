@@ -1,0 +1,109 @@
+/* ============ Animations ============ */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.message-group {
+    animation: fadeIn 0.18s ease;
+}
+
+/* Typing indicator (styling ready, only applies if this markup exists) */
+.typing-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 18px 10px;
+    color: var(--text-faint);
+    font-size: 13px;
+}
+
+.typing-dots {
+    display: flex;
+    gap: 3px;
+}
+
+.typing-dots span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-faint);
+    animation: typingBounce 1.2s infinite ease-in-out;
+}
+
+.typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes typingBounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+    30% { transform: translateY(-4px); opacity: 1; }
+}
+
+/* ============ Motion polish ============ */
+.view-enter {
+    animation: viewEnter 0.24s var(--ease) both;
+}
+
+@keyframes viewEnter {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.messages.is-loading {
+    position: relative;
+}
+
+.messages.is-loading::after {
+    content: 'Loading messages…';
+    align-self: center;
+    margin: auto;
+    padding: 10px 14px;
+    border-radius: 999px;
+    color: var(--text-muted);
+    background: rgba(88, 101, 242, 0.1);
+    font-size: 13px;
+    animation: loadingPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes loadingPulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 1; }
+}
+
+.channel-category,
+.user-search-item,
+.friend-item {
+    animation: listItemEnter 0.22s var(--ease) both;
+}
+
+.channel-category:nth-child(2),
+.user-search-item:nth-child(2),
+.friend-item:nth-child(2) { animation-delay: 0.035s; }
+
+.channel-category:nth-child(3),
+.user-search-item:nth-child(3),
+.friend-item:nth-child(3) { animation-delay: 0.07s; }
+
+@keyframes listItemEnter {
+    from {
+        opacity: 0;
+        transform: translateX(-6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
