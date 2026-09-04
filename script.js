@@ -94,7 +94,7 @@ function notifyError(message, error) {
 
 function animateView(element, display = 'flex') {
     if (!element) return;
-    element.style.display = display;
+    element.style.display = element.id === 'chatView' ? 'grid' : display;
     element.classList.remove('view-enter');
     requestAnimationFrame(() => element.classList.add('view-enter'));
 }
@@ -742,9 +742,15 @@ async function startDM(friendId, friendUsername) {
     currentServerId = null;
 
     document.getElementById('friendsView').style.display = 'none';
-    animateView(document.getElementById('chatView'));
+    const chatView = document.getElementById('chatView');
+    chatView.classList.add('dm-open');
+    animateView(chatView);
     document.getElementById('channelsView').style.display = 'none';
     document.getElementById('dmListView').style.display = 'block';
+    document.getElementById('dmProfileName').textContent = friendUsername;
+    document.getElementById('dmProfileTag').textContent = `@${friendUsername}`;
+    document.getElementById('dmProfileAvatar').textContent =
+        friendUsername.charAt(0).toUpperCase();
 
     const chatHeaderInfo = document.getElementById('chatHeaderInfo');
     chatHeaderInfo.innerHTML = `
@@ -780,7 +786,9 @@ async function showServerView(server) {
     currentDMUserId = null;
 
     document.getElementById('friendsView').style.display = 'none';
-    animateView(document.getElementById('chatView'));
+    const chatView = document.getElementById('chatView');
+    chatView.classList.remove('dm-open');
+    animateView(chatView);
     document.getElementById('channelsView').style.display = 'block';
     document.getElementById('dmListView').style.display = 'none';
 
