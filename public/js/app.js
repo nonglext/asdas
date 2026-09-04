@@ -10,6 +10,7 @@ const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gi
 const MSG_GROUP_WINDOW_MS = 5 * 60 * 1000; // группировка сообщений (5 минут)
 const CALL_RING_TIMEOUT_MS = 45 * 1000;    // таймаут ожидания ответа
 const SEARCH_DEBOUNCE_MS = 280;
+const SOUNDS_ENABLED = localStorage.getItem('chatapp_sounds') !== 'off'; // localStorage.setItem('chatapp_sounds','off') — выключить
 
 // Отключаем браузерную обработку микрофона — в звонок идёт «сырой» поток.
 const RAW_AUDIO_CONSTRAINTS = {
@@ -26,8 +27,9 @@ const RTC_CONFIG = {
 };
 
 const CROWN_SVG = '<svg class="gm-crown" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><title>Владелец группы</title><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg>';
-const TRASH_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>';
+const TRASH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>';
 const MIC_OFF_SVG = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>';
+const EMPTY_ICON_SVG = '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>';
 
 /* ============================================================================
  * DOM HELPERS
@@ -52,6 +54,10 @@ function setDisplay(id, value) {
   if (el) el.style.display = value;
 }
 
+function isAnyModalOpen() {
+  return [...document.querySelectorAll('.modal-overlay')].some(m => m.style.display === 'flex');
+}
+
 /* ============================================================================
  * STATE
  * ==========================================================================*/
@@ -67,6 +73,8 @@ const state = {
   unread: Object.create(null),
   groupUnread: Object.create(null),
   groupVoiceCalls: Object.create(null),
+  lastActivity: Object.create(null),      // friendId -> ts последнего сообщения (сортировка как в Discord)
+  groupLastActivity: Object.create(null), // groupId -> ts
   pendingDeleteId: null,
   // Монотонные счётчики против устаревших async-ответов
   seq: { chat: 0, groupChat: 0, profile: 0, search: 0 },
@@ -106,10 +114,64 @@ function resetState() {
   state.unread = Object.create(null);
   state.groupUnread = Object.create(null);
   state.groupVoiceCalls = Object.create(null);
+  state.lastActivity = Object.create(null);
+  state.groupLastActivity = Object.create(null);
   state.pendingDeleteId = null;
   selectedGroupMembers = new Set();
   selectedAddMembers = new Set();
 }
+
+/* ============================================================================
+ * SOUNDS (Web Audio, без внешних файлов — как «блипы» Discord)
+ * ==========================================================================*/
+const sfx = (() => {
+  let ctx = null;
+  let ringTimer = null;
+
+  function getCtx() {
+    if (!SOUNDS_ENABLED) return null;
+    if (!ctx || ctx.state === 'closed') {
+      try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { ctx = null; }
+    }
+    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+    return ctx;
+  }
+
+  function tone(freq, start, dur, gain = 0.07, type = 'sine') {
+    const c = getCtx();
+    if (!c) return;
+    try {
+      const t0 = c.currentTime + start;
+      const osc = c.createOscillator();
+      const g = c.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(gain, t0 + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      osc.connect(g).connect(c.destination);
+      osc.start(t0);
+      osc.stop(t0 + dur + 0.05);
+    } catch (e) {}
+  }
+
+  return {
+    message() { tone(880, 0, 0.12, 0.05); tone(1175, 0.08, 0.18, 0.045); },
+    friend()  { tone(659, 0, 0.12, 0.05); tone(880, 0.1, 0.2, 0.05); },
+    join()    { tone(523, 0, 0.1, 0.06); tone(784, 0.1, 0.16, 0.06); },
+    leave()   { tone(784, 0, 0.1, 0.06); tone(523, 0.1, 0.16, 0.06); },
+    startRing(outgoing) {
+      this.stopRing();
+      const play = () => {
+        if (outgoing) { tone(440, 0, 1.0, 0.025); }
+        else { tone(659, 0, 0.15, 0.07); tone(659, 0.2, 0.15, 0.07); tone(784, 0.4, 0.28, 0.07); tone(659, 0.75, 0.15, 0.06); }
+      };
+      play();
+      ringTimer = setInterval(play, outgoing ? 3000 : 2200);
+    },
+    stopRing() { clearInterval(ringTimer); ringTimer = null; },
+  };
+})();
 
 /* ============================================================================
  * SOCKET.IO
@@ -156,6 +218,31 @@ function fmtDate(iso) {
   return d.toLocaleDateString('ru', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
+function dayKey(ms) { return new Date(ms).toDateString(); }
+
+function dayOffset(ms) {
+  const d = new Date(ms); d.setHours(0, 0, 0, 0);
+  const t = new Date();   t.setHours(0, 0, 0, 0);
+  return Math.round((t - d) / 86400000);
+}
+
+/** Подпись разделителя дня: «Сегодня», «Вчера», «12 марта 2024 г.» */
+function fmtDayLabel(ms) {
+  const off = dayOffset(ms);
+  if (off === 0) return 'Сегодня';
+  if (off === 1) return 'Вчера';
+  return fmtDate(ms);
+}
+
+/** Время в шапке сообщения как в Discord: «Сегодня, в 14:32» */
+function fmtMsgTime(ms) {
+  const off = dayOffset(ms);
+  const t = fmtTime(ms);
+  if (off === 0) return `Сегодня, в ${t}`;
+  if (off === 1) return `Вчера, в ${t}`;
+  return `${new Date(ms).toLocaleDateString('ru')} ${t}`;
+}
+
 function msgTimeRaw(msg) {
   return msg.time || msg.timestamp || msg.createdAt || null;
 }
@@ -163,6 +250,13 @@ function msgTimeRaw(msg) {
 function getMsgTimeMs(msg) {
   const t = new Date(msgTimeRaw(msg)).getTime();
   return isNaN(t) ? Date.now() : t;
+}
+
+function plural(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return `${n} ${one}`;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return `${n} ${few}`;
+  return `${n} ${many}`;
 }
 
 async function safeJson(res) {
@@ -176,6 +270,10 @@ function setErr(msg) {
 function scrollMsgs(containerId) {
   const m = $(containerId);
   if (m) m.scrollTop = m.scrollHeight;
+}
+
+function isNearBottom(container) {
+  return container.scrollHeight - container.scrollTop - container.clientHeight < 120;
 }
 
 function placeholderHTML(text, isError = false) {
@@ -212,12 +310,62 @@ function showTransientNotice(text) {
   noticeTimer = setTimeout(() => el.classList.remove('show'), 3000);
 }
 
+/** Полоска «Переподключение…» сверху, как в Discord */
+function setConnBanner(show, text) {
+  let el = $('conn-banner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'conn-banner';
+    el.className = 'conn-banner';
+    document.body.appendChild(el);
+  }
+  el.textContent = text || '';
+  el.classList.toggle('show', !!show);
+}
+
 function updateTitleBadge() {
   const total =
     Object.values(state.unread).reduce((a, b) => a + (b || 0), 0) +
     Object.values(state.groupUnread).reduce((a, b) => a + (b || 0), 0);
   document.title = total ? `(${total}) ${BASE_TITLE}` : BASE_TITLE;
 }
+
+/* ============================================================================
+ * TEXT FORMATTING (упрощённый Discord‑markdown поверх экранированного текста)
+ *   **bold** *italic* __underline__ ~~strike~~ `code` ```block``` ||spoiler|| ссылки
+ * ==========================================================================*/
+const URL_RE = /(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])/g;
+const EMOJI_ONLY_RE = /^(?:\p{Extended_Pictographic}|\p{Emoji_Modifier}|\uFE0F|\u200D|\s)+$/u;
+
+function formatMsgText(raw) {
+  let s = esc(raw);
+  const stash = [];
+  const keep = html => { stash.push(html); return `\u0000${stash.length - 1}\u0000`; };
+
+  s = s.replace(/```(?:[a-z0-9]*\n)?([\s\S]+?)```/gi, (_, c) => keep(`<pre class="md-pre"><code>${c.replace(/^\n+|\n+$/g, '')}</code></pre>`));
+  s = s.replace(/`([^`\n]+)`/g, (_, c) => keep(`<code class="md-code">${c}</code>`));
+  s = s.replace(URL_RE, (_, u) => keep(`<a href="${u}" target="_blank" rel="noopener noreferrer" class="md-link">${u}</a>`));
+
+  s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
+  s = s.replace(/__([^_\n]+)__/g, '<u>$1</u>');
+  s = s.replace(/~~([^~\n]+)~~/g, '<s>$1</s>');
+  s = s.replace(/\|\|([^|\n]+)\|\|/g, '<span class="md-spoiler" tabindex="0" title="Показать спойлер">$1</span>');
+
+  s = s.replace(/\u0000(\d+)\u0000/g, (_, i) => stash[+i]);
+  return s;
+}
+
+function isJumboEmoji(text) {
+  if (!text || text.length > 40) return false;
+  try { return EMOJI_ONLY_RE.test(text); } catch (e) { return false; }
+}
+
+// Раскрытие спойлеров кликом (делегирование)
+['messages', 'group-messages'].forEach(id => on(id, 'click', e => {
+  const sp = e.target.closest('.md-spoiler');
+  if (sp) sp.classList.add('revealed');
+}));
 
 /* ============================================================================
  * AUTH / SESSION
@@ -230,6 +378,7 @@ function forceLogoutToLogin(message) {
       if (callState.callId) socket.emit('callLeave', { callId: callState.callId });
       closeCallOverlay();
     }
+    sfx.stopRing();
     resetState();
     if (socket.connected) socket.disconnect();
     localStorage.removeItem('chatapp_id');
@@ -237,6 +386,7 @@ function forceLogoutToLogin(message) {
     localStorage.removeItem('chatapp_profile');
     document.documentElement.classList.remove('has-session');
     closeAllModals();
+    setConnBanner(false);
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
     $('auth-screen')?.classList.add('active');
     if (message) setErr(message);
@@ -313,6 +463,19 @@ function renderAv(el, nickname, avatarUrl) {
   }
 }
 
+/** Аватар + точка онлайн-статуса (Discord‑style) */
+function renderAvWithDot(el, nickname, avatarUrl, online) {
+  renderAv(el, nickname, avatarUrl);
+  if (!el) return;
+  el.style.position = 'relative';
+  el.style.overflow = 'visible';
+  if (online) {
+    const dot = document.createElement('div');
+    dot.className = 'f-dot';
+    el.appendChild(dot);
+  }
+}
+
 // Аватар группы — сетка из лиц участников (как в Discord)
 function renderGroupAv(el, group) {
   if (!el) return;
@@ -339,13 +502,11 @@ function isGroupOwner(group, userId) {
   return member ? member.role === 'owner' : false;
 }
 
-const EMPTY_ICON_SVG = '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>';
-
 function emptyFriendsHTML() {
   return `<div class="empty-state">
     <div class="empty-icon">${EMPTY_ICON_SVG}</div>
-    <div class="empty-title">Нет контактов</div>
-    <div class="empty-sub">Найди кого-нибудь через поиск</div>
+    <div class="empty-title">Здесь пока пусто</div>
+    <div class="empty-sub">Найди друзей через поиск сверху</div>
   </div>`;
 }
 
@@ -358,7 +519,7 @@ function emptyGroupsHTML() {
 }
 
 /* ============================================================================
- * UI WIRING: password toggle / tabs
+ * UI WIRING: password toggle / tabs / rail
  * ==========================================================================*/
 document.querySelectorAll('.pw-toggle').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -367,6 +528,7 @@ document.querySelectorAll('.pw-toggle').forEach(btn => {
     input.type = input.type === 'password' ? 'text' : 'password';
     const svg = btn.querySelector('svg');
     if (svg) svg.style.opacity = input.type === 'text' ? '0.5' : '1';
+    btn.setAttribute('aria-label', input.type === 'text' ? 'Скрыть пароль' : 'Показать пароль');
   });
 });
 
@@ -377,6 +539,8 @@ document.querySelectorAll('.tab').forEach(tab => {
     tab.classList.add('active');
     $('tab-' + tab.dataset.tab)?.classList.add('active');
     setErr('');
+    // Фокус на первое поле активной вкладки
+    $('tab-' + tab.dataset.tab)?.querySelector('input')?.focus();
   });
 });
 
@@ -385,6 +549,10 @@ function switchSidebarTab(name) {
   document.querySelectorAll('.sidebar-tab').forEach(t =>
     t.classList.toggle('active', t.dataset.stab === name)
   );
+  // Рельса слева (fallback для браузеров без :has)
+  document.querySelectorAll('.rail-btn[data-rail]').forEach(b =>
+    b.classList.toggle('active', b.dataset.rail === name)
+  );
   setDisplay('dm-panel', isGroups ? 'none' : '');
   setDisplay('groups-panel', isGroups ? '' : 'none');
 }
@@ -392,6 +560,7 @@ function switchSidebarTab(name) {
 document.querySelectorAll('.sidebar-tab').forEach(tab => {
   tab.addEventListener('click', () => switchSidebarTab(tab.dataset.stab));
 });
+switchSidebarTab('dm');
 
 /* ============================================================================
  * REGISTER / LOGIN
@@ -413,12 +582,11 @@ async function withButtonBusy(btn, busyText, fn) {
 on('btn-register', 'click', async () => {
   setErr('');
   const userId = ($('reg-id')?.value || '').trim().toLowerCase();
-  const nickname = ($('reg-nick')?.value || '').trim();
+  const nickname = ($('reg-nick')?.value || '').trim() || userId;
   const password = $('reg-pw')?.value || '';
 
   if (!userId || userId.length < 3) return setErr('ID минимум 3 символа');
   if (!/^[a-z0-9_]+$/.test(userId)) return setErr('ID: только a-z, 0-9, _');
-  if (!nickname) return setErr('Введите никнейм');
   if (!password || password.length < 8) return setErr('Пароль минимум 8 символов');
 
   await withButtonBusy($('btn-register'), 'Загрузка…', async () => {
@@ -489,6 +657,12 @@ on('me-card', 'click', e => {
   if (e.target.closest('#btn-logout')) return;
   if (state.me) openEditProfileModal();
 });
+on('me-card', 'keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target === $('me-card')) {
+    e.preventDefault();
+    if (state.me) openEditProfileModal();
+  }
+});
 
 /* ============================================================================
  * SEARCH
@@ -505,6 +679,14 @@ on('search-input', 'focus', () => {
   const q = $('search-input').value.trim();
   if (q) doSearch(q);
 });
+on('search-input', 'keydown', e => {
+  if (e.key === 'Escape') { closeDrop(); e.target.blur(); }
+  if (e.key === 'Enter') {
+    // Enter открывает первый результат
+    const first = $('search-results')?.querySelector('.s-item[data-uid]');
+    if (first) first.click();
+  }
+});
 
 async function doSearch(q) {
   const drop = $('search-results');
@@ -520,7 +702,7 @@ async function doSearch(q) {
 
     const visible = (Array.isArray(list) ? list : []).filter(u => u && u.id !== state.me?.id);
     if (!visible.length) {
-      drop.innerHTML = '<div class="s-item" style="color:var(--text3);font-size:13px">Никого не найдено</div>';
+      drop.innerHTML = '<div class="s-item" style="color:var(--text3);font-size:13px;cursor:default">Никого не найдено</div>';
       drop.classList.add('open');
       return;
     }
@@ -536,7 +718,7 @@ async function doSearch(q) {
           <div class="s-nick">${esc(u.nickname)}</div>
           <div class="s-id">@${esc(u.id)}</div>
         </div>
-        <button class="btn-add" type="button" ${isFriend ? 'disabled' : ''}>${isFriend ? '✓ Друг' : '+ Добавить'}</button>`;
+        <button class="btn-add" type="button" ${isFriend ? 'disabled' : ''}>${isFriend ? '✓ В друзьях' : 'Добавить'}</button>`;
       renderAv(el.querySelector('.s-mini-av'), u.nickname, u.avatar);
 
       const btn = el.querySelector('.btn-add');
@@ -560,7 +742,7 @@ async function doSearch(q) {
   } catch (e) {
     if (e instanceof AuthError) return;
     if (requestSeq !== state.seq.search) return;
-    drop.innerHTML = '<div class="s-item" style="color:var(--red);font-size:13px">Ошибка поиска</div>';
+    drop.innerHTML = '<div class="s-item" style="color:var(--red);font-size:13px;cursor:default">Ошибка поиска</div>';
     drop.classList.add('open');
   }
 }
@@ -624,7 +806,7 @@ async function fetchNicknames(ids) {
     if (r.status !== 'fulfilled') return;
     const { id, data: u } = r.value;
     if (!state.friends[id]) return; // за время запроса перестал быть другом
-    state.friends[id] = { ...state.friends[id], id, nickname: u.nickname || id, avatar: u.avatar || null, online: !!u.online };
+    state.friends[id] = { ...state.friends[id], id, nickname: u.nickname || id, avatar: u.avatar || null, online: !!u.online, status: u.status || '' };
   });
   renderFriendsList();
   if (state.activeFriend && state.friends[state.activeFriend]) {
@@ -643,10 +825,11 @@ socket.on('friendRequest', req => {
     state.me.friendRequests.push({ id: req.id, nickname: req.nickname, avatar: req.avatar });
     renderRequests(state.me.friendRequests);
     showTransientNotice(`Заявка в друзья от ${req.nickname || req.id}`);
+    sfx.friend();
   }
 });
 
-socket.on('requestSent', () => {});
+socket.on('requestSent', () => showTransientNotice('Заявка отправлена'));
 
 socket.on('friendRequestError', ({ reason, targetId } = {}) => {
   const addBtn = $('btn-add-friend');
@@ -657,13 +840,13 @@ socket.on('friendRequestError', ({ reason, targetId } = {}) => {
   if (targetId) {
     const row = document.querySelector(`.s-item[data-uid="${CSS.escape(targetId)}"] .btn-add`);
     if (row) {
-      row.textContent = '+ Добавить';
+      row.textContent = 'Добавить';
       row.disabled = false;
     }
   } else {
     document.querySelectorAll('#search-results .btn-add:disabled').forEach(btn => {
       if (btn.textContent === 'Отправлено') {
-        btn.textContent = '+ Добавить';
+        btn.textContent = 'Добавить';
         btn.disabled = false;
       }
     });
@@ -699,6 +882,8 @@ socket.on('friendAdded', user => {
     renderRequests(state.me.friendRequests);
   }
   renderFriendsList();
+  showTransientNotice(`${user.nickname || user.id} теперь у вас в друзьях`);
+  sfx.friend();
   // Если открыт профиль этого пользователя — спрятать кнопку «Добавить»
   const addBtn = $('btn-add-friend');
   if (addBtn && $('profile-modal')?.style.display === 'flex' &&
@@ -743,13 +928,19 @@ socket.on('friendOffline', u => setFriendPresence(typeof u === 'string' ? u : u?
 
 socket.on('newMessage', ({ chatWith, msg } = {}) => {
   if (!chatWith || !msg) return;
+  state.lastActivity[chatWith] = getMsgTimeMs(msg);
+  const isMine = msg.from === state.me?.id;
   if (state.activeFriend === chatWith) {
     appendMsg(msg, 'messages');
     if (document.visibilityState === 'visible') socket.emit('markRead', chatWith);
+    else if (!isMine) sfx.message();
+    // Порядок в списке (последняя активность) обновляем без «прыжка» выделения
+    renderFriendsList();
   } else {
     state.unread[chatWith] = (state.unread[chatWith] || 0) + 1;
-    refreshFriendItem(chatWith);
+    renderFriendsList();
     updateTitleBadge();
+    if (!isMine) sfx.message();
   }
 });
 
@@ -761,7 +952,7 @@ socket.on('messageDeleted', ({ messageId } = {}) => {
   wrap.classList.add('deleted');
   wrap.querySelector('.msg-del-btn')?.remove();
   const text = wrap.querySelector('.g-msg-text');
-  if (text) text.textContent = 'Сообщение удалено';
+  if (text) { text.textContent = 'Сообщение удалено'; text.classList.remove('jumbo'); }
 });
 
 socket.on('rateLimited', kind => {
@@ -785,8 +976,10 @@ socket.on('sendMessageError', ({ reason } = {}) => {
 socket.on('addedToGroup', ({ group } = {}) => {
   if (!group?.id) return;
   state.groups[group.id] = group;
+  state.groupLastActivity[group.id] = Date.now();
   renderGroupsList();
   showTransientNotice(`Вас добавили в группу «${group.name}»`);
+  sfx.friend();
 });
 
 socket.on('groupVoiceState', ({ groupId, callId, video, participants } = {}) => {
@@ -824,13 +1017,18 @@ socket.on('groupUpdated', ({ groupId, name, avatar } = {}) => {
 
 socket.on('newGroupMessage', ({ groupId, msg } = {}) => {
   if (!groupId || !msg) return;
+  state.groupLastActivity[groupId] = getMsgTimeMs(msg);
+  const isMine = msg.from === state.me?.id;
   if (state.activeGroup === groupId) {
     appendGroupMsg(msg);
     if (document.visibilityState === 'visible') socket.emit('markGroupRead', groupId);
+    else if (!isMine) sfx.message();
+    renderGroupsList();
   } else {
     state.groupUnread[groupId] = (state.groupUnread[groupId] || 0) + 1;
-    refreshGroupItem(groupId);
+    renderGroupsList();
     updateTitleBadge();
+    if (!isMine) sfx.message();
   }
 });
 
@@ -843,7 +1041,7 @@ socket.on('groupMemberJoined', ({ groupId, user } = {}) => {
   if (state.activeGroup === groupId) {
     updateGroupChatHeader(g);
     renderGroupMembersPanel(g);
-    showTransientNotice(`${user.nickname || user.id} присоединился к группе`);
+    appendSystemMsg('group-messages', `${user.nickname || user.id} присоединился к группе`);
   }
   if (state.infoGroupId === groupId) renderGroupInfoMembers(g);
 });
@@ -863,11 +1061,13 @@ socket.on('groupMemberLeft', ({ groupId, userId } = {}) => {
     showTransientNotice(`Вы больше не участник группы «${g.name}»`);
     return;
   }
+  const left = (g.members || []).find(m => m.id === userId);
   g.members = (g.members || []).filter(m => m.id !== userId);
   renderGroupsList();
   if (state.activeGroup === groupId) {
     updateGroupChatHeader(g);
     renderGroupMembersPanel(g);
+    if (left) appendSystemMsg('group-messages', `${left.nickname || userId} покинул(а) группу`);
   }
   if (state.infoGroupId === groupId) renderGroupInfoMembers(g);
 });
@@ -922,10 +1122,10 @@ function renderRequests(reqs) {
     const el = document.createElement('div');
     el.className = 'req-card';
     el.innerHTML = `
-      <div class="f-av" style="width:34px;height:34px;font-size:13px"></div>
+      <div class="f-av"></div>
       <div style="flex:1;min-width:0">
         <div class="req-nick">${esc(nick)}</div>
-        <div class="req-id">@${esc(id)}</div>
+        <div class="req-id">Входящая заявка · @${esc(id)}</div>
       </div>
       <div class="req-btns">
         <button class="btn-ok" type="button" title="Принять">✓</button>
@@ -942,10 +1142,22 @@ function renderRequests(reqs) {
 /* ============================================================================
  * RENDER: friends list
  * ==========================================================================*/
+function sortedFriendIds() {
+  return Object.keys(state.friends).sort((a, b) => {
+    const ua = state.unread[a] || 0, ub = state.unread[b] || 0;
+    if (!!ua !== !!ub) return ua ? -1 : 1;                       // непрочитанные выше
+    const la = state.lastActivity[a] || 0, lb = state.lastActivity[b] || 0;
+    if (la !== lb) return lb - la;                                // недавняя активность выше
+    const oa = !!state.friends[a].online, ob = !!state.friends[b].online;
+    if (oa !== ob) return oa ? -1 : 1;                           // онлайн выше
+    return (state.friends[a].nickname || a).localeCompare(state.friends[b].nickname || b, 'ru');
+  });
+}
+
 function renderFriendsList() {
   const list = $('friends-list');
   if (!list) return;
-  const ids = Object.keys(state.friends);
+  const ids = sortedFriendIds();
   if (!ids.length) {
     list.innerHTML = emptyFriendsHTML();
     updateTitleBadge();
@@ -967,24 +1179,21 @@ function buildFriendEl(id) {
   const el = document.createElement('div');
   el.className = 'friend-item' + (state.activeFriend === id ? ' active' : '');
   el.dataset.fid = id;
+  el.setAttribute('role', 'button');
+  el.tabIndex = 0;
+  const sub = f.online ? (f.status ? f.status : 'В сети') : 'Не в сети';
   el.innerHTML = `
     <div class="f-av"></div>
     <div class="f-info">
       <div class="f-nick">${esc(f.nickname)}</div>
-      <div class="f-stat ${f.online ? 'on' : ''}">${f.online ? '● онлайн' : 'офлайн'}</div>
+      <div class="f-stat ${f.online ? 'on' : ''}">${esc(sub)}</div>
     </div>
     ${u ? `<div class="f-unread">${u > 99 ? '99+' : u}</div>` : ''}`;
 
-  const avEl = el.querySelector('.f-av');
-  avEl.style.position = 'relative';
-  renderAv(avEl, f.nickname, f.avatar);
-  if (f.online) {
-    const dot = document.createElement('div');
-    dot.className = 'f-dot';
-    avEl.appendChild(dot);
-  }
+  renderAvWithDot(el.querySelector('.f-av'), f.nickname, f.avatar, f.online);
 
   el.onclick = () => openChat(id);
+  el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openChat(id); } };
   return el;
 }
 
@@ -1005,7 +1214,7 @@ function updateStatus(id, online) {
   if (state.activeFriend === id) {
     const st = $('chat-status');
     if (st) {
-      st.textContent = online ? '● онлайн' : 'офлайн';
+      st.textContent = online ? 'В сети' : 'Не в сети';
       st.className = 'chat-head-status' + (online ? ' on' : '');
     }
   }
@@ -1029,10 +1238,20 @@ async function loadGroups() {
   }
 }
 
+function sortedGroupIds() {
+  return Object.keys(state.groups).sort((a, b) => {
+    const ua = state.groupUnread[a] || 0, ub = state.groupUnread[b] || 0;
+    if (!!ua !== !!ub) return ua ? -1 : 1;
+    const la = state.groupLastActivity[a] || 0, lb = state.groupLastActivity[b] || 0;
+    if (la !== lb) return lb - la;
+    return (state.groups[a].name || '').localeCompare(state.groups[b].name || '', 'ru');
+  });
+}
+
 function renderGroupsList() {
   const list = $('groups-list');
   if (!list) return;
-  const ids = Object.keys(state.groups);
+  const ids = sortedGroupIds();
   if (!ids.length) {
     list.innerHTML = emptyGroupsHTML();
     updateTitleBadge();
@@ -1064,16 +1283,18 @@ function buildGroupEl(id) {
   const el = document.createElement('div');
   el.className = 'friend-item group-item' + (state.activeGroup === id ? ' active' : '');
   el.dataset.gid = id;
+  el.setAttribute('role', 'button');
+  el.tabIndex = 0;
   el.innerHTML = `
     <div class="f-av group-av-slot"></div>
     <div class="f-info">
       <div class="f-nick">${esc(g.name)}</div>
-      <div class="f-stat">${members.length} уч. · ${onlineCount} онлайн</div>
+      <div class="f-stat">${plural(members.length, 'участник', 'участника', 'участников')} · ${onlineCount} в сети</div>
     </div>
     ${u ? `<div class="f-unread">${u > 99 ? '99+' : u}</div>` : ''}
     ${voice ? `<div class="group-voice-channel" data-voice-group="${esc(id)}">
       <div class="group-voice-channel-head">
-        <span class="group-voice-channel-icon">♫</span>
+        <span class="group-voice-channel-icon">🔊</span>
         <span class="group-voice-channel-name">Голосовой канал</span>
         <span class="group-voice-channel-count">${voice.participants.length}</span>
       </div>
@@ -1085,6 +1306,7 @@ function buildGroupEl(id) {
 
   renderGroupAv(el.querySelector('.group-av-slot'), g);
   el.onclick = () => openGroupChat(id);
+  el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openGroupChat(id); } };
   const joinButton = el.querySelector('.group-voice-channel-join');
   if (joinButton) {
     joinButton.onclick = event => {
@@ -1117,11 +1339,66 @@ function enterMobileChatView(backBtnId) {
 }
 
 /* ============================================================================
+ * MESSAGE LIST HELPERS: приветствие, разделители дат/новых, системные строки
+ * ==========================================================================*/
+function resetMsgContainer(box) {
+  box.innerHTML = '';
+  delete box.dataset.lastDay;
+  delete box.dataset.hasNewDivider;
+}
+
+/** «Это начало вашей истории…» — блок в самом верху (как в Discord) */
+function renderChatWelcome(box, { nick, avatar, group, sub }) {
+  const w = document.createElement('div');
+  w.className = 'chat-welcome';
+  w.innerHTML = `
+    <div class="chat-welcome-av ${group ? 'group-av' : ''}"></div>
+    <div class="chat-welcome-title">${esc(nick)}</div>
+    <div class="chat-welcome-sub">${sub}</div>`;
+  const avEl = w.querySelector('.chat-welcome-av');
+  if (group) renderGroupAv(avEl, group);
+  else renderAv(avEl, nick, avatar);
+  box.appendChild(w);
+}
+
+function ensureDateDivider(container, timeMs) {
+  const key = dayKey(timeMs);
+  if (container.dataset.lastDay === key) return;
+  container.dataset.lastDay = key;
+  const d = document.createElement('div');
+  d.className = 'msg-divider';
+  d.innerHTML = `<span>${esc(fmtDayLabel(timeMs))}</span>`;
+  container.appendChild(d);
+}
+
+function appendNewMessagesDivider(container) {
+  if (container.dataset.hasNewDivider) return;
+  container.dataset.hasNewDivider = '1';
+  const d = document.createElement('div');
+  d.className = 'msg-divider new';
+  d.innerHTML = '<span>Новые сообщения</span>';
+  container.appendChild(d);
+}
+
+/** Системное сообщение («X присоединился») — курсивная строка без аватара */
+function appendSystemMsg(containerId, text) {
+  const container = $(containerId);
+  if (!container) return;
+  const stick = isNearBottom(container);
+  const el = document.createElement('div');
+  el.className = 'msg-system';
+  el.innerHTML = `<span class="msg-system-icon">→</span><span>${esc(text)}</span><span class="msg-system-time">${esc(fmtTime(Date.now()))}</span>`;
+  container.appendChild(el);
+  if (stick) scrollMsgs(containerId);
+}
+
+/* ============================================================================
  * DM CHAT
  * ==========================================================================*/
 async function openChat(id) {
   if (!state.me || !id) return;
   const prevGroup = state.activeGroup;
+  const unreadBefore = state.unread[id] || 0;
   state.activeFriend = id;
   state.activeGroup = null;
   state.unread[id] = 0;
@@ -1138,9 +1415,11 @@ async function openChat(id) {
   setText('chat-nick', f.nickname);
   const st = $('chat-status');
   if (st) {
-    st.textContent = f.online ? '● онлайн' : 'офлайн';
+    st.textContent = f.online ? 'В сети' : 'Не в сети';
     st.className = 'chat-head-status' + (f.online ? ' on' : '');
   }
+  const input = $('msg-input');
+  if (input) input.placeholder = `Написать @${f.nickname}`;
 
   setDisplay('chat-placeholder', 'none');
   setDisplay('group-chat-window', 'none');
@@ -1152,6 +1431,7 @@ async function openChat(id) {
 
   const box = $('messages');
   if (!box) return;
+  resetMsgContainer(box);
   box.innerHTML = placeholderHTML('Загрузка…');
 
   const requestSeq = ++state.seq.chat;
@@ -1161,11 +1441,19 @@ async function openChat(id) {
     if (!res.ok) throw new Error('history failed');
     const history = await res.json();
     if (requestSeq !== state.seq.chat) return;
-    box.innerHTML = '';
-    if (!Array.isArray(history) || !history.length) {
-      box.innerHTML = placeholderHTML('Напишите первым! 👋');
-    } else {
-      history.forEach(m => appendMsg(m, 'messages', false));
+    resetMsgContainer(box);
+    renderChatWelcome(box, {
+      nick: f.nickname, avatar: f.avatar,
+      sub: `Это начало вашей истории личных сообщений с <b>@${esc(f.id)}</b>.`,
+    });
+    if (Array.isArray(history) && history.length) {
+      const firstNewIdx = unreadBefore > 0 ? Math.max(0, history.length - unreadBefore) : -1;
+      history.forEach((m, i) => {
+        if (i === firstNewIdx && m.from !== state.me.id) appendNewMessagesDivider(box);
+        appendMsg(m, 'messages', false);
+      });
+      const last = history[history.length - 1];
+      if (last) state.lastActivity[id] = Math.max(state.lastActivity[id] || 0, getMsgTimeMs(last));
     }
     scrollMsgs('messages');
   } catch (e) {
@@ -1174,7 +1462,7 @@ async function openChat(id) {
     box.innerHTML = placeholderHTML('Ошибка загрузки', true);
   }
   socket.emit('markRead', id);
-  $('msg-input')?.focus();
+  if (window.innerWidth > 640) input?.focus();
 }
 
 /* ============================================================================
@@ -1202,13 +1490,16 @@ function appendChatMsg(msg, containerId, ctx, doScroll = true) {
   // Дедупликация (история + realtime могут пересечься)
   if (msgId && container.querySelector(`[data-msgid="${CSS.escape(msgId)}"]`)) return;
 
+  const stick = doScroll ? isNearBottom(container) : false;
   clearMsgsPlaceholder(container);
 
   const senderId = msg.from;
   const isMine = senderId === state.me.id;
   const isDeleted = !!msg.deleted;
   const timeMs = getMsgTimeMs(msg);
-  const timeStr = fmtTime(msgTimeRaw(msg));
+  const timeStr = fmtTime(timeMs);
+
+  ensureDateDivider(container, timeMs);
   const grouped = shouldGroupMsg(container, senderId, timeMs);
 
   const wrap = document.createElement('div');
@@ -1227,7 +1518,8 @@ function appendChatMsg(msg, containerId, ctx, doScroll = true) {
     avEl.className = 'g-msg-av';
     renderAv(avEl, ctx.senderNick, ctx.senderAvatar);
     if (!isMine) {
-      avEl.style.cursor = 'pointer';
+      avEl.classList.add('clickable');
+      avEl.setAttribute('role', 'button');
       avEl.addEventListener('click', () => showUserProfile(senderId));
     }
     wrap.appendChild(avEl);
@@ -1242,13 +1534,22 @@ function appendChatMsg(msg, containerId, ctx, doScroll = true) {
     head.innerHTML = `
       <span class="g-msg-nick">${esc(ctx.senderNick)}</span>
       ${ctx.isOwner ? CROWN_SVG : ''}
-      <span class="g-msg-time">${esc(timeStr)}</span>`;
+      <span class="g-msg-time" title="${esc(new Date(timeMs).toLocaleString('ru'))}">${esc(fmtMsgTime(timeMs))}</span>`;
+    const nickEl = head.querySelector('.g-msg-nick');
+    if (!isMine) nickEl.addEventListener('click', () => showUserProfile(senderId));
+    else nickEl.addEventListener('click', () => openEditProfileModal());
     body.appendChild(head);
   }
 
   const text = document.createElement('div');
   text.className = 'g-msg-text';
-  text.textContent = isDeleted ? 'Сообщение удалено' : (msg.text || '');
+  if (isDeleted) {
+    text.textContent = 'Сообщение удалено';
+  } else {
+    const raw = msg.text || '';
+    text.innerHTML = formatMsgText(raw);
+    if (isJumboEmoji(raw)) text.classList.add('jumbo');
+  }
   body.appendChild(text);
   wrap.appendChild(body);
 
@@ -1257,13 +1558,19 @@ function appendChatMsg(msg, containerId, ctx, doScroll = true) {
     delBtn.type = 'button';
     delBtn.className = 'msg-del-btn';
     delBtn.title = 'Удалить';
+    delBtn.setAttribute('aria-label', 'Удалить сообщение');
     delBtn.innerHTML = TRASH_SVG;
-    delBtn.addEventListener('click', e => { e.stopPropagation(); openDeleteConfirm(msgId); });
+    delBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      // Shift+клик — мгновенное удаление без подтверждения (как в Discord)
+      if (e.shiftKey) deleteMessage(msgId);
+      else openDeleteConfirm(msgId);
+    });
     wrap.appendChild(delBtn);
   }
 
   container.appendChild(wrap);
-  if (doScroll) scrollMsgs(containerId);
+  if (doScroll && (stick || isMine)) scrollMsgs(containerId);
 }
 
 function appendMsg(msg, containerId, doScroll = true) {
@@ -1295,6 +1602,7 @@ function appendGroupMsg(msg, doScroll = true) {
 async function openGroupChat(groupId) {
   if (!state.me || !groupId || !state.groups[groupId]) return;
   const prevFriend = state.activeFriend;
+  const unreadBefore = state.groupUnread[groupId] || 0;
   state.activeGroup = groupId;
   state.activeFriend = null;
   state.groupUnread[groupId] = 0;
@@ -1323,6 +1631,7 @@ async function openGroupChat(groupId) {
 
   const box = $('group-messages');
   if (!box) return;
+  resetMsgContainer(box);
   box.innerHTML = placeholderHTML('Загрузка…');
 
   const requestSeq = ++state.seq.groupChat;
@@ -1332,11 +1641,19 @@ async function openGroupChat(groupId) {
     if (!res.ok) throw new Error('history failed');
     const history = await res.json();
     if (requestSeq !== state.seq.groupChat) return;
-    box.innerHTML = '';
-    if (!Array.isArray(history) || !history.length) {
-      box.innerHTML = placeholderHTML('Начните общение в группе! 👋');
-    } else {
-      history.forEach(m => appendGroupMsg(m, false));
+    resetMsgContainer(box);
+    renderChatWelcome(box, {
+      nick: g.name, group: g,
+      sub: `Добро пожаловать в начало группы <b>${esc(g.name)}</b>.`,
+    });
+    if (Array.isArray(history) && history.length) {
+      const firstNewIdx = unreadBefore > 0 ? Math.max(0, history.length - unreadBefore) : -1;
+      history.forEach((m, i) => {
+        if (i === firstNewIdx && m.from !== state.me.id) appendNewMessagesDivider(box);
+        appendGroupMsg(m, false);
+      });
+      const last = history[history.length - 1];
+      if (last) state.groupLastActivity[groupId] = Math.max(state.groupLastActivity[groupId] || 0, getMsgTimeMs(last));
     }
     scrollMsgs('group-messages');
   } catch (e) {
@@ -1345,7 +1662,7 @@ async function openGroupChat(groupId) {
     box.innerHTML = placeholderHTML('Ошибка загрузки', true);
   }
   socket.emit('markGroupRead', groupId);
-  input?.focus();
+  if (window.innerWidth > 640) input?.focus();
 }
 
 function updateGroupVoiceBar(groupId) {
@@ -1358,8 +1675,8 @@ function updateGroupVoiceBar(groupId) {
   const call = state.groupVoiceCalls[groupId];
   const g = state.groups[groupId];
   setText('group-voice-count', call
-    ? `${call.participants.length} в голосовом канале`
-    : 'Голосовой канал · никто не подключён');
+    ? `${plural(call.participants.length, 'участник', 'участника', 'участников')} в голосовом канале`
+    : 'Никто не подключён');
 
   const members = $('group-voice-members');
   if (members) {
@@ -1382,7 +1699,7 @@ function updateGroupVoiceBar(groupId) {
   const join = $('btn-join-group-voice');
   if (join) {
     const inThis = !!(callState.active && call && callState.callId === call.callId);
-    join.textContent = inThis ? 'Вы в канале' : call ? 'Войти' : 'Подключиться';
+    join.textContent = inThis ? 'Вы в канале' : call ? 'Присоединиться' : 'Подключиться';
     join.disabled = inThis || callState.active;
   }
 }
@@ -1393,7 +1710,7 @@ function updateGroupChatHeader(g) {
   setText('group-chat-name', g.name);
   const members = g.members || [];
   const onlineCount = members.filter(m => m.online).length;
-  setText('group-chat-members-count', `${members.length} участников · ${onlineCount} онлайн`);
+  setText('group-chat-members-count', `${plural(members.length, 'участник', 'участника', 'участников')} · ${onlineCount} в сети`);
 }
 
 on('group-chat-head-click', 'click', () => {
@@ -1421,6 +1738,7 @@ function sendMsg() {
     return;
   }
   socket.emit('sendMessage', { toId: state.activeFriend, text });
+  state.lastActivity[state.activeFriend] = Date.now();
   input.value = '';
   input.focus();
 }
@@ -1440,9 +1758,21 @@ function sendGroupMsg() {
     return;
   }
   socket.emit('groupMessage', { groupId: state.activeGroup, text });
+  state.groupLastActivity[state.activeGroup] = Date.now();
   input.value = '';
   input.focus();
 }
+
+// Как в Discord: начал печатать где угодно — фокус уходит в поле ввода
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key.length !== 1) return;
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+  if (isAnyModalOpen()) return;
+  const inputId = state.activeFriend ? 'msg-input' : state.activeGroup ? 'group-msg-input' : null;
+  if (inputId) $(inputId)?.focus();
+});
 
 /* ============================================================================
  * DELETE MESSAGE
@@ -1461,10 +1791,8 @@ on('delete-confirm', 'click', e => {
   if (e.target === $('delete-confirm')) closeDeleteConfirm();
 });
 
-on('btn-confirm-delete', 'click', async () => {
-  if (!state.pendingDeleteId || !state.me) return;
-  const idToDelete = state.pendingDeleteId;
-  closeDeleteConfirm();
+async function deleteMessage(idToDelete) {
+  if (!idToDelete || !state.me) return;
   try {
     const res = await authFetch(`${BACKEND_URL}/api/messages/${encodeURIComponent(idToDelete)}`, { method: 'DELETE' });
     if (!res.ok) {
@@ -1474,6 +1802,13 @@ on('btn-confirm-delete', 'click', async () => {
   } catch (e) {
     if (!(e instanceof AuthError)) showTransientNotice('Ошибка сети');
   }
+}
+
+on('btn-confirm-delete', 'click', () => {
+  if (!state.pendingDeleteId) return;
+  const id = state.pendingDeleteId;
+  closeDeleteConfirm();
+  deleteMessage(id);
 });
 
 /* ============================================================================
@@ -1496,13 +1831,13 @@ async function showUserProfile(userId) {
     const u = await res.json();
     if (requestSeq !== state.seq.profile) return;
 
-    renderAv($('profile-modal-avatar'), u.nickname, u.avatar);
+    renderAvWithDot($('profile-modal-avatar'), u.nickname, u.avatar, !!u.online);
     setText('profile-modal-nick', u.nickname);
     setText('profile-modal-id', '@' + u.id);
 
     const onlineBadge = $('profile-modal-online');
     if (onlineBadge) {
-      onlineBadge.textContent = u.online ? '● онлайн' : 'офлайн';
+      onlineBadge.textContent = u.online ? 'В сети' : 'Не в сети';
       onlineBadge.className = 'modal-online-badge ' + (u.online ? 'online' : 'offline');
     }
 
@@ -1518,20 +1853,23 @@ async function showUserProfile(userId) {
     } else {
       setDisplay('profile-modal-bio-row', 'none');
     }
+    setDisplay('profile-modal-body', (u.status || u.bio) ? '' : 'none');
 
     const isFriend = !!state.me?.friends?.includes(userId);
     const isMe = userId === state.me?.id;
 
     const addBtn = $('btn-add-friend');
     if (addBtn) {
-      addBtn.textContent = 'Добавить в друзья';
+      addBtn.textContent = isFriend ? 'Написать' : 'Добавить в друзья';
       addBtn.disabled = false;
-      addBtn.style.display = (isFriend || isMe) ? 'none' : '';
-      addBtn.onclick = (!isFriend && !isMe) ? () => {
-        socket.emit('sendFriendRequest', userId);
-        addBtn.textContent = 'Запрос отправлен';
-        addBtn.disabled = true;
-      } : null;
+      addBtn.style.display = isMe ? 'none' : '';
+      addBtn.onclick = isFriend
+        ? () => { closeProfileModal(); openChat(userId); }
+        : () => {
+            socket.emit('sendFriendRequest', userId);
+            addBtn.textContent = 'Запрос отправлен';
+            addBtn.disabled = true;
+          };
     }
 
     const blockBtn = $('btn-block-user');
@@ -1539,7 +1877,7 @@ async function showUserProfile(userId) {
       const isBlocked = !!state.me?.blockedUsers?.includes(userId);
       blockBtn.style.display = isMe ? 'none' : '';
       blockBtn.disabled = false;
-      blockBtn.className = 'btn-secondary' + (isBlocked ? '' : ' btn-danger-outline');
+      blockBtn.className = 'btn-secondary btn-block' + (isBlocked ? '' : ' btn-danger-outline');
       blockBtn.textContent = isBlocked ? 'Разблокировать' : 'Заблокировать';
       blockBtn.onclick = () => (isBlocked ? performUnblock(userId) : performBlock(userId));
     }
@@ -1669,6 +2007,7 @@ on('btn-save-profile', 'click', async () => {
       setText('my-nick', state.me.nickname);
       renderAv($('my-avatar'), state.me.nickname, state.me.avatar);
       closeEditProfileModal();
+      showTransientNotice('Профиль сохранён');
     } catch (e) {
       if (!(e instanceof AuthError)) showTransientNotice('Ошибка сети');
     }
@@ -1758,29 +2097,40 @@ function renderPicker({ pickerId, countId, ids, selected, emptyText, onChange })
     return;
   }
   picker.innerHTML = '';
-  ids.forEach(id => {
+  // Онлайн сверху
+  const sortedIds = [...ids].sort((a, b) => {
+    const oa = !!state.friends[a]?.online, ob = !!state.friends[b]?.online;
+    if (oa !== ob) return oa ? -1 : 1;
+    return (state.friends[a]?.nickname || a).localeCompare(state.friends[b]?.nickname || b, 'ru');
+  });
+  sortedIds.forEach(id => {
     const f = state.friends[id];
     if (!f) return;
     const isSel = selected.has(id);
     const el = document.createElement('div');
     el.className = 'picker-item' + (isSel ? ' selected' : '');
+    el.setAttribute('role', 'checkbox');
+    el.setAttribute('aria-checked', String(isSel));
+    el.tabIndex = 0;
     el.innerHTML = `
-      <div class="f-av" style="width:32px;height:32px;font-size:12px"></div>
+      <div class="f-av"></div>
       <div style="flex:1;min-width:0">
-        <div class="f-nick" style="font-size:13px">${esc(f.nickname)}</div>
-        <div class="f-stat" style="font-size:11px">@${esc(id)}</div>
+        <div class="f-nick" style="font-size:14px;color:var(--text)">${esc(f.nickname)}</div>
+        <div class="f-stat" style="font-size:12px">@${esc(id)}</div>
       </div>
       <div class="picker-check">${isSel ? '✓' : ''}</div>`;
-    renderAv(el.querySelector('.f-av'), f.nickname, f.avatar);
-    el.addEventListener('click', () => {
+    renderAvWithDot(el.querySelector('.f-av'), f.nickname, f.avatar, f.online);
+    const toggle = () => {
       if (selected.has(id)) selected.delete(id);
       else selected.add(id);
       setText(countId, 'выбрано: ' + selected.size);
-      // Точечное обновление вместо полного ререндера
       el.classList.toggle('selected', selected.has(id));
+      el.setAttribute('aria-checked', String(selected.has(id)));
       el.querySelector('.picker-check').textContent = selected.has(id) ? '✓' : '';
       if (onChange) onChange();
-    });
+    };
+    el.addEventListener('click', toggle);
+    el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
     picker.appendChild(el);
   });
 }
@@ -1835,7 +2185,10 @@ on('btn-confirm-create-group', 'click', async () => {
       const data = await safeJson(res);
       if (!res.ok) return showTransientNotice(data.error || 'Ошибка создания группы');
       closeCreateGroupModal();
-      if (data.group?.id) state.groups[data.group.id] = data.group;
+      if (data.group?.id) {
+        state.groups[data.group.id] = data.group;
+        state.groupLastActivity[data.group.id] = Date.now();
+      }
       await loadGroups();
       switchSidebarTab('groups');
       if (data.group?.id && state.groups[data.group.id]) openGroupChat(data.group.id);
@@ -1875,26 +2228,26 @@ function renderGroupInfoMembers(g) {
   const iAmOwner = isGroupOwner(g, myId);
   setText('group-info-count', String((g.members || []).length));
 
-  (g.members || []).forEach(m => {
+  const sorted = [...(g.members || [])].sort((a, b) => {
+    const ao = isGroupOwner(g, a.id), bo = isGroupOwner(g, b.id);
+    if (ao !== bo) return ao ? -1 : 1;
+    if (!!a.online !== !!b.online) return a.online ? -1 : 1;
+    return (a.nickname || '').localeCompare(b.nickname || '', 'ru');
+  });
+
+  sorted.forEach(m => {
     const memberIsOwner = isGroupOwner(g, m.id);
     const el = document.createElement('div');
     el.className = 'group-member-item';
     el.innerHTML = `
-      <div class="f-av" style="width:32px;height:32px;font-size:12px"></div>
+      <div class="f-av"></div>
       <div style="flex:1;min-width:0">
-        <div class="f-nick" style="font-size:13px">${esc(m.nickname)} ${memberIsOwner ? '<span class="owner-badge" title="Владелец">👑</span>' : ''}</div>
-        <div class="f-stat" style="font-size:11px">@${esc(m.id)}</div>
+        <div class="f-nick" style="font-size:14px;color:var(--text)">${esc(m.nickname)}${m.id === myId ? ' <span class="f-stat" style="display:inline">(вы)</span>' : ''} ${memberIsOwner ? '<span class="owner-badge" title="Владелец">👑</span>' : ''}</div>
+        <div class="f-stat" style="font-size:12px">@${esc(m.id)} · ${m.online ? 'В сети' : 'Не в сети'}</div>
       </div>
       ${m.id !== myId && iAmOwner ? '<button class="btn-kick" type="button" title="Удалить из группы">✕</button>' : ''}`;
 
-    const avEl = el.querySelector('.f-av');
-    avEl.style.position = 'relative';
-    renderAv(avEl, m.nickname, m.avatar);
-    if (m.online) {
-      const dot = document.createElement('div');
-      dot.className = 'f-dot';
-      avEl.appendChild(dot);
-    }
+    renderAvWithDot(el.querySelector('.f-av'), m.nickname, m.avatar, m.online);
 
     const kickBtn = el.querySelector('.btn-kick');
     if (kickBtn) {
@@ -1993,7 +2346,7 @@ on('btn-confirm-add-members', 'click', () => {
 });
 
 /* ============================================================================
- * MEMBERS PANEL (правая колонка)
+ * MEMBERS PANEL (правая колонка) — секции «В СЕТИ» / «НЕ В СЕТИ» как в Discord
  * ==========================================================================*/
 function renderGroupMembersPanel(g) {
   if (!g) return;
@@ -2004,39 +2357,46 @@ function renderGroupMembersPanel(g) {
   countEl.textContent = (g.members || []).length;
   list.innerHTML = '';
 
-  // Владелец сверху, потом онлайн, потом офлайн, по алфавиту
-  const sorted = [...(g.members || [])].sort((a, b) => {
+  // Владелец сверху, потом по алфавиту
+  const byName = (a, b) => {
     const aOwner = isGroupOwner(g, a.id);
     const bOwner = isGroupOwner(g, b.id);
     if (aOwner !== bOwner) return aOwner ? -1 : 1;
-    if (!!a.online !== !!b.online) return a.online ? -1 : 1;
     return (a.nickname || '').localeCompare(b.nickname || '', 'ru');
-  });
+  };
+  const online = (g.members || []).filter(m => m.online).sort(byName);
+  const offline = (g.members || []).filter(m => !m.online).sort(byName);
 
-  sorted.forEach(m => {
-    const isOwner = isGroupOwner(g, m.id);
-    const el = document.createElement('div');
-    el.className = 'gm-item' + (m.online ? '' : ' offline');
-    el.innerHTML = `
-      <div class="gm-av"></div>
-      <div class="gm-name">${esc(m.nickname)}</div>
-      ${isOwner ? CROWN_SVG : ''}`;
-    const avEl = el.querySelector('.gm-av');
-    renderAv(avEl, m.nickname, m.avatar);
-    if (m.online) {
-      const dot = document.createElement('div');
-      dot.className = 'f-dot';
-      avEl.appendChild(dot);
-    }
-    if (m.id !== state.me?.id) el.addEventListener('click', () => showUserProfile(m.id));
-    list.appendChild(el);
-  });
+  const addSection = (label, arr) => {
+    if (!arr.length) return;
+    const h = document.createElement('div');
+    h.className = 'gm-section';
+    h.textContent = `${label} — ${arr.length}`;
+    list.appendChild(h);
+    arr.forEach(m => {
+      const isOwner = isGroupOwner(g, m.id);
+      const el = document.createElement('div');
+      el.className = 'gm-item' + (m.online ? '' : ' offline');
+      el.title = `@${m.id}`;
+      el.innerHTML = `
+        <div class="gm-av"></div>
+        <div class="gm-name">${esc(m.nickname)}</div>
+        ${isOwner ? CROWN_SVG : ''}`;
+      renderAvWithDot(el.querySelector('.gm-av'), m.nickname, m.avatar, m.online);
+      if (m.id !== state.me?.id) el.addEventListener('click', () => showUserProfile(m.id));
+      else el.addEventListener('click', () => openEditProfileModal());
+      list.appendChild(el);
+    });
+  };
+  addSection('В сети', online);
+  addSection('Не в сети', offline);
 
   setDisplay('btn-invite-group', isGroupOwner(g, state.me?.id) ? '' : 'none');
 }
 
 on('btn-toggle-members', 'click', () => {
   $('group-members-panel')?.classList.toggle('hidden');
+  syncVoiceOverlayPosition();
 });
 
 /* ============================================================================
@@ -2065,8 +2425,19 @@ window.addEventListener('resize', () => {
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    closeAllModals();
+    if (isAnyModalOpen() || $('delete-confirm')?.style.display === 'flex') {
+      closeAllModals();
+      return;
+    }
     closeDrop(false);
+    // Escape в открытом чате — прокрутка в самый низ (как в Discord)
+    if (state.activeFriend) scrollMsgs('messages');
+    if (state.activeGroup) scrollMsgs('group-messages');
+  }
+  // Ctrl/Cmd+K — фокус на поиск
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    $('search-input')?.focus();
   }
 });
 
@@ -2095,6 +2466,7 @@ document.addEventListener('visibilitychange', () => {
     }
   }
   document.documentElement.classList.remove('has-session');
+  $('login-id')?.focus();
 })();
 
 /* ============================================================================
@@ -2107,22 +2479,22 @@ socket.on('connect_error', err => {
     forceLogoutToLogin('Сессия истекла, войдите снова');
     return;
   }
-  // Не спамим уведомлением на каждую попытку реконнекта
+  setConnBanner(true, 'Нет соединения с сервером — повторная попытка…');
   const now = Date.now();
   if (now - lastConnNoticeAt > 15000) {
     lastConnNoticeAt = now;
-    showTransientNotice('Нет соединения с сервером');
   }
 });
 
 socket.on('connect', () => {
   lastConnNoticeAt = 0;
+  setConnBanner(false);
 });
 
 socket.on('disconnect', reason => {
   console.warn('Socket disconnected:', reason);
   if (reason === 'io client disconnect') return;
-  showTransientNotice('Соединение потеряно, переподключение…');
+  setConnBanner(true, 'Соединение потеряно — переподключение…');
   // Сигнальный канал потерян — сервер удалит нас из звонка; завершаем локально.
   if (callState.active || callState.pendingIncoming) closeCallOverlay();
 });
@@ -2207,9 +2579,10 @@ async function startCall({ toId, groupId, video }) {
     video,
   });
   socket.emit('callStart', { toId, groupId, video: !!video });
-  openCallOverlay('соединение…');
+  openCallOverlay(groupId ? 'соединение…' : 'вызов…');
 
   if (!groupId) {
+    sfx.startRing(true);
     clearTimeout(callState.ringTimer);
     callState.ringTimer = setTimeout(() => {
       if (callState.active && !Object.keys(callState.peers).length) {
@@ -2241,10 +2614,12 @@ async function startExistingCall(call, groupId) {
   beginCallSession({ stream, callId: call.callId, isGroup: true, groupId, video: call.video });
   openCallOverlay('соединение…');
   socket.emit('callJoin', { callId: call.callId });
+  sfx.join();
 }
 
 function hangupCall() {
   if (callState.callId) socket.emit('callLeave', { callId: callState.callId });
+  sfx.leave();
   closeCallOverlay();
 }
 
@@ -2315,6 +2690,7 @@ function closeCallOverlay() {
   setDisplay('incoming-call-modal', 'none');
   clearTimeout(callState.ringTimer);
   clearTimeout(callState.incomingTimer);
+  sfx.stopRing();
 
   stopAllSpeakingMonitors();
 
@@ -2423,7 +2799,7 @@ function updateCallTile(tile, nickname, avatarUrl, stream, isLocal) {
     label.className = 'call-tile-nick';
     tile.appendChild(label);
   }
-  label.textContent = nickname;
+  label.textContent = isLocal ? `${nickname} (вы)` : nickname;
 
   // Бейдж выключенного микрофона — только у себя (чужой статус достоверно неизвестен)
   let badge = tile.querySelector('.call-tile-mic-off');
@@ -2505,6 +2881,12 @@ function startSpeakingMonitor(id, stream) {
   let wasSpeaking = false;
   (function tick() {
     if (speakingMonitors[id] !== mon) return;
+    // Свой выключенный микрофон не «говорит»
+    if (id === 'local' && !callState.micOn) {
+      if (wasSpeaking) { wasSpeaking = false; setSpeakingUI(id, false); }
+      mon.raf = requestAnimationFrame(tick);
+      return;
+    }
     analyser.getByteTimeDomainData(data);
     let sumSquares = 0;
     for (let i = 0; i < data.length; i++) {
@@ -2569,6 +2951,7 @@ function createPeerConnection(peerId) {
     const st = pc.connectionState;
     if (!callState.peers[peerId] || callState.peers[peerId].pc !== pc) return;
     if (st === 'connected') {
+      sfx.stopRing();
       setText('call-overlay-status', 'в звонке');
     } else if (st === 'failed') {
       if (callState.isGroup) {
@@ -2622,16 +3005,20 @@ on('btn-join-group-voice', 'click', () => {
 
 on('btn-call-hangup', 'click', hangupCall);
 
-on('btn-call-toggle-mic', 'click', () => {
+function toggleMic() {
   if (!callState.localStream) return;
   callState.micOn = !callState.micOn;
   callState.localStream.getAudioTracks().forEach(t => { t.enabled = callState.micOn; });
   const micButton = $('btn-call-toggle-mic');
-  micButton.classList.toggle('active-off', !callState.micOn);
-  micButton.title = callState.micOn ? 'Выключить микрофон' : 'Включить микрофон';
-  micButton.setAttribute('aria-label', micButton.title);
+  if (micButton) {
+    micButton.classList.toggle('active-off', !callState.micOn);
+    micButton.title = callState.micOn ? 'Выключить микрофон' : 'Включить микрофон';
+    micButton.setAttribute('aria-label', micButton.title);
+  }
+  showTransientNotice(callState.micOn ? 'Микрофон включён' : 'Микрофон выключен');
   renderCallGrid();
-});
+}
+on('btn-call-toggle-mic', 'click', toggleMic);
 
 on('btn-call-toggle-cam', 'click', () => {
   if (!callState.localStream) return;
@@ -2648,11 +3035,20 @@ on('btn-call-toggle-cam', 'click', () => {
   renderCallGrid();
 });
 
+// Ctrl+Shift+M — мьют микрофона во время звонка (как в Discord)
+document.addEventListener('keydown', e => {
+  if (callState.active && (e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'm') {
+    e.preventDefault();
+    toggleMic();
+  }
+});
+
 /* ── Incoming call UI ──────────────────────────────────────────────────── */
 function dismissIncomingCall() {
   clearTimeout(callState.incomingTimer);
   callState.pendingIncoming = null;
   setDisplay('incoming-call-modal', 'none');
+  sfx.stopRing();
 }
 
 function showIncomingCall(info) {
@@ -2663,10 +3059,12 @@ function showIncomingCall(info) {
   setText('incoming-call-nick', nick);
   setText('incoming-call-sub', info.isGroup
     ? `${info.fromNick || 'Кто-то'} начал(а) ${info.video ? 'видео' : 'аудио'}звонок`
-    : `входящий ${info.video ? 'видео' : 'аудио'}звонок…`);
+    : `Входящий ${info.video ? 'видео' : 'аудио'}звонок…`);
   const avatarUrl = info.isGroup ? null : (state.friends[info.from]?.avatar || null);
-  renderAv($('incoming-call-avatar'), nick, avatarUrl);
+  if (info.isGroup) renderGroupAv($('incoming-call-avatar'), state.groups[info.groupId]);
+  else renderAv($('incoming-call-avatar'), nick, avatarUrl);
   setDisplay('incoming-call-modal', 'flex');
+  sfx.startRing(false);
 
   clearTimeout(callState.incomingTimer);
   callState.incomingTimer = setTimeout(() => {
@@ -2682,6 +3080,7 @@ on('btn-call-accept', 'click', async () => {
   const info = callState.pendingIncoming;
   if (!info) return;
   setDisplay('incoming-call-modal', 'none');
+  sfx.stopRing();
 
   let stream;
   try {
@@ -2711,6 +3110,7 @@ on('btn-call-accept', 'click', async () => {
   });
   openCallOverlay('соединение…');
   socket.emit('callJoin', { callId: info.callId });
+  sfx.join();
 });
 
 on('btn-call-decline', 'click', () => {
@@ -2839,6 +3239,8 @@ socket.on('callJoined', ({ callId, participants } = {}) => {
 socket.on('callPeerJoined', ({ callId, peerId } = {}) => {
   if (!callState.active || callId !== callState.callId || !peerId || peerId === state.me?.id) return;
   clearTimeout(callState.ringTimer);
+  sfx.stopRing();
+  sfx.join();
   // Offer пришлёт сам вошедший — только готовим соединение и плитку
   createPeerConnection(peerId);
   setText('call-overlay-status', 'соединение…');
@@ -2849,6 +3251,7 @@ socket.on('callPeerLeft', ({ callId, peerId } = {}) => {
   if (!callState.active || callId !== callState.callId || !peerId) return;
   const name = callPeerName(peerId);
   teardownPeer(peerId);
+  sfx.leave();
   if (!callState.isGroup) {
     showTransientNotice('Собеседник завершил звонок');
     closeCallOverlay();
@@ -2932,4 +3335,3 @@ window.addEventListener('unhandledrejection', e => {
 window.addEventListener('error', e => {
   console.error('Uncaught error:', e.error || e.message);
 });
-  
