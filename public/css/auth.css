@@ -1,0 +1,43 @@
+/* ─── Auth ─────────────────────────────────────────────────────────────── */
+#auth-screen {
+  align-items: center; justify-content: center;
+  position: relative; overflow: hidden;
+  background: #5865f2;
+  background-image:
+    radial-gradient(circle at 20% 15%, rgba(255,255,255,0.14), transparent 40%),
+    radial-gradient(circle at 85% 90%, rgba(0,0,0,0.3), transparent 45%),
+    linear-gradient(160deg, #5865f2 0%, #4752c4 55%, #3c45a5 100%);
+}
+.auth-bg { position: absolute; inset: 0; pointer-events: none; }
+.auth-blob { position: absolute; border-radius: 50%; filter: blur(80px); will-change: transform; }
+.auth-blob.b1 { width: 500px; height: 500px; background: #7289da; top: -150px; left: -100px; opacity: 0.35; }
+.auth-blob.b2 { width: 400px; height: 400px; background: #eb459e; bottom: -100px; right: -80px; opacity: 0.18; }
+.auth-blob.b3 { width: 300px; height: 300px; background: #57f287; top: 50%; left: 50%; transform: translate(-50%,-50%); opacity: 0.1; }
+
+.auth-box {
+  position: relative; z-index: 1;
+  width: 100%; max-width: 480px;
+  padding: 32px;
+  background: var(--bg2);
+  border-radius: 5px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.2), 0 8px 24px rgba(0,0,0,0.35);
+}
+.auth-logo { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 20px; }
+.auth-logo-icon {
+  width: 40px; height: 40px; border-radius: 12px;
+  background: var(--accent); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+}
+.auth-logo-text { font-size: 22px; font-weight: 800; color: var(--text-h); letter-spacing: -0.3px; }
+.auth-heading { text-align: center; margin-bottom: 4px; }
+.auth-title { font-size: 24px; font-weight: 700; color: var(--text-h); line-height: 1.25; }
+.auth-sub { color: var(--text2); font-size: 15px; margin-top: 6px; }
+
+.tabs { display: none; }               /* переключение — через ссылки ниже */
+.tab-content { display: none; }
+.tab-content.active { display: flex; flex-direction: column; gap: 20px; }
+
+.auth-switch { font-size: 14px; color: var(--text3); margin-top: -8px; }
+.auth-link { color: #00a8fc; font-size: 14px; font-weight: 500; padding: 0; }
+.auth-link:hover { text-decoration: underline; }
+

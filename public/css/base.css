@@ -1,0 +1,329 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Reset & Base
+   ═══════════════════════════════════════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+button, input, textarea, select { font: inherit; color: inherit; }
+button { background: none; border: 0; cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+img, svg, video { display: block; max-width: 100%; }
+
+:root {
+  color-scheme: dark;
+
+  /* ── Поверхности (Discord dark) ── */
+  --bg:  #1e1f22;   /* рельса, инпуты, самое тёмное */
+  --bg1: #2b2d31;   /* сайдбар, панель участников, футеры модалок */
+  --bg2: #313338;   /* область чата, модалки */
+  --bg3: #383a40;   /* поле ввода сообщений */
+  --bg4: #404249;   /* активные элементы */
+  --bg5: #4e5058;   /* серые кнопки */
+  --bg6: #6d6f78;   /* hover серых кнопок */
+  --panel-user: #232428;
+
+  --hover: #35373c;
+  --msg-hover: #2e3035;
+  --divider: #3f4147;
+  --border: rgba(255,255,255,0.06);
+
+  /* ── Акцент ── */
+  --accent: #5865f2;
+  --accent-h: #4752c4;
+  --accent-a: #3c45a5;
+  --accent-bg: rgba(88,101,242,0.16);
+  --accent-bg2: rgba(88,101,242,0.28);
+  --accent-border: rgba(88,101,242,0.4);
+  --accent-gradient: linear-gradient(135deg, #5865f2, #7289da);
+  --neutral-avatar-gradient: linear-gradient(135deg, #5865f2, #4752c4);
+
+  /* ── Текст ── */
+  --text-h: #f2f3f5;
+  --text:   #dbdee1;
+  --text2:  #b5bac1;
+  --text3:  #949ba4;
+  --text4:  #80848e;
+
+  /* ── Статусы ── */
+  --green: #23a559;
+  --green-h: #1a6334;
+  --green-bg: rgba(35,165,89,0.16);
+  --green-border: rgba(35,165,89,0.4);
+  --red: #f23f43;
+  --red-h: #da373c;
+  --red-bg: rgba(242,63,67,0.12);
+  --red-bg2: rgba(242,63,67,0.24);
+  --red-border: rgba(242,63,67,0.4);
+  --gold: #f0b132;
+
+  /* ── Discord-палитра для голосовых/звонков ── */
+  --dc-bg: #1e1f22;
+  --dc-bg2: #313338;
+  --dc-bg3: #404249;
+  --dc-voice-bg: transparent;
+  --dc-voice-bg-h: #35373c;
+  --dc-muted: #949ba4;
+  --dc-muted2: #b5bac1;
+  --dc-green: #23a559;
+  --dc-green-btn: #248046;
+  --dc-green-soft: rgba(35,165,89,0.35);
+  --dc-red: #da373c;
+  --dc-red-h: #a12828;
+
+  /* ── Прочее ── */
+  --shadow-header: 0 1px 0 rgba(4,4,5,0.2), 0 1.5px 0 rgba(6,6,7,0.05), 0 2px 0 rgba(4,4,5,0.05);
+  --shadow: 0 8px 16px rgba(0,0,0,0.24);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.45);
+  --radius: 8px;
+  --radius-sm: 4px;
+  --radius-lg: 8px;
+  --rail-w: 72px;
+  --sidebar-w: 240px;
+  --header-h: 48px;
+  --font: 'Inter', 'gg sans', 'Noto Sans', 'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif;
+  --ease: 0.17s ease;
+  --ease-fast: 0.1s ease;
+
+  --z-dropdown: 100;
+  --z-toast: 500;
+  --z-popup: 500;
+  --z-modal: 1000;
+}
+
+html, body {
+  height: 100%;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.375;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+:is(button, [role="button"], [tabindex]:not([tabindex="-1"]), a[href],
+    .friend-item, .s-item, .gm-item, .picker-item, .me-card):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Скроллбары ── */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #1a1b1e; border-radius: 4px;
+  border: 2px solid transparent; background-clip: padding-box; min-height: 40px;
+}
+.messages::-webkit-scrollbar, .group-messages::-webkit-scrollbar { width: 16px; }
+.messages::-webkit-scrollbar-track, .group-messages::-webkit-scrollbar-track {
+  background: var(--bg1); border: 4px solid var(--bg2); border-radius: 8px;
+}
+.messages::-webkit-scrollbar-thumb, .group-messages::-webkit-scrollbar-thumb {
+  background: #1a1b1e; border: 4px solid transparent; background-clip: padding-box; border-radius: 8px;
+}
+.sidebar-body, .messages, .group-messages, .search-drop, .modal-box,
+#group-members-list, .friends-picker, .group-members-list,
+.blocked-users-list, .call-video-grid {
+  scrollbar-width: thin;
+  scrollbar-color: #1a1b1e transparent;
+  overscroll-behavior: contain;
+}
+.sidebar-body { scrollbar-color: transparent transparent; }
+.sidebar-body:hover { scrollbar-color: #1a1b1e transparent; }
+.sidebar-body::-webkit-scrollbar-thumb { background: transparent; }
+.sidebar-body:hover::-webkit-scrollbar-thumb { background: #1a1b1e; background-clip: padding-box; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Примитивы: аватары, кнопки, поля, бейджи
+   ═══════════════════════════════════════════════════════════════════════════ */
+.me-avatar, .s-mini-av, .f-av, .chat-head-avatar, .modal-avatar, .edit-avatar,
+.gm-av, .g-msg-av, .group-voice-member-avatar, .call-tile-avatar,
+.call-incoming-avatar {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  color: #fff; font-weight: 600;
+  background: var(--neutral-avatar-gradient);
+  transition: filter var(--ease-fast);
+}
+:is(.me-avatar, .s-mini-av, .f-av, .chat-head-avatar, .modal-avatar, .edit-avatar,
+    .gm-av, .g-msg-av, .group-av-cell) img {
+  width: 100%; height: 100%; object-fit: cover;
+}
+
+.me-avatar        { width: 32px; height: 32px; font-size: 13px; background: var(--accent); }
+.s-mini-av        { width: 32px; height: 32px; font-size: 13px; background: var(--accent); }
+.f-av             { width: 32px; height: 32px; font-size: 13px; }
+.chat-head-avatar { width: 32px; height: 32px; font-size: 13px; }
+.modal-avatar, .edit-avatar { width: 80px; height: 80px; font-size: 30px; background: var(--accent); }
+.gm-av            { width: 32px; height: 32px; font-size: 12px; }
+.g-msg-av         { width: 40px; height: 40px; font-size: 15px; margin-top: 2px; }
+
+/* Точка статуса */
+.f-dot {
+  position: absolute; bottom: -2px; right: -2px;
+  box-sizing: content-box;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--green);
+  border: 3px solid var(--bg1);
+}
+.chat-head-avatar .f-dot { border-color: var(--bg2); }
+.me-avatar-wrap .f-dot { border-color: var(--panel-user); }
+.modal-avatar .f-dot { width: 14px; height: 14px; bottom: 2px; right: 2px; border-width: 4px; border-color: var(--bg2); }
+
+/* Кнопки */
+.btn-primary, .btn-secondary, .btn-ghost {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 38px; padding: 8px 16px;
+  border-radius: 3px;
+  font-size: 14px; font-weight: 500; line-height: 16px;
+  transition: background var(--ease), color var(--ease);
+}
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-h); }
+.btn-primary:active { background: var(--accent-a); }
+.btn-primary:disabled { opacity: 0.5; background: var(--accent); }
+
+.btn-secondary { background: var(--bg5); color: #fff; }
+.btn-secondary:hover { background: var(--bg6); }
+.btn-secondary:disabled { opacity: 0.5; }
+.btn-secondary.btn-danger-outline { background: transparent; color: var(--red); box-shadow: inset 0 0 0 1px var(--red-border); }
+.btn-secondary.btn-danger-outline:hover { background: var(--red-h); color: #fff; box-shadow: none; }
+
+.btn-ghost { background: transparent; color: var(--text); }
+.btn-ghost:hover { text-decoration: underline; }
+
+.btn-block { width: 100%; }
+
+.btn-add, .btn-unblock {
+  background: var(--accent); color: #fff;
+  border-radius: 3px;
+  font-size: 12px; font-weight: 500;
+  padding: 6px 12px;
+  white-space: nowrap; flex-shrink: 0;
+  transition: background var(--ease);
+}
+.btn-unblock { background: var(--bg5); }
+.btn-add:hover { background: var(--accent-h); }
+.btn-unblock:hover { background: var(--bg6); }
+.btn-add:disabled { opacity: 0.5; }
+
+.btn-ok, .btn-no {
+  width: 36px; height: 36px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+  background: var(--bg); color: var(--text2);
+  transition: color var(--ease);
+}
+.btn-ok:hover { color: var(--green); }
+.btn-no:hover { color: var(--red); }
+
+.btn-danger-sm, .btn-ghost-sm {
+  border-radius: 3px; font-size: 13px; font-weight: 500;
+  padding: 6px 14px;
+  transition: background var(--ease), color var(--ease);
+}
+.btn-danger-sm { background: var(--red-h); color: #fff; }
+.btn-danger-sm:hover { background: var(--dc-red-h); }
+.btn-ghost-sm { color: var(--text); }
+.btn-ghost-sm:hover { text-decoration: underline; }
+
+.icon-btn {
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text2);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  transition: color var(--ease), background var(--ease);
+}
+.icon-btn:hover { color: var(--text); background: var(--hover); }
+.icon-btn:disabled { opacity: 0.4; }
+.logout-btn:hover { color: var(--red) !important; }
+
+.btn-link-row {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  color: var(--text); font-size: 14px; font-weight: 500;
+  padding: 10px 12px;
+  background: var(--bg1);
+  border-radius: var(--radius-sm);
+  transition: background var(--ease-fast);
+}
+.btn-link-row .chev { margin-left: auto; color: var(--text3); }
+.btn-link-row:hover { background: var(--bg4); }
+
+/* Поля */
+.field { display: flex; flex-direction: column; gap: 8px; }
+.field label {
+  font-size: 12px; font-weight: 700; color: var(--text2);
+  text-transform: uppercase; letter-spacing: 0.02em;
+}
+.field .req { color: var(--red); }
+.hint { font-weight: 400; font-size: 11px; color: var(--text4); margin-left: 4px; text-transform: none; letter-spacing: 0; }
+.form-stack { display: flex; flex-direction: column; gap: 20px; }
+
+.field input, .field textarea, #search-input, #msg-input, #group-msg-input, .msg-input {
+  width: 100%; min-width: 0;
+  background: var(--bg);
+  border: 0; border-radius: 3px;
+  color: var(--text);
+  padding: 10px;
+  font-size: 15px;
+  outline: none;
+  transition: box-shadow var(--ease);
+}
+.field input:focus, .field textarea:focus, #search-input:focus { box-shadow: 0 0 0 1px var(--accent); }
+.field input::placeholder, .field textarea::placeholder,
+#search-input::placeholder, #msg-input::placeholder, #group-msg-input::placeholder,
+.msg-input::placeholder { color: var(--text4); }
+.field textarea { resize: vertical; min-height: 80px; }
+
+.pw-wrap { position: relative; }
+.pw-wrap input { padding-right: 40px; }
+.pw-toggle {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  color: var(--text3); padding: 2px; display: flex;
+  border-radius: 3px; transition: color var(--ease);
+}
+.pw-toggle:hover { color: var(--text); }
+
+.error-msg {
+  color: var(--red); font-size: 12px; font-weight: 500;
+  text-align: center; min-height: 18px; margin-top: 12px;
+}
+
+.visually-hidden-input {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* Бейджи непрочитанного — красные */
+.badge, .f-unread {
+  background: var(--red); color: #fff; font-weight: 700; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.badge { font-size: 11px; min-width: 16px; height: 16px; border-radius: 8px; padding: 0 4px; }
+.badge:empty { display: none; }
+.f-unread { font-size: 12px; min-width: 16px; height: 16px; border-radius: 8px; padding: 0 5px; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Экраны
+   ═══════════════════════════════════════════════════════════════════════════ */
+.screen { display: none; width: 100%; height: 100vh; height: 100dvh; }
+.screen.active { display: flex; }
+
+
