@@ -1335,7 +1335,7 @@ body {
     display: flex;
     align-items: center;
     padding: 12px 14px;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-md) !important;
     margin-bottom: 8px;
     background-color: var(--bg-secondary);
     transition: background-color 0.15s var(--ease), transform 0.15s var(--ease);
@@ -1753,6 +1753,15 @@ input:focus-visible,
     cursor: pointer;
     color: var(--text-muted);
     transition: all 0.2s var(--ease);
+}
+
+.friend-action-btn.audio-call {
+    color: var(--red);
+}
+
+.friend-action-btn.audio-call:hover {
+    background: var(--red-gradient);
+    color: white;
 }
 
 .friend-action-btn:hover {
@@ -2535,17 +2544,8 @@ body {
     padding: 20px;
 }
 
-.friend-item {
-    min-height: 62px;
-    padding: 10px 12px;
-    margin-bottom: 2px;
-    border-radius: 0;
-    background: transparent;
-    border-top: 1px solid rgba(255, 255, 255, .04);
-}
-
 .friend-item:hover {
-    background: #3a3c43;
+    background: var(--bg-hover);
     transform: none;
 }
 

@@ -474,7 +474,11 @@ function createFriendItem(friend) {
         </div>
         <div class="friend-actions">
             <button class="friend-action-btn message" title="Message">💬</button>
-            <button class="friend-action-btn audio-call" title="Audio Call">📞</button>
+            <button class="friend-action-btn audio-call" title="Audio Call" aria-label="Audio Call">
+                <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+                    <path fill="currentColor" d="M6.62 10.79a15.46 15.46 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24c1.12.37 2.33.57 3.57.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C11.72 21 3 12.28 3 2.99a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1.02l-2.2 2.21Z"/>
+                </svg>
+            </button>
             <button class="friend-action-btn video-call" title="Video Call">📹</button>
             <button class="friend-action-btn remove" title="Remove">🗑️</button>
         </div>
