@@ -10,8 +10,13 @@ const pool = new Pool({
         : false
 });
 
-async function getIdType(client, tableName) {
-    const { rows } = await client.query(`
+const idTypeCache = {};
+
+async function getIdType(clientOrPool, tableName) {
+    if (idTypeCache[tableName]) {
+        return idTypeCache[tableName];
+    }
+    const { rows } = await clientOrPool.query(`
         SELECT format_type(a.atttypid, a.atttypmod) AS type
         FROM pg_attribute a
         JOIN pg_class c ON c.oid = a.attrelid
@@ -25,7 +30,14 @@ async function getIdType(client, tableName) {
     if (!rows[0] || !rows[0].type) {
         throw new Error(`Unable to determine ${tableName}.id type`);
     }
+    idTypeCache[tableName] = rows[0].type;
     return rows[0].type;
+}
+
+function isIntegerType(type) {
+    if (!type) return false;
+    const lower = type.toLowerCase();
+    return lower === 'integer' || lower === 'int' || lower === 'int4' || lower === 'int8' || lower === 'bigint' || lower === 'smallint';
 }
 
 // Initialize database tables
@@ -44,6 +56,17 @@ async function initializeDatabase() {
             )
         `);
 
+        await client.query(`
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS password TEXT;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Online';
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+            CREATE UNIQUE INDEX IF NOT EXISTS users_username_idx ON users(username);
+            CREATE UNIQUE INDEX IF NOT EXISTS users_email_idx ON users(email);
+        `);
+
         const userIdType = await getIdType(client, 'users');
 
         await client.query(`
@@ -55,6 +78,14 @@ async function initializeDatabase() {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
+
+        await client.query(`
+            ALTER TABLE servers ADD COLUMN IF NOT EXISTS name TEXT;
+            ALTER TABLE servers ADD COLUMN IF NOT EXISTS icon TEXT;
+            ALTER TABLE servers ADD COLUMN IF NOT EXISTS owner_id ${userIdType};
+            ALTER TABLE servers ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+        `);
+
         const serverIdType = await getIdType(client, 'servers');
 
         await client.query(`
@@ -66,6 +97,14 @@ async function initializeDatabase() {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
+
+        await client.query(`
+            ALTER TABLE channels ADD COLUMN IF NOT EXISTS name TEXT;
+            ALTER TABLE channels ADD COLUMN IF NOT EXISTS type TEXT;
+            ALTER TABLE channels ADD COLUMN IF NOT EXISTS server_id ${serverIdType};
+            ALTER TABLE channels ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+        `);
+
         const channelIdType = await getIdType(client, 'channels');
 
         await client.query(`
@@ -77,6 +116,14 @@ async function initializeDatabase() {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
+
+        await client.query(`
+            ALTER TABLE messages ADD COLUMN IF NOT EXISTS content TEXT;
+            ALTER TABLE messages ADD COLUMN IF NOT EXISTS user_id ${userIdType};
+            ALTER TABLE messages ADD COLUMN IF NOT EXISTS channel_id ${channelIdType};
+            ALTER TABLE messages ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+        `);
+
         const messageIdType = await getIdType(client, 'messages');
 
         await client.query(`
@@ -88,6 +135,14 @@ async function initializeDatabase() {
                 read BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
+        `);
+
+        await client.query(`
+            ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS content TEXT;
+            ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS sender_id ${userIdType};
+            ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS receiver_id ${userIdType};
+            ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS read BOOLEAN DEFAULT FALSE;
+            ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
         `);
 
         await client.query(`
@@ -104,6 +159,16 @@ async function initializeDatabase() {
         `);
 
         await client.query(`
+            ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS filename TEXT;
+            ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS filepath TEXT;
+            ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS filetype TEXT;
+            ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS filesize INTEGER;
+            ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS user_id ${userIdType};
+            ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS channel_id ${channelIdType};
+            ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+        `);
+
+        await client.query(`
             CREATE TABLE IF NOT EXISTS reactions (
                 id SERIAL PRIMARY KEY,
                 emoji TEXT NOT NULL,
@@ -112,6 +177,14 @@ async function initializeDatabase() {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(message_id, user_id, emoji)
             )
+        `);
+
+        await client.query(`
+            ALTER TABLE reactions ADD COLUMN IF NOT EXISTS emoji TEXT;
+            ALTER TABLE reactions ADD COLUMN IF NOT EXISTS message_id ${messageIdType};
+            ALTER TABLE reactions ADD COLUMN IF NOT EXISTS user_id ${userIdType};
+            ALTER TABLE reactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+            CREATE UNIQUE INDEX IF NOT EXISTS reactions_msg_user_emoji_idx ON reactions(message_id, user_id, emoji);
         `);
 
         await client.query(`
@@ -125,6 +198,13 @@ async function initializeDatabase() {
         `);
 
         await client.query(`
+            ALTER TABLE server_members ADD COLUMN IF NOT EXISTS server_id ${serverIdType};
+            ALTER TABLE server_members ADD COLUMN IF NOT EXISTS user_id ${userIdType};
+            ALTER TABLE server_members ADD COLUMN IF NOT EXISTS joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+            CREATE UNIQUE INDEX IF NOT EXISTS server_members_srv_user_idx ON server_members(server_id, user_id);
+        `);
+
+        await client.query(`
             CREATE TABLE IF NOT EXISTS friends (
                 id SERIAL PRIMARY KEY,
                 user_id ${userIdType} REFERENCES users(id),
@@ -133,6 +213,14 @@ async function initializeDatabase() {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(user_id, friend_id)
             )
+        `);
+
+        await client.query(`
+            ALTER TABLE friends ADD COLUMN IF NOT EXISTS user_id ${userIdType};
+            ALTER TABLE friends ADD COLUMN IF NOT EXISTS friend_id ${userIdType};
+            ALTER TABLE friends ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending';
+            ALTER TABLE friends ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+            CREATE UNIQUE INDEX IF NOT EXISTS friends_user_friend_idx ON friends(user_id, friend_id);
         `);
 
         console.log('Database initialized successfully');
