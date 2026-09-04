@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Discord Clone</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <!-- Server List (Left Sidebar) -->
+    <div class="server-list">
+        <div class="server-icon home active" id="friendsBtn" title="Friends">
+            <svg width="28" height="28" viewBox="0 0 24 24">
+                <path fill="currentColor" d="M14 8.00598C14 10.211 12.206 12.006 10 12.006C7.795 12.006 6 10.211 6 8.00598C6 5.80098 7.795 4.00598 10 4.00598C12.206 4.00598 14 5.80098 14 8.00598ZM2 19.006C2 15.473 5.29 13.006 10 13.006C14.711 13.006 18 15.473 18 19.006V20.006H2V19.006Z"/>
+                <path fill="currentColor" d="M20.0001 20.006H22.0001V19.006C22.0001 16.4433 20.2697 14.4415 17.5213 13.5352C19.0621 14.4488 20.0001 16.0865 20.0001 18.006V20.006Z"/>
+                <path fill="currentColor" d="M14.8834 11.9077C16.6657 11.5044 18.0001 9.9077 18.0001 8.00598C18.0001 5.80098 16.2051 4.00598 14.0001 4.00598C13.6395 4.00598 13.2931 4.06115 12.9687 4.16115C13.6061 5.03115 14.0001 6.12115 14.0001 8.00598C14.0001 9.88598 13.6061 10.9785 12.9687 11.8485C13.2931 11.9485 13.6395 12.006 14.0001 12.006C14.3001 12.006 14.5961 11.9727 14.8834 11.9077Z"/>
+            </svg>
+        </div>
+        <div class="server-separator"></div>
+        <div class="server-icon" id="addServerBtn">
+            <svg width="24" height="24" viewBox="0 0 24 24">
+                <path fill="currentColor" d="M20 11H13V4C13 3.4 12.6 3 12 3C11.4 3 11 3.4 11 4V11H4C3.4 11 3 11.4 3 12C3 12.6 3.4 13 4 13H11V20C11 20.6 11.4 21 12 21C12.6 21 13 20.6 13 20V13H20C20.6 13 21 12.6 21 12C21 11.4 20.6 11 20 11Z"/>
+            </svg>
+        </div>
+    </div>
+
+    <!-- Channel List / DM List (Second Sidebar) -->
+    <div class="channel-list" id="channelList">
+        <div class="server-header" id="serverHeader">
+            <div class="server-name" id="serverName">Friends</div>
+            <div class="server-dropdown">▼</div>
+        </div>
+
+        <!-- DM List (shown in Friends view) -->
+        <div id="dmListView" class="dm-list-view">
+            <div class="dm-search-bar">
+                <input type="text" placeholder="Find or start a conversation">
+            </div>
+            <div class="channel-category">
+                <div class="category-header">
+                    <span>DIRECT MESSAGES</span>
+                </div>
+                <div id="dmList" class="dm-list">
+                    <!-- DM items will be added here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Channels View (shown in Server view) -->
+        <div id="channelsView" class="channels-view" style="display: none;">
+            <div class="channels-container">
+                <div class="channel-category">
+                    <div class="category-header">
+                        <svg width="12" height="12" viewBox="0 0 24 24"><path fill="currentColor" d="M9.3 5.3L15 11l-5.7 5.7c-.4.4-.4 1 0 1.4.4.4 1 .4 1.4 0l6.4-6.4c.4-.4.4-1 0-1.4L10.7 3.9c-.4-.4-1-.4-1.4 0-.4.4-.4 1 0 1.4z"/></svg>
+                        <span>TEXT CHANNELS</span>
+                    </div>
+                    <div class="channel text-channel active" data-channel="general">
+                        <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M5.88657 21C5.57547 21 5.3399 20.7189 5.39427 20.4126L6.00001 17H2.59511C2.28449 17 2.04905 16.7198 2.10259 16.4138L2.27759 15.4138C2.31946 15.1746 2.52722 15 2.77011 15H6.35001L7.41001 9H4.00511C3.69449 9 3.45905 8.71977 3.51259 8.41381L3.68759 7.41381C3.72946 7.17456 3.93722 7 4.18011 7H7.76001L8.39677 3.41262C8.43914 3.17391 8.64664 3 8.88907 3H9.87344C10.1845 3 10.4201 3.28107 10.3657 3.58738L9.76001 7H15.76L16.3968 3.41262C16.4391 3.17391 16.6466 3 16.8891 3H17.8734C18.1845 3 18.4201 3.28107 18.3657 3.58738L17.76 7H21.1649C21.4755 7 21.711 7.28023 21.6574 7.58619L21.4824 8.58619C21.4406 8.82544 21.2328 9 20.9899 9H17.41L16.35 15H19.7549C20.0655 15 20.301 15.2802 20.2474 15.5862L20.0724 16.5862C20.0306 16.8254 19.8228 17 19.5799 17H16L15.3632 20.5874C15.3209 20.8261 15.1134 21 14.8709 21H13.8866C13.5755 21 13.3399 20.7189 13.3943 20.4126L14 17H8.00001L7.36325 20.5874C7.32088 20.8261 7.11337 21 6.87094 21H5.88657ZM9.41045 9L8.35045 15H14.3504L15.4104 9H9.41045Z"/></svg>
+                        <span>general</span>
+                    </div>
+                    <div class="channel text-channel" data-channel="random">
+                        <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M5.88657 21C5.57547 21 5.3399 20.7189 5.39427 20.4126L6.00001 17H2.59511C2.28449 17 2.04905 16.7198 2.10259 16.4138L2.27759 15.4138C2.31946 15.1746 2.52722 15 2.77011 15H6.35001L7.41001 9H4.00511C3.69449 9 3.45905 8.71977 3.51259 8.41381L3.68759 7.41381C3.72946 7.17456 3.93722 7 4.18011 7H7.76001L8.39677 3.41262C8.43914 3.17391 8.64664 3 8.88907 3H9.87344C10.1845 3 10.4201 3.28107 10.3657 3.58738L9.76001 7H15.76L16.3968 3.41262C16.4391 3.17391 16.6466 3 16.8891 3H17.8734C18.1845 3 18.4201 3.28107 18.3657 3.58738L17.76 7H21.1649C21.4755 7 21.711 7.28023 21.6574 7.58619L21.4824 8.58619C21.4406 8.82544 21.2328 9 20.9899 9H17.41L16.35 15H19.7549C20.0655 15 20.301 15.2802 20.2474 15.5862L20.0724 16.5862C20.0306 16.8254 19.8228 17 19.5799 17H16L15.3632 20.5874C15.3209 20.8261 15.1134 21 14.8709 21H13.8866C13.5755 21 13.3399 20.7189 13.3943 20.4126L14 17H8.00001L7.36325 20.5874C7.32088 20.8261 7.11337 21 6.87094 21H5.88657ZM9.41045 9L8.35045 15H14.3504L15.4104 9H9.41045Z"/></svg>
+                        <span>random</span>
+                    </div>
+                </div>
+                <div class="channel-category">
+                    <div class="category-header">
+                        <svg width="12" height="12" viewBox="0 0 24 24"><path fill="currentColor" d="M9.3 5.3L15 11l-5.7 5.7c-.4.4-.4 1 0 1.4.4.4 1 .4 1.4 0l6.4-6.4c.4-.4.4-1 0-1.4L10.7 3.9c-.4-.4-1-.4-1.4 0-.4.4-.4 1 0 1.4z"/></svg>
+                        <span>VOICE CHANNELS</span>
+                    </div>
+                    <div class="channel voice-channel" data-channel="voice-1">
+                        <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C10.895 2 10 2.895 10 4V12C10 13.105 10.895 14 12 14C13.105 14 14 13.105 14 12V4C14 2.895 13.105 2 12 2ZM19 10V12C19 15.866 15.866 19 12 19C8.134 19 5 15.866 5 12V10H3V12C3 16.418 6.269 20.099 10.5 20.856V24H13.5V20.856C17.731 20.099 21 16.418 21 12V10H19Z"/></svg>
+                        <span>General Voice</span>
+                    </div>
+                    <div class="channel voice-channel" data-channel="voice-2">
+                        <svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C10.895 2 10 2.895 10 4V12C10 13.105 10.895 14 12 14C13.105 14 14 13.105 14 12V4C14 2.895 13.105 2 12 2ZM19 10V12C19 15.866 15.866 19 12 19C8.134 19 5 15.866 5 12V10H3V12C3 16.418 6.269 20.099 10.5 20.856V24H13.5V20.856C17.731 20.099 21 16.418 21 12V10H19Z"/></svg>
+                        <span>Gaming</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="user-panel">
+            <div class="user-info">
+                <div class="user-avatar">U</div>
+                <div class="user-details">
+                    <div class="username">User#0001</div>
+                    <div class="user-status">Online</div>
+                </div>
+            </div>
+            <div class="user-controls">
+                <button class="control-btn" id="muteBtn" title="Mute">
+                    <svg class="icon-normal" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C10.895 2 10 2.895 10 4V12C10 13.105 10.895 14 12 14C13.105 14 14 13.105 14 12V4C14 2.895 13.105 2 12 2ZM19 10V12C19 15.866 15.866 19 12 19C8.134 19 5 15.866 5 12V10H3V12C3 16.418 6.269 20.099 10.5 20.856V24H13.5V20.856C17.731 20.099 21 16.418 21 12V10H19Z"/></svg>
+                    <svg class="icon-slashed" style="display: none;" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M12 14c1.105 0 2-.895 2-2V4c0-1.105-.895-2-2-2s-2 .895-2 2v8c0 1.105.895 2 2 2zM19 12v-2h-2v2c0 2.757-1.79 5.08-4.2 5.86v2.006h2.2v2H9.5v-2h2.2V17.86C9.29 17.08 7.5 14.757 7.5 12V10H5v2c0 3.53 2.61 6.43 6 6.92V22h2v-3.08c3.39-.49 6-3.39 6-6.92zm-2.293-9.293l-1.414-1.414L3 13.586l1.414 1.414L16.707 2.707z"/></svg>
+                </button>
+                <button class="control-btn" id="deafenBtn" title="Deafen">
+                    <svg class="icon-normal" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M3 10v4c0 .55.45 1 1 1h3l5 5V4L7 9H4c-.55 0-1 .45-1 1zm16.5 2c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM16 4.27v15.46c2.28-.94 4-3.25 4-5.99s-1.72-5.05-4-5.99z"/></svg>
+                    <svg class="icon-slashed" style="display: none;" width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M3 10v4c0 .55.45 1 1 1h3l5 5V4L7 9H4c-.55 0-1 .45-1 1zm16.5 2c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM16 4.27v15.46c2.28-.94 4-3.25 4-5.99s-1.72-5.05-4-5.99zM4.707 2.293L3.293 3.707 21.293 21.707l1.414-1.414L4.707 2.293z"/></svg>
+                </button>
+                <button class="control-btn" id="settingsBtn" title="Settings">
+                    <svg width="20" height="20" viewBox="0 0 24 24">
+                        <path fill="currentColor" d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <div class="main-content">
+        <!-- Server/Channel Chat View -->
+        <div id="chatView" class="chat-view" style="display: none;">
+            <div class="chat-header">
+                <div class="channel-info" id="chatHeaderInfo">
+                    <!-- Header will be dynamically populated -->
+                </div>
+                <div class="chat-controls">
+                    <button class="icon-btn" id="membersBtn" title="Members" style="display: none;">
+                        <svg width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M14 8.00598C14 10.211 12.206 12.006 10 12.006C7.795 12.006 6 10.211 6 8.00598C6 5.80098 7.795 4.00598 10 4.00598C12.206 4.00598 14 5.80098 14 8.00598ZM2 19.006C2 15.473 5.29 13.006 10 13.006C14.711 13.006 18 15.473 18 19.006V20.006H2V19.006Z"/></svg>
+                    </button>
+                </div>
+            </div>
+            <div class="messages" id="messagesContainer"></div>
+            <div class="message-input-container">
+                <div class="message-input-wrapper">
+                    <button class="attach-btn"><svg width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C11.5 2 11 2.19 10.59 2.59L2.59 10.59C1.8 11.37 1.8 12.63 2.59 13.41C3.37 14.2 4.63 14.2 5.41 13.41L11 7.83V16C11 16.55 11.45 17 12 17C12.55 17 13 16.55 13 16V7.83L18.59 13.41C19.37 14.2 20.63 14.2 21.41 13.41C22.2 12.63 22.2 11.37 21.41 10.59L13.41 2.59C13 2.19 12.5 2 12 2Z"/></svg></button>
+                    <input type="text" id="messageInput" placeholder="Message..." />
+                    <div class="emoji-btn"><svg width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.486 2 2 6.486 2 12C2 17.514 6.486 22 12 22C17.514 22 22 17.514 22 12C22 6.486 17.514 2 12 2ZM15.5 8C16.328 8 17 8.672 17 9.5C17 10.328 16.328 11 15.5 11C14.672 11 14 10.328 14 9.5C14 8.672 14.672 8 15.5 8ZM8.5 8C9.328 8 10 8.672 10 9.5C10 10.328 9.328 11 8.5 11C7.672 11 7 10.328 7 9.5C7 8.672 7.672 8 8.5 8ZM12 17.5C9.656 17.5 7.586 16.019 6.673 13.852C6.594 13.643 6.673 13.407 6.852 13.266C7.031 13.125 7.281 13.117 7.469 13.242C8.766 14.109 10.352 14.5 12 14.5C13.648 14.5 15.234 14.109 16.531 13.242C16.719 13.117 16.969 13.125 17.148 13.266C17.327 13.407 17.406 13.643 17.327 13.852C16.414 16.019 14.344 17.5 12 17.5Z"/></svg></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Friends View (Main Content) -->
+        <div id="friendsView" class="friends-main-view" style="display: none;">
+            <div class="friends-header">
+                <div class="friends-tabs">
+                    <button class="friends-tab active" data-tab="online">Online</button>
+                    <button class="friends-tab" data-tab="all">All</button>
+                    <button class="friends-tab" data-tab="pending">Pending</button>
+                    <button class="friends-tab" data-tab="add">Add Friend</button>
+                </div>
+            </div>
+            <div class="friends-content-wrapper">
+                <div id="friendsOnline" class="friends-list active-tab"></div>
+                <div id="friendsAll" class="friends-list"></div>
+                <div id="friendsPending" class="friends-list"></div>
+                <div id="friendsAdd" class="friends-list">
+                    <div class="add-friend-form">
+                        <h3>ADD FRIEND</h3>
+                        <p>You can add friends by searching all users.</p>
+                        <div class="add-friend-input-wrapper">
+                            <input type="text" id="searchUserInput" placeholder="Search username" />
+                            <button id="searchUserBtn">Search</button>
+                        </div>
+                        <div id="searchResults"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Voice/Video Call Interface (hidden by default) -->
+    <div id="callInterface" class="call-interface hidden">
+        <div class="call-header">
+            <div class="call-channel-name">Voice Channel</div>
+            <button class="close-call-btn" id="closeCallBtn">✕</button>
+        </div>
+        <div class="call-participants">
+            <div class="participant">
+                <video id="localVideo" autoplay muted playsinline></video>
+                <div class="participant-name">You</div>
+            </div>
+            <div id="remoteParticipants"></div>
+        </div>
+        <div class="call-controls-main">
+            <button id="toggleVideoBtn" class="call-control-btn">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M21 6.5L17 10.5V7C17 6.45 16.55 6 16 6H4C3.45 6 3 6.45 3 7V17C3 17.55 3.45 18 4 18H16C16.55 18 17 17.55 17 17V13.5L21 17.5V6.5Z"/></svg>
+            </button>
+            <button id="toggleAudioBtn" class="call-control-btn">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C10.895 2 10 2.895 10 4V12C10 13.105 10.895 14 12 14C13.105 14 14 13.105 14 12V4C14 2.895 13.105 2 12 2ZM19 10V12C19 15.866 15.866 19 12 19C8.134 19 5 15.866 5 12V10H3V12C3 16.418 6.269 20.099 10.5 20.856V24H13.5V20.856C17.731 20.099 21 16.418 21 12V10H19Z"/></svg>
+            </button>
+            <button id="toggleScreenBtn" class="call-control-btn">
+                <svg width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M21 2H3C1.89 2 1 2.89 1 4V16C1 17.11 1.89 18 3 18H10V20H8V22H16V20H14V18H21C22.11 18 23 17.11 23 16V4C23 2.89 22.11 2 21 2ZM21 16H3V4H21V16Z"/></svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Incoming Call Notification -->
+    <div id="incomingCall" class="incoming-call hidden">
+        <div class="incoming-call-content">
+            <div class="caller-info">
+                <div class="caller-avatar"></div>
+                <div class="caller-name"></div>
+            </div>
+            <p>is calling you...</p>
+            <div class="incoming-call-actions">
+                <button id="acceptCallBtn" class="call-action-btn accept">Accept</button>
+                <button id="rejectCallBtn" class="call-action-btn reject">Decline</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
