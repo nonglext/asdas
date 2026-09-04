@@ -25,12 +25,28 @@ async function initializeDatabase() {
             )
         `);
 
+        const { rows: userIdTypeRows } = await client.query(`
+            SELECT format_type(a.atttypid, a.atttypmod) AS type
+            FROM pg_attribute a
+            JOIN pg_class c ON c.oid = a.attrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = current_schema()
+              AND c.relname = 'users'
+              AND a.attname = 'id'
+              AND a.attnum > 0
+              AND NOT a.attisdropped
+        `);
+        const userIdType = userIdTypeRows[0] && userIdTypeRows[0].type;
+        if (!userIdType) {
+            throw new Error('Unable to determine users.id type');
+        }
+
         await client.query(`
             CREATE TABLE IF NOT EXISTS servers (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 icon TEXT,
-                owner_id INTEGER REFERENCES users(id),
+                owner_id ${userIdType} REFERENCES users(id),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
@@ -49,7 +65,7 @@ async function initializeDatabase() {
             CREATE TABLE IF NOT EXISTS messages (
                 id SERIAL PRIMARY KEY,
                 content TEXT NOT NULL,
-                user_id INTEGER REFERENCES users(id),
+                user_id ${userIdType} REFERENCES users(id),
                 channel_id INTEGER REFERENCES channels(id),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -59,8 +75,8 @@ async function initializeDatabase() {
             CREATE TABLE IF NOT EXISTS direct_messages (
                 id SERIAL PRIMARY KEY,
                 content TEXT NOT NULL,
-                sender_id INTEGER REFERENCES users(id),
-                receiver_id INTEGER REFERENCES users(id),
+                sender_id ${userIdType} REFERENCES users(id),
+                receiver_id ${userIdType} REFERENCES users(id),
                 read BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -73,7 +89,7 @@ async function initializeDatabase() {
                 filepath TEXT NOT NULL,
                 filetype TEXT,
                 filesize INTEGER,
-                user_id INTEGER REFERENCES users(id),
+                user_id ${userIdType} REFERENCES users(id),
                 channel_id INTEGER REFERENCES channels(id),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -84,7 +100,7 @@ async function initializeDatabase() {
                 id SERIAL PRIMARY KEY,
                 emoji TEXT NOT NULL,
                 message_id INTEGER REFERENCES messages(id),
-                user_id INTEGER REFERENCES users(id),
+                user_id ${userIdType} REFERENCES users(id),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(message_id, user_id, emoji)
             )
@@ -94,7 +110,7 @@ async function initializeDatabase() {
             CREATE TABLE IF NOT EXISTS server_members (
                 id SERIAL PRIMARY KEY,
                 server_id INTEGER REFERENCES servers(id),
-                user_id INTEGER REFERENCES users(id),
+                user_id ${userIdType} REFERENCES users(id),
                 joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(server_id, user_id)
             )
@@ -103,8 +119,8 @@ async function initializeDatabase() {
         await client.query(`
             CREATE TABLE IF NOT EXISTS friends (
                 id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES users(id),
-                friend_id INTEGER REFERENCES users(id),
+                user_id ${userIdType} REFERENCES users(id),
+                friend_id ${userIdType} REFERENCES users(id),
                 status TEXT DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(user_id, friend_id)
