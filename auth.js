@@ -29,8 +29,22 @@ function initializeAuth() {
         }
     }
     
+    applyAuthMode();
     authForm.addEventListener('submit', handleSubmit);
     switchLink.addEventListener('click', toggleMode);
+}
+
+function applyAuthMode() {
+    const usernameGroup = document.getElementById('usernameGroup');
+    const confirmPasswordGroup = document.getElementById('confirmPasswordGroup');
+    const username = document.getElementById('username');
+    const confirmPassword = document.getElementById('confirmPassword');
+    const loginMode = isLoginMode;
+
+    usernameGroup.style.display = loginMode ? 'none' : 'block';
+    confirmPasswordGroup.style.display = loginMode ? 'none' : 'block';
+    username.required = !loginMode;
+    confirmPassword.required = !loginMode;
 }
 
 function toggleMode(e) {
@@ -38,29 +52,26 @@ function toggleMode(e) {
     
     isLoginMode = !isLoginMode;
     
-    const usernameGroup = document.getElementById('usernameGroup');
-    const confirmPasswordGroup = document.getElementById('confirmPasswordGroup');
     const submitBtn = document.getElementById('submitBtn');
     const switchText = document.getElementById('switchText');
     const switchLink = document.getElementById('switchLink');
     
     if (isLoginMode) {
-        usernameGroup.style.display = 'none';
-        confirmPasswordGroup.style.display = 'none';
         submitBtn.textContent = 'Log In';
         switchText.textContent = 'Need an account?';
         switchLink.textContent = 'Register';
         document.querySelector('.logo h1').textContent = 'Welcome back!';
         document.querySelector('.logo p').textContent = "We're so excited to see you again!";
     } else {
-        usernameGroup.style.display = 'block';
-        confirmPasswordGroup.style.display = 'block';
         submitBtn.textContent = 'Register';
         switchText.textContent = 'Already have an account?';
         switchLink.textContent = 'Log In';
         document.querySelector('.logo h1').textContent = 'Create an account';
         document.querySelector('.logo p').textContent = 'Welcome to Discord Clone!';
     }
+    applyAuthMode();
+    document.getElementById('username').value = '';
+    document.getElementById('confirmPassword').value = '';
     
     // Clear any error messages
     removeMessage('error-message');

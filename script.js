@@ -25,6 +25,7 @@ let currentChannelId = null;          // real DB id of the active text channel
 let currentServerChannels = [];       // channels of the server currently open
 let currentVoiceChannelId = null;
 let messagesLoadRequest = 0;
+let incomingCallTimer = null;
 
 // ---------------------------------------------------------------------
 // Small utilities
@@ -358,6 +359,16 @@ function initializeFriendsTabs() {
         });
     }
 
+    const dmSearchInput = document.querySelector('.dm-search-bar input');
+    if (dmSearchInput) {
+        dmSearchInput.addEventListener('input', () => {
+            const query = dmSearchInput.value.trim().toLowerCase();
+            document.querySelectorAll('#dmList .channel').forEach(item => {
+                item.hidden = query !== '' && !item.textContent.toLowerCase().includes(query);
+            });
+        });
+    }
+
     loadFriends();
 }
 
@@ -379,6 +390,40 @@ function switchFriendsTab(tabName) {
     if (tabName === 'pending') loadPendingRequests();
 }
 
+function renderErrorState(container, message, retry) {
+    if (!container) return;
+    container.innerHTML = '';
+    const state = document.createElement('div');
+    state.className = 'friends-empty error-state';
+    state.textContent = message;
+    const button = document.createElement('button');
+    button.className = 'retry-btn';
+    button.type = 'button';
+    button.textContent = 'Retry';
+    button.addEventListener('click', retry);
+    state.appendChild(button);
+    container.appendChild(state);
+}
+
+function makeKeyboardClickable(element, handler) {
+    element.tabIndex = 0;
+    element.setAttribute('role', 'button');
+    element.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            handler();
+        }
+    });
+}
+
+function renderEmptyState(container, message) {
+    if (!container) return;
+    const state = document.createElement('div');
+    state.className = 'friends-empty';
+    state.textContent = message;
+    container.appendChild(state);
+}
+
 async function loadFriends() {
     try {
         const friends = await apiFetchJson('/api/friends');
@@ -386,6 +431,8 @@ async function loadFriends() {
         populateDMList(friends);
     } catch (error) {
         console.error('Error loading friends:', error);
+        renderErrorState(document.getElementById('friendsOnline'), 'Unable to load friends', loadFriends);
+        renderErrorState(document.getElementById('friendsAll'), 'Unable to load friends', loadFriends);
     }
 }
 
@@ -445,7 +492,10 @@ async function searchUsers() {
     const searchInput = document.getElementById('searchUserInput');
     const query = searchInput.value.trim();
 
-    if (!query) return;
+    if (!query) {
+        displaySearchResults([]);
+        return;
+    }
 
     try {
         const users = await apiFetchJson('/api/users');
@@ -456,6 +506,7 @@ async function searchUsers() {
         displaySearchResults(results);
     } catch (error) {
         console.error('Error searching users:', error);
+        renderErrorState(document.getElementById('searchResults'), 'Search failed', searchUsers);
     }
 }
 
@@ -539,6 +590,7 @@ async function loadPendingRequests() {
         });
     } catch (error) {
         console.error('Error loading pending requests:', error);
+        renderErrorState(document.getElementById('friendsPending'), 'Unable to load requests', loadPendingRequests);
     }
 }
 
@@ -588,7 +640,7 @@ window.removeFriend = removeFriend;
 // ---------------------------------------------------------------------
 async function initiateCall(friendId, type) {
     try {
-        const constraints = { video: true, audio: true };
+        const constraints = { video: type === 'video', audio: true };
         localStream = await navigator.mediaDevices.getUserMedia(constraints);
 
         if (type === 'audio') {
@@ -627,7 +679,7 @@ async function initiateCall(friendId, type) {
         isAudioEnabled = true;
         updateCallButtons();
 
-        setTimeout(() => {
+        incomingCallTimer = setTimeout(() => {
             if (typeof initializeResizableVideos === 'function') {
                 initializeResizableVideos();
             }
@@ -647,17 +699,20 @@ function showIncomingCall(caller, type) {
     callerName.textContent = caller.username || 'Unknown User';
     callerAvatar.textContent = caller.avatar || caller.username?.charAt(0).toUpperCase() || 'U';
 
+    clearTimeout(incomingCallTimer);
     incomingCallDiv.classList.remove('hidden');
 
     const acceptBtn = document.getElementById('acceptCallBtn');
     const rejectBtn = document.getElementById('rejectCallBtn');
 
     acceptBtn.onclick = async () => {
+        clearTimeout(incomingCallTimer);
         incomingCallDiv.classList.add('hidden');
         await acceptCall(caller, type);
     };
 
     rejectBtn.onclick = () => {
+        clearTimeout(incomingCallTimer);
         incomingCallDiv.classList.add('hidden');
         rejectCall(caller);
     };
@@ -673,7 +728,7 @@ function showIncomingCall(caller, type) {
 
 async function acceptCall(caller, type) {
     try {
-        const constraints = { video: true, audio: true };
+        const constraints = { video: type === 'video', audio: true };
         localStream = await navigator.mediaDevices.getUserMedia(constraints);
 
         if (type === 'audio') {
@@ -818,24 +873,37 @@ function renderServerChannels(channelsList) {
     const container = document.getElementById('channelsView');
     if (!container) return;
 
-    container.innerHTML = '';
+    let channelContainer = container.querySelector('.channels-container');
+    if (!channelContainer) {
+        channelContainer = document.createElement('div');
+        channelContainer.className = 'channels-container';
+        container.appendChild(channelContainer);
+    }
+    channelContainer.innerHTML = '';
 
     const textChannels = channelsList.filter(c => c.type === 'text');
     const voiceChannels = channelsList.filter(c => c.type === 'voice');
+
+    if (textChannels.length === 0 && voiceChannels.length === 0) {
+        renderEmptyState(channelContainer, 'No channels available');
+        return;
+    }
 
     if (textChannels.length > 0) {
         const textHeader = document.createElement('div');
         textHeader.className = 'channel-category';
         textHeader.textContent = 'TEXT CHANNELS';
-        container.appendChild(textHeader);
+        channelContainer.appendChild(textHeader);
 
         textChannels.forEach(ch => {
             const el = document.createElement('div');
             el.className = 'channel text-channel';
             el.setAttribute('data-channel-id', ch.id);
             el.textContent = `# ${ch.name}`;
-            el.addEventListener('click', () => switchChannel(ch));
-            container.appendChild(el);
+            const openChannel = () => switchChannel(ch);
+            el.addEventListener('click', openChannel);
+            makeKeyboardClickable(el, openChannel);
+            channelContainer.appendChild(el);
         });
     }
 
@@ -843,15 +911,17 @@ function renderServerChannels(channelsList) {
         const voiceHeader = document.createElement('div');
         voiceHeader.className = 'channel-category';
         voiceHeader.textContent = 'VOICE CHANNELS';
-        container.appendChild(voiceHeader);
+        channelContainer.appendChild(voiceHeader);
 
         voiceChannels.forEach(ch => {
             const el = document.createElement('div');
             el.className = 'channel voice-channel';
             el.setAttribute('data-channel-id', ch.id);
             el.textContent = `🔊 ${ch.name}`;
-            el.addEventListener('click', () => joinVoiceChannel(ch));
-            container.appendChild(el);
+            const openVoice = () => joinVoiceChannel(ch);
+            el.addEventListener('click', openVoice);
+            makeKeyboardClickable(el, openVoice);
+            channelContainer.appendChild(el);
         });
     }
 }
@@ -862,9 +932,11 @@ function renderServerChannels(channelsList) {
 async function loadUserServers() {
     try {
         servers = await apiFetchJson('/api/servers');
+        document.querySelectorAll('.server-icon[data-server-id]').forEach(icon => icon.remove());
         servers.forEach(server => addServerToUI(server, false));
     } catch (error) {
         console.error('Error loading servers:', error);
+        notifyError('Unable to load servers', error);
     }
 }
 
@@ -908,6 +980,7 @@ function addServerToUI(server, switchTo = false) {
         serverIcon.classList.add('active');
         showServerView(server);
     });
+    makeKeyboardClickable(serverIcon, () => serverIcon.click());
 
     serverList.insertBefore(serverIcon, addServerBtn);
 
@@ -919,29 +992,32 @@ function addServerToUI(server, switchTo = false) {
 // ---------------------------------------------------------------------
 function initializeChannels() {
     document.querySelectorAll('.channel').forEach(channel => {
+        const channelName = channel.getAttribute('data-channel');
+        const isVoiceChannel = channel.classList.contains('voice-channel');
+        const openChannel = () => isVoiceChannel
+            ? joinVoiceChannel(channelName)
+            : switchChannel(channelName);
+        makeKeyboardClickable(channel, openChannel);
         channel.addEventListener('click', () => {
-            const channelName = channel.getAttribute('data-channel');
-            const isVoiceChannel = channel.classList.contains('voice-channel');
-
-            if (isVoiceChannel) {
-                joinVoiceChannel(channelName);
-            } else {
-                switchChannel(channelName);
-            }
+            openChannel();
         });
     });
 }
 
 function switchChannel(channel) {
     // `channel` is the real { id, name, type, serverId } object from the DB.
+    if (typeof channel === 'string') {
+        channel = { id: channel, name: channel };
+    }
     currentChannel = channel.name;
     currentChannelId = channel.id;
 
     document.querySelectorAll('.text-channel').forEach(ch => ch.classList.remove('active'));
-    const channelEl = document.querySelector(`[data-channel-id="${channel.id}"]`);
+    const channelEl = document.querySelector(`[data-channel-id="${channel.id}"], [data-channel="${channel.name}"]`);
     if (channelEl) channelEl.classList.add('active');
 
-    document.getElementById('currentChannelName').textContent = channel.name;
+    const channelNameEl = document.querySelector('#chatHeaderInfo .channel-name');
+    if (channelNameEl) channelNameEl.textContent = channel.name;
     document.getElementById('messageInput').placeholder = `Message #${channel.name}`;
 
     loadChannelMessages(channel.id);
@@ -956,6 +1032,7 @@ async function loadChannelMessages(channelId) {
     try {
         const messages = await apiFetchJson(`/api/messages/${channelId}`);
         if (requestId !== messagesLoadRequest || currentChannelId !== channelId) return;
+        if (messages.length === 0) renderEmptyState(messagesContainer, 'No messages yet');
         messages.forEach(message => {
             addMessageToUI({
                 id: message.id,
@@ -967,6 +1044,7 @@ async function loadChannelMessages(channelId) {
         });
     } catch (error) {
         console.error('Error loading messages:', error);
+        renderErrorState(messagesContainer, 'Unable to load messages', () => loadChannelMessages(channelId));
     } finally {
         if (requestId === messagesLoadRequest) {
             messagesContainer.classList.remove('is-loading');
@@ -1044,7 +1122,6 @@ function addMessageToUI(message) {
 
     const addReactionBtn = document.createElement('button');
     addReactionBtn.className = 'add-reaction-btn';
-    addReactionBtn.textContent = '😊';
     addReactionBtn.title = 'Add reaction';
     addReactionBtn.addEventListener('click', () => showEmojiPickerForMessage(message.id || Date.now()));
 
@@ -1254,6 +1331,7 @@ function setDeafenIcon(deafened) {
     if (!deafenBtn) return;
     deafenBtn.querySelector('.icon-normal').style.display = deafened ? 'none' : 'block';
     deafenBtn.querySelector('.icon-slashed').style.display = deafened ? 'block' : 'none';
+    deafenBtn.classList.toggle('active', deafened);
 }
 
 function applyLocalAudioState() {
@@ -1591,7 +1669,7 @@ function updateCallButtons() {
 
     if (toggleVideoBtn) toggleVideoBtn.classList.toggle('active', !isVideoEnabled);
     if (toggleAudioBtn) toggleAudioBtn.classList.toggle('active', !isAudioEnabled);
-    if (toggleScreenBtn) toggleScreenBtn.classList.toggle('active', screenStream !== null);
+    if (toggleScreenBtn) toggleScreenBtn.classList.toggle('screen-active', screenStream !== null);
 }
 
 // ---------------------------------------------------------------------
@@ -1605,6 +1683,10 @@ function initializeDraggableCallWindow() {
 
     callHeader.addEventListener('mousedown', (e) => {
         isDragging = true;
+        const rect = callInterface.getBoundingClientRect();
+        callInterface.style.transform = 'none';
+        callInterface.style.left = `${rect.left}px`;
+        callInterface.style.top = `${rect.top}px`;
         offsetX = e.clientX - callInterface.offsetLeft;
         offsetY = e.clientY - callInterface.offsetTop;
         callInterface.style.transition = 'none';
@@ -1639,10 +1721,14 @@ function initializeDraggableCallWindow() {
 // ---------------------------------------------------------------------
 async function loadDMHistory(userId) {
     const messagesContainer = document.getElementById('messagesContainer');
+    const requestId = ++messagesLoadRequest;
     messagesContainer.innerHTML = '';
+    messagesContainer.classList.add('is-loading');
 
     try {
         const messages = await apiFetchJson(`/api/dm/${userId}`);
+        if (requestId !== messagesLoadRequest || currentDMUserId !== userId) return;
+        if (messages.length === 0) renderEmptyState(messagesContainer, 'No messages yet');
         messages.forEach(message => {
             addMessageToUI({
                 id: message.id,
@@ -1654,6 +1740,13 @@ async function loadDMHistory(userId) {
         });
     } catch (error) {
         console.error('Error loading DM history:', error);
+        if (requestId === messagesLoadRequest) {
+            renderErrorState(messagesContainer, 'Unable to load messages', () => loadDMHistory(userId));
+        }
+    } finally {
+        if (requestId === messagesLoadRequest) {
+            messagesContainer.classList.remove('is-loading');
+        }
     }
 
     scrollToBottom();
@@ -1682,7 +1775,9 @@ function populateDMList(friends) {
             <div class="friend-avatar">${escapeHtml(avatarText)}</div>
             <span>${escapeHtml(friend.username)}</span>
         `;
-        dmItem.addEventListener('click', () => startDM(friend.id, friend.username));
+        const openDM = () => startDM(friend.id, friend.username);
+        dmItem.addEventListener('click', openDM);
+        makeKeyboardClickable(dmItem, openDM);
         dmList.appendChild(dmItem);
     });
 }
@@ -1902,8 +1997,7 @@ function makeResizable(element) {
 
     fullscreenBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const video = element.querySelector('video');
-        if (video && video.requestFullscreen) video.requestFullscreen();
+        toggleVideoFullscreen(element);
     });
 }
 
