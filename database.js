@@ -9,6 +9,24 @@ const pool = new Pool({
         : false
 });
 
+async function getIdType(client, tableName) {
+    const { rows } = await client.query(`
+        SELECT format_type(a.atttypid, a.atttypmod) AS type
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = current_schema()
+          AND c.relname = $1
+          AND a.attname = 'id'
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+    `, [tableName]);
+    if (!rows[0] || !rows[0].type) {
+        throw new Error(`Unable to determine ${tableName}.id type`);
+    }
+    return rows[0].type;
+}
+
 // Initialize database tables
 async function initializeDatabase() {
     const client = await pool.connect();
@@ -25,21 +43,7 @@ async function initializeDatabase() {
             )
         `);
 
-        const { rows: userIdTypeRows } = await client.query(`
-            SELECT format_type(a.atttypid, a.atttypmod) AS type
-            FROM pg_attribute a
-            JOIN pg_class c ON c.oid = a.attrelid
-            JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = current_schema()
-              AND c.relname = 'users'
-              AND a.attname = 'id'
-              AND a.attnum > 0
-              AND NOT a.attisdropped
-        `);
-        const userIdType = userIdTypeRows[0] && userIdTypeRows[0].type;
-        if (!userIdType) {
-            throw new Error('Unable to determine users.id type');
-        }
+        const userIdType = await getIdType(client, 'users');
 
         await client.query(`
             CREATE TABLE IF NOT EXISTS servers (
@@ -50,26 +54,29 @@ async function initializeDatabase() {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
+        const serverIdType = await getIdType(client, 'servers');
 
         await client.query(`
             CREATE TABLE IF NOT EXISTS channels (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 type TEXT NOT NULL,
-                server_id INTEGER REFERENCES servers(id),
+                server_id ${serverIdType} REFERENCES servers(id),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
+        const channelIdType = await getIdType(client, 'channels');
 
         await client.query(`
             CREATE TABLE IF NOT EXISTS messages (
                 id SERIAL PRIMARY KEY,
                 content TEXT NOT NULL,
                 user_id ${userIdType} REFERENCES users(id),
-                channel_id INTEGER REFERENCES channels(id),
+                channel_id ${channelIdType} REFERENCES channels(id),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
+        const messageIdType = await getIdType(client, 'messages');
 
         await client.query(`
             CREATE TABLE IF NOT EXISTS direct_messages (
@@ -90,7 +97,7 @@ async function initializeDatabase() {
                 filetype TEXT,
                 filesize INTEGER,
                 user_id ${userIdType} REFERENCES users(id),
-                channel_id INTEGER REFERENCES channels(id),
+                channel_id ${channelIdType} REFERENCES channels(id),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
@@ -99,7 +106,7 @@ async function initializeDatabase() {
             CREATE TABLE IF NOT EXISTS reactions (
                 id SERIAL PRIMARY KEY,
                 emoji TEXT NOT NULL,
-                message_id INTEGER REFERENCES messages(id),
+                message_id ${messageIdType} REFERENCES messages(id),
                 user_id ${userIdType} REFERENCES users(id),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(message_id, user_id, emoji)
@@ -109,7 +116,7 @@ async function initializeDatabase() {
         await client.query(`
             CREATE TABLE IF NOT EXISTS server_members (
                 id SERIAL PRIMARY KEY,
-                server_id INTEGER REFERENCES servers(id),
+                server_id ${serverIdType} REFERENCES servers(id),
                 user_id ${userIdType} REFERENCES users(id),
                 joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(server_id, user_id)
