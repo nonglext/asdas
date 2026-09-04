@@ -2,8 +2,9 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
   <title>ChatApp</title>
+  <meta name="theme-color" content="#1e1f22"/>
   <script>
     if (localStorage.getItem('chatapp_token') && localStorage.getItem('chatapp_profile')) {
       document.documentElement.classList.add('has-session');
@@ -11,129 +12,176 @@
   </script>
   <style>.has-session #auth-screen { display: none !important; }</style>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css"/>
 </head>
 <body>
 
-<!-- AUTH -->
+<!-- ═══════════════════════════════ AUTH ═══════════════════════════════ -->
 <div id="auth-screen" class="screen active">
   <div class="auth-bg">
     <div class="auth-blob b1"></div>
     <div class="auth-blob b2"></div>
     <div class="auth-blob b3"></div>
   </div>
+
   <div class="auth-box">
     <div class="auth-logo">
       <div class="auth-logo-icon">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-          <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" fill="currentColor"/>
-        </svg>
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
       </div>
       <span class="auth-logo-text">ChatApp</span>
     </div>
 
+    <!-- Табы остаются для JS, визуально скрыты — переключение через ссылки ниже -->
     <div class="tabs">
-      <button class="tab active" data-tab="login">Войти</button>
-      <button class="tab" data-tab="register">Регистрация</button>
+      <button class="tab active" data-tab="login" type="button">Войти</button>
+      <button class="tab" data-tab="register" type="button">Регистрация</button>
     </div>
 
     <div id="tab-login" class="tab-content active">
-      <div class="field">
-        <label>Ваш ID</label>
-        <input type="text" id="login-id" placeholder="cool_user123" maxlength="32" autocomplete="username"/>
+      <div class="auth-heading">
+        <h1 class="auth-title">С возвращением!</h1>
+        <p class="auth-sub">Мы так рады видеть тебя снова!</p>
       </div>
       <div class="field">
-        <label>Пароль</label>
+        <label for="login-id">Ваш ID <span class="req">*</span></label>
+        <input type="text" id="login-id" placeholder="" maxlength="32" autocomplete="username"/>
+      </div>
+      <div class="field">
+        <label for="login-pw">Пароль <span class="req">*</span></label>
         <div class="pw-wrap">
-          <input type="password" id="login-pw" placeholder="••••••••" maxlength="64" autocomplete="current-password"/>
-          <button class="pw-toggle" data-target="login-pw" type="button">
+          <input type="password" id="login-pw" placeholder="" maxlength="64" autocomplete="current-password"/>
+          <button class="pw-toggle" data-target="login-pw" type="button" aria-label="Показать пароль">
             <svg class="eye-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
         </div>
       </div>
-      <button id="btn-login" class="btn-primary">Войти</button>
+      <button id="btn-login" class="btn-primary btn-block">Войти</button>
+      <p class="auth-switch">Нужна учётная запись?
+        <button type="button" class="auth-link" onclick="document.querySelector('.tab[data-tab=&quot;register&quot;]').click()">Зарегистрироваться</button>
+      </p>
     </div>
 
     <div id="tab-register" class="tab-content">
-      <div class="field">
-        <label>Придумай ID <span class="hint">только a-z, 0-9, _</span></label>
-        <input type="text" id="reg-id" placeholder="my_cool_id" maxlength="32" autocomplete="username"/>
+      <div class="auth-heading">
+        <h1 class="auth-title">Создать учётную запись</h1>
       </div>
       <div class="field">
-        <label>Никнейм <span class="hint">необязательно</span></label>
-        <input type="text" id="reg-nick" placeholder="Как тебя зовут?" maxlength="32"/>
+        <label for="reg-id">ID <span class="req">*</span> <span class="hint">только a-z, 0-9, _</span></label>
+        <input type="text" id="reg-id" placeholder="" maxlength="32" autocomplete="username"/>
       </div>
       <div class="field">
-        <label>Пароль <span class="hint">мин. 8 символов</span></label>
+        <label for="reg-nick">Отображаемое имя <span class="hint">необязательно</span></label>
+        <input type="text" id="reg-nick" placeholder="" maxlength="32"/>
+      </div>
+      <div class="field">
+        <label for="reg-pw">Пароль <span class="req">*</span> <span class="hint">мин. 8 символов</span></label>
         <div class="pw-wrap">
-          <input type="password" id="reg-pw" placeholder="••••••••" maxlength="64" autocomplete="new-password"/>
-          <button class="pw-toggle" data-target="reg-pw" type="button">
+          <input type="password" id="reg-pw" placeholder="" maxlength="64" autocomplete="new-password"/>
+          <button class="pw-toggle" data-target="reg-pw" type="button" aria-label="Показать пароль">
             <svg class="eye-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
         </div>
       </div>
-      <button id="btn-register" class="btn-primary">Зарегистрироваться</button>
+      <button id="btn-register" class="btn-primary btn-block">Продолжить</button>
+      <p class="auth-switch">
+        <button type="button" class="auth-link" onclick="document.querySelector('.tab[data-tab=&quot;login&quot;]').click()">Уже зарегистрированы?</button>
+      </p>
     </div>
 
-    <div id="auth-error" class="error-msg"></div>
+    <div id="auth-error" class="error-msg" role="alert"></div>
   </div>
 </div>
 
-<!-- APP -->
+<!-- ═══════════════════════════════ APP ═══════════════════════════════ -->
 <div id="app-screen" class="screen">
   <aside class="sidebar">
-    <div class="sidebar-top">
-      <div class="me-card" id="me-card" title="Редактировать профиль">
-        <div class="me-avatar-wrap">
-          <div class="me-avatar" id="my-avatar"></div>
+
+    <!-- Рельса слева (как список серверов в Discord) -->
+    <nav class="guild-rail" aria-label="Разделы">
+      <button class="rail-btn rail-home" data-rail="dm" title="Личные сообщения" type="button"
+              onclick="document.querySelector('.sidebar-tab[data-stab=&quot;dm&quot;]').click()">
+        <span class="rail-pill"></span>
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+      </button>
+      <div class="rail-divider"></div>
+      <button class="rail-btn" data-rail="groups" title="Группы" type="button"
+              onclick="document.querySelector('.sidebar-tab[data-stab=&quot;groups&quot;]').click()">
+        <span class="rail-pill"></span>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+      </button>
+      <button class="rail-btn rail-add" title="Создать группу" type="button"
+              onclick="document.getElementById('btn-create-group').click()">
+        <span class="rail-pill"></span>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </nav>
+
+    <!-- Основная колонка сайдбара -->
+    <div class="sidebar-inner">
+      <div class="sidebar-top">
+        <div class="search-box">
+          <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input type="text" id="search-input" placeholder="Найти или начать беседу" autocomplete="off"/>
+          <div id="search-results" class="search-drop"></div>
         </div>
-        <div class="me-info">
-          <div class="me-nick" id="my-nick">—</div>
-          <div class="me-id" id="my-id">—</div>
+
+        <!-- Переключатель Личные / Группы (скрыт визуально, управляется рельсой) -->
+        <div class="sidebar-tabs">
+          <button class="sidebar-tab active" data-stab="dm" type="button">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            Личные
+          </button>
+          <button class="sidebar-tab" data-stab="groups" type="button">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+            Группы
+          </button>
+          <button class="sidebar-tab-add" id="btn-create-group" title="Создать группу" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
         </div>
-        <button id="btn-logout" class="icon-btn logout-btn" title="Выйти">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
-        </button>
       </div>
 
-      <div class="search-box">
-        <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input type="text" id="search-input" placeholder="Поиск по ID или нику…"/>
-        <div id="search-results" class="search-drop"></div>
-      </div>
-
-      <!-- Переключатель Личные / Группы -->
-      <div class="sidebar-tabs">
-        <button class="sidebar-tab active" data-stab="dm">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          Личные
-        </button>
-        <button class="sidebar-tab" data-stab="groups">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
-          Группы
-        </button>
-        <button class="sidebar-tab-add" id="btn-create-group" title="Создать группу">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
-        </button>
-      </div>
-    </div>
-
-    <div class="sidebar-body">
-      <!-- DM панель -->
-      <div id="dm-panel">
-        <div id="requests-section" style="display:none">
-          <div class="section-label">Запросы <span id="req-badge" class="badge"></span></div>
-          <div id="requests-list"></div>
+      <div class="sidebar-body">
+        <!-- DM панель -->
+        <div id="dm-panel">
+          <div id="requests-section" style="display:none">
+            <div class="section-label">Запросы в друзья <span id="req-badge" class="badge"></span></div>
+            <div id="requests-list"></div>
+          </div>
+          <div class="section-label">Личные сообщения</div>
+          <div id="friends-list"></div>
         </div>
-        <div class="section-label">Друзья</div>
-        <div id="friends-list"></div>
+
+        <!-- Группы панель -->
+        <div id="groups-panel" style="display:none">
+          <div class="section-label">
+            Мои группы
+            <button class="section-add" type="button" title="Создать группу"
+                    onclick="document.getElementById('btn-create-group').click()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+          </div>
+          <div id="groups-list"></div>
+        </div>
       </div>
 
-      <!-- Группы панель -->
-      <div id="groups-panel" style="display:none">
-        <div class="section-label">Мои группы</div>
-        <div id="groups-list"></div>
+      <!-- Панель пользователя внизу, как в Discord -->
+      <div class="sidebar-footer">
+        <div class="me-card" id="me-card" title="Редактировать профиль" role="button" tabindex="0">
+          <div class="me-avatar-wrap">
+            <div class="me-avatar" id="my-avatar"></div>
+          </div>
+          <div class="me-info">
+            <div class="me-nick" id="my-nick">—</div>
+            <div class="me-id" id="my-id">—</div>
+          </div>
+          <button id="btn-logout" class="icon-btn logout-btn" title="Выйти" type="button">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+          </button>
+        </div>
       </div>
     </div>
   </aside>
@@ -142,16 +190,16 @@
     <!-- Плейсхолдер -->
     <div id="chat-placeholder" class="chat-empty">
       <div class="chat-empty-icon">
-        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
       </div>
-      <div class="chat-empty-title">Выберите чат</div>
-      <div class="chat-empty-sub">чтобы начать общение</div>
+      <div class="chat-empty-title">Нет открытых чатов</div>
+      <div class="chat-empty-sub">Выбери друга или группу слева, чтобы начать общение</div>
     </div>
 
     <!-- DM Chat Window -->
     <div id="chat-window" class="chat-window" style="display:none">
       <div class="chat-head">
-        <button class="icon-btn back-btn" id="btn-back">
+        <button class="icon-btn back-btn" id="btn-back" type="button" aria-label="Назад">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
         </button>
         <div class="chat-head-avatar" id="chat-avatar"></div>
@@ -159,29 +207,30 @@
           <div class="chat-head-nick" id="chat-nick">—</div>
           <div class="chat-head-status" id="chat-status">офлайн</div>
         </div>
-        <button class="icon-btn" id="btn-call-audio" title="Аудиозвонок">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
-        </button>
-        <button class="icon-btn" id="btn-call-video" title="Видеозвонок">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-        </button>
+        <div class="chat-head-actions">
+          <button class="icon-btn" id="btn-call-audio" title="Аудиозвонок" type="button">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
+          </button>
+          <button class="icon-btn" id="btn-call-video" title="Видеозвонок" type="button">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+          </button>
+        </div>
       </div>
       <div class="messages" id="messages"></div>
-      <div class="msg-bar">
-        <input type="text" id="msg-input" placeholder="Написать сообщение…" maxlength="4000"/>
-        <button id="btn-send" class="send-btn" title="Отправить">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <path d="M22 2L11 13" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
-            <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="white" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
-          </svg>
-        </button>
+      <div class="msg-bar-wrap">
+        <div class="msg-bar">
+          <input type="text" id="msg-input" placeholder="Написать сообщение…" maxlength="4000" autocomplete="off"/>
+          <button id="btn-send" class="send-btn" title="Отправить" type="button">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+          </button>
+        </div>
       </div>
     </div>
 
-    <!-- Group Chat Window (Discord-style) -->
+    <!-- Group Chat Window -->
     <div id="group-chat-window" class="chat-window" style="display:none">
       <div class="chat-head">
-        <button class="icon-btn back-btn" id="btn-back-group">
+        <button class="icon-btn back-btn" id="btn-back-group" type="button" aria-label="Назад">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
         </button>
         <div class="chat-head-avatar group-av" id="group-chat-avatar"></div>
@@ -189,38 +238,44 @@
           <div class="chat-head-nick" id="group-chat-name">—</div>
           <div class="chat-head-status on" id="group-chat-members-count">0 участников</div>
         </div>
-        <button class="icon-btn" id="btn-group-call-audio" title="Групповой аудиозвонок">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
-        </button>
-        <button class="icon-btn" id="btn-group-call-video" title="Групповой видеозвонок">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-        </button>
-        <button class="icon-btn" id="btn-group-info" title="Информация о группе">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-        </button>
-        <button class="icon-btn" id="btn-toggle-members" title="Показать/скрыть участников">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
-        </button>
+        <div class="chat-head-actions">
+          <button class="icon-btn" id="btn-group-call-audio" title="Групповой аудиозвонок" type="button">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
+          </button>
+          <button class="icon-btn" id="btn-group-call-video" title="Групповой видеозвонок" type="button">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+          </button>
+          <button class="icon-btn" id="btn-group-info" title="Информация о группе" type="button">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          </button>
+          <button class="icon-btn" id="btn-toggle-members" title="Показать/скрыть участников" type="button">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+          </button>
+        </div>
       </div>
 
       <div id="group-voice-bar" class="group-voice-bar" style="display:none">
-        <div class="group-voice-title"><span class="group-voice-dot"></span><b>Голосовой канал</b><small id="group-voice-count">0 участников</small></div>
+        <div class="group-voice-title">
+          <span class="group-voice-dot"></span>
+          <b>Голосовой канал</b>
+          <small id="group-voice-count">0 участников</small>
+        </div>
         <div id="group-voice-members" class="group-voice-members"></div>
         <div class="group-voice-actions">
-          <button id="btn-join-group-voice" class="group-voice-join">Войти</button>
+          <button id="btn-join-group-voice" class="group-voice-join" type="button">Присоединиться</button>
         </div>
       </div>
+
       <div class="group-chat-body">
         <div class="group-chat-left">
           <div class="messages group-messages" id="group-messages"></div>
-          <div class="msg-bar">
-            <input type="text" id="group-msg-input" placeholder="Написать в группу…" maxlength="4000"/>
-            <button id="btn-group-send" class="send-btn" title="Отправить">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                <path d="M22 2L11 13" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
-                <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="white" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
-              </svg>
-            </button>
+          <div class="msg-bar-wrap">
+            <div class="msg-bar">
+              <input type="text" id="group-msg-input" placeholder="Написать в группу…" maxlength="4000" autocomplete="off"/>
+              <button id="btn-group-send" class="send-btn" title="Отправить" type="button">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -228,8 +283,8 @@
         <aside class="group-members-panel" id="group-members-panel">
           <div class="section-label">Участники — <span id="gm-count">0</span></div>
           <div id="group-members-list"></div>
-          <button id="btn-invite-group" class="btn-invite">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg>
+          <button id="btn-invite-group" class="btn-invite" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg>
             Добавить участников
           </button>
         </aside>
@@ -238,10 +293,12 @@
   </main>
 </div>
 
-<!-- View Profile Modal -->
+<!-- ═══════════════════════════════ MODALS ═══════════════════════════════ -->
+
+<!-- View Profile -->
 <div id="profile-modal" class="modal-overlay" style="display:none">
-  <div class="modal-box">
-    <button class="modal-close-btn" onclick="closeProfileModal()">
+  <div class="modal-box modal-profile">
+    <button class="modal-close-btn" onclick="closeProfileModal()" type="button" aria-label="Закрыть">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
     <div class="modal-profile-header">
@@ -256,19 +313,21 @@
         <span class="profile-info-value" id="profile-modal-status">—</span>
       </div>
       <div class="profile-info-row" id="profile-modal-bio-row">
-        <span class="profile-info-label">О себе</span>
+        <span class="profile-info-label">Обо мне</span>
         <span class="profile-info-value" id="profile-modal-bio">—</span>
       </div>
     </div>
-    <button id="btn-add-friend" class="btn-primary" style="width:100%;margin-top:8px">Добавить в друзья</button>
-    <button id="btn-block-user" class="btn-secondary" style="width:100%;margin-top:8px">Заблокировать</button>
+    <div class="modal-actions">
+      <button id="btn-add-friend" class="btn-primary btn-block" type="button">Добавить в друзья</button>
+      <button id="btn-block-user" class="btn-secondary btn-block" type="button">Заблокировать</button>
+    </div>
   </div>
 </div>
 
-<!-- Edit Profile Modal -->
+<!-- Edit Profile -->
 <div id="edit-profile-modal" class="modal-overlay" style="display:none">
   <div class="modal-box">
-    <button class="modal-close-btn" onclick="closeEditProfileModal()">
+    <button class="modal-close-btn" onclick="closeEditProfileModal()" type="button" aria-label="Закрыть">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
     <h2 class="modal-title">Мой профиль</h2>
@@ -279,67 +338,76 @@
         <input type="file" id="avatar-input" accept="image/*" style="display:none"/>
       </label>
     </div>
-    <div class="field">
-      <label>Никнейм</label>
-      <input type="text" id="edit-nick" maxlength="32" placeholder="Как тебя зовут?"/>
+    <div class="form-stack">
+      <div class="field">
+        <label for="edit-nick">Отображаемое имя</label>
+        <input type="text" id="edit-nick" maxlength="32" placeholder="Как тебя зовут?"/>
+      </div>
+      <div class="field">
+        <label for="edit-status">Статус</label>
+        <input type="text" id="edit-status" maxlength="100" placeholder="Привет! Я использую ChatApp"/>
+      </div>
+      <div class="field">
+        <label for="edit-bio">Обо мне</label>
+        <textarea id="edit-bio" maxlength="200" rows="3" placeholder="Расскажи о себе…"></textarea>
+      </div>
+      <button id="btn-open-blocked" class="btn-link-row" type="button">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M4.9 4.9l14.2 14.2"/></svg>
+        Заблокированные пользователи
+        <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+      </button>
     </div>
-    <div class="field">
-      <label>Статус</label>
-      <input type="text" id="edit-status" maxlength="100" placeholder="Привет! Я использую ChatApp"/>
+    <div class="edit-profile-actions modal-footer">
+      <button class="btn-ghost" onclick="closeEditProfileModal()" type="button">Отмена</button>
+      <button id="btn-save-profile" class="btn-primary" type="button">Сохранить изменения</button>
     </div>
-    <div class="field">
-      <label>О себе</label>
-      <textarea id="edit-bio" maxlength="200" rows="3" placeholder="Расскажи о себе…"></textarea>
-    </div>
-    <div class="edit-profile-actions">
-      <button class="btn-secondary" onclick="closeEditProfileModal()">Отмена</button>
-      <button id="btn-save-profile" class="btn-primary">Сохранить</button>
-    </div>
-    <button id="btn-open-blocked" class="btn-link-row" type="button">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M4.9 4.9l14.2 14.2"/></svg>
-      Заблокированные пользователи
-    </button>
   </div>
 </div>
 
-<!-- Blocked Users Modal -->
+<!-- Blocked Users -->
 <div id="blocked-users-modal" class="modal-overlay" style="display:none">
   <div class="modal-box">
-    <button class="modal-close-btn" onclick="closeBlockedUsersModal()">
+    <button class="modal-close-btn" onclick="closeBlockedUsersModal()" type="button" aria-label="Закрыть">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
-    <h2 class="modal-title">Заблокированные пользователи</h2>
+    <h2 class="modal-title">Заблокированные</h2>
     <div id="blocked-users-list" class="blocked-users-list"></div>
   </div>
 </div>
 
-<!-- Create Group Modal -->
+<!-- Create Group -->
 <div id="create-group-modal" class="modal-overlay" style="display:none">
   <div class="modal-box">
-    <button class="modal-close-btn" onclick="closeCreateGroupModal()">
+    <button class="modal-close-btn" onclick="closeCreateGroupModal()" type="button" aria-label="Закрыть">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
     <h2 class="modal-title">Создать группу</h2>
-    <div class="field">
-      <label>Название группы</label>
-      <input type="text" id="group-name-input" maxlength="50" placeholder="Например: Друзья 🎮"/>
-    </div>
-    <div class="field">
-      <label>Участники <span class="hint" id="group-selected-count">выбрано: 0</span></label>
-      <div id="group-friends-picker" class="friends-picker">
-        <div class="empty-state" style="padding:16px">
-          <div class="empty-sub">Сначала добавь друзей</div>
+    <p class="modal-sub">Выбери друзей, с которыми хочешь общаться.</p>
+    <div class="form-stack">
+      <div class="field">
+        <label for="group-name-input">Название группы</label>
+        <input type="text" id="group-name-input" maxlength="50" placeholder="Например: Друзья 🎮"/>
+      </div>
+      <div class="field">
+        <label>Участники <span class="hint" id="group-selected-count">выбрано: 0</span></label>
+        <div id="group-friends-picker" class="friends-picker">
+          <div class="empty-state" style="padding:16px">
+            <div class="empty-sub">Сначала добавь друзей</div>
+          </div>
         </div>
       </div>
     </div>
-    <button id="btn-confirm-create-group" class="btn-primary" style="width:100%;margin-top:8px">Создать группу</button>
+    <div class="modal-footer">
+      <button class="btn-ghost" onclick="closeCreateGroupModal()" type="button">Отмена</button>
+      <button id="btn-confirm-create-group" class="btn-primary" type="button">Создать группу</button>
+    </div>
   </div>
 </div>
 
-<!-- Group Info Modal -->
+<!-- Group Info -->
 <div id="group-info-modal" class="modal-overlay" style="display:none">
-  <div class="modal-box">
-    <button class="modal-close-btn" onclick="closeGroupInfoModal()">
+  <div class="modal-box modal-profile">
+    <button class="modal-close-btn" onclick="closeGroupInfoModal()" type="button" aria-label="Закрыть">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
     <div class="modal-profile-header">
@@ -348,42 +416,49 @@
       <div class="modal-profile-id" id="group-info-created">—</div>
     </div>
     <div class="modal-profile-body">
-      <div class="section-label" style="margin-bottom:8px">Участники — <span id="group-info-count">0</span></div>
+      <div class="section-label">Участники — <span id="group-info-count">0</span></div>
       <div id="group-info-members" class="group-members-list"></div>
     </div>
-    <div id="group-info-owner-actions" style="display:none;margin-top:8px">
-      <button id="btn-add-members" class="btn-primary" style="width:100%">Добавить участников</button>
+    <div class="modal-actions">
+      <div id="group-info-owner-actions" style="display:none">
+        <button id="btn-add-members" class="btn-primary btn-block" type="button">Добавить участников</button>
+      </div>
+      <button id="btn-leave-group" class="btn-secondary btn-danger-outline btn-block" type="button">Покинуть группу</button>
     </div>
-    <button id="btn-leave-group" class="btn-secondary btn-danger-outline" style="width:100%;margin-top:8px">Покинуть группу</button>
   </div>
 </div>
 
-<!-- Add Members Modal -->
+<!-- Add Members -->
 <div id="add-members-modal" class="modal-overlay" style="display:none">
   <div class="modal-box">
-    <button class="modal-close-btn" onclick="closeAddMembersModal()">
+    <button class="modal-close-btn" onclick="closeAddMembersModal()" type="button" aria-label="Закрыть">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
     <h2 class="modal-title">Добавить участников</h2>
-    <div class="field">
-      <label>Друзья <span class="hint" id="add-members-count">выбрано: 0</span></label>
-      <div id="add-members-picker" class="friends-picker"></div>
+    <div class="form-stack">
+      <div class="field">
+        <label>Друзья <span class="hint" id="add-members-count">выбрано: 0</span></label>
+        <div id="add-members-picker" class="friends-picker"></div>
+      </div>
     </div>
-    <button id="btn-confirm-add-members" class="btn-primary" style="width:100%;margin-top:8px">Добавить</button>
+    <div class="modal-footer">
+      <button class="btn-ghost" onclick="closeAddMembersModal()" type="button">Отмена</button>
+      <button id="btn-confirm-add-members" class="btn-primary" type="button">Добавить</button>
+    </div>
   </div>
 </div>
 
-<!-- Incoming Call Modal -->
+<!-- Incoming Call -->
 <div id="incoming-call-modal" class="modal-overlay" style="display:none">
   <div class="modal-box call-incoming-box">
     <div class="call-incoming-avatar" id="incoming-call-avatar"></div>
     <div class="call-incoming-nick" id="incoming-call-nick">—</div>
     <div class="call-incoming-sub" id="incoming-call-sub">входящий звонок…</div>
     <div class="call-incoming-actions">
-      <button id="btn-call-decline" class="call-round-btn call-decline" title="Отклонить">
+      <button id="btn-call-decline" class="call-round-btn call-decline" title="Отклонить" type="button">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/><line x1="23" y1="1" x2="1" y2="23"/></svg>
       </button>
-      <button id="btn-call-accept" class="call-round-btn call-accept" title="Принять">
+      <button id="btn-call-accept" class="call-round-btn call-accept" title="Принять" type="button">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
       </button>
     </div>
@@ -402,13 +477,13 @@
   </div>
   <div class="call-video-grid" id="call-video-grid"></div>
   <div class="call-overlay-controls">
-    <button id="btn-call-toggle-mic" class="call-round-btn call-control" title="Микрофон" aria-label="Выключить микрофон">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>
+    <button id="btn-call-toggle-mic" class="call-round-btn call-control" title="Микрофон" aria-label="Выключить микрофон" type="button">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>
     </button>
-    <button id="btn-call-toggle-cam" class="call-round-btn call-control" title="Камера" aria-label="Выключить камеру">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+    <button id="btn-call-toggle-cam" class="call-round-btn call-control" title="Камера" aria-label="Выключить камеру" type="button">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
     </button>
-    <button id="btn-call-hangup" class="call-round-btn call-decline" title="Завершить звонок" aria-label="Завершить звонок">
+    <button id="btn-call-hangup" class="call-round-btn call-decline" title="Завершить звонок" aria-label="Завершить звонок" type="button">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/><line x1="23" y1="1" x2="1" y2="23"/></svg>
     </button>
   </div>
@@ -417,8 +492,8 @@
 <!-- Delete Confirm -->
 <div id="delete-confirm" class="delete-confirm-popup" style="display:none">
   <span>Удалить сообщение?</span>
-  <button id="btn-confirm-delete" class="btn-danger-sm">Удалить</button>
-  <button onclick="closeDeleteConfirm()" class="btn-ghost-sm">Отмена</button>
+  <button id="btn-confirm-delete" class="btn-danger-sm" type="button">Удалить</button>
+  <button onclick="closeDeleteConfirm()" class="btn-ghost-sm" type="button">Отмена</button>
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
