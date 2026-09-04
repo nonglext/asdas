@@ -6,7 +6,7 @@
 
 body {
     font-family: 'Whitney', 'Helvetica Neue', Helvetica, Arial, sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #101218;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -15,21 +15,6 @@ body {
     position: relative;
     overflow-x: hidden;
 }
-
-body::before,
-body::after {
-    content: '';
-    position: fixed;
-    width: 340px;
-    height: 340px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.08);
-    filter: blur(4px);
-    pointer-events: none;
-}
-
-body::before { top: -140px; left: -100px; }
-body::after { right: -120px; bottom: -160px; }
 
 .auth-container {
     width: 100%;
@@ -51,7 +36,7 @@ body::after { right: -120px; bottom: -160px; }
 }
 
 .auth-box {
-    background: rgba(54, 57, 63, 0.94);
+    background: #23252c;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 16px;
     padding: 40px;

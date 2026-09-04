@@ -5,11 +5,12 @@ const http = require('http');
 const socketIO = require('socket.io');
 const path = require('path');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcrypt');
 const multer = require('multer');
 const cors = require('cors');
 const fs = require('fs');
 const crypto = require('crypto');
+const { promisify } = require('util');
+const scrypt = promisify(crypto.scrypt);
 
 const { initializeDatabase, userDB, messageDB, dmDB, fileDB, reactionDB, friendDB, serverDB, channelDB } = require('./database');
 
@@ -30,8 +31,22 @@ if (!JWT_SECRET) {
     process.exit(1);
 }
 
+const hashPassword = async (password) => {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const derived = await scrypt(password, salt, 64);
+    return `scrypt$${salt}$${derived.toString('hex')}`;
+};
+const verifyPassword = async (password, encoded) => {
+    if (!encoded || !encoded.startsWith('scrypt$')) return false;
+    const [, salt, expectedHex] = encoded.split('$');
+    const actual = await scrypt(password, salt, 64);
+    const expected = Buffer.from(expectedHex || '', 'hex');
+    return expected.length === actual.length && crypto.timingSafeEqual(actual, expected);
+};
+
 // Middleware
-app.use(cors());
+const allowedOrigin = process.env.CLIENT_ORIGIN && process.env.CLIENT_ORIGIN !== '*' ? process.env.CLIENT_ORIGIN : true;
+app.use(cors({ origin: allowedOrigin }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
@@ -111,7 +126,7 @@ app.post('/api/register', async (req, res) => {
             return res.status(400).json({ error: 'Email already registered' });
         }
 
-        const hashedPassword = await bcrypt.hash(password, 10);
+        const hashedPassword = await hashPassword(password);
         const user = await userDB.create(username, email, hashedPassword);
 
         const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
@@ -147,7 +162,7 @@ app.post('/api/login', async (req, res) => {
             return res.status(400).json({ error: 'Invalid credentials' });
         }
 
-        const validPassword = await bcrypt.compare(password, user.password);
+        const validPassword = await verifyPassword(password, user.password);
         if (!validPassword) {
             return res.status(400).json({ error: 'Invalid credentials' });
         }
@@ -195,6 +210,19 @@ app.patch('/api/user/profile', authenticateToken, async (req, res) => {
     }
 });
 
+app.patch('/api/user/status', authenticateToken, async (req, res) => {
+    const allowed = new Set(['Online', 'Idle', 'Do Not Disturb', 'Invisible']);
+    const status = typeof req.body.status === 'string' ? req.body.status.trim() : '';
+    if (!allowed.has(status)) return res.status(400).json({ error: 'Invalid status' });
+    try {
+        await userDB.updateStatus(req.user.id, status);
+        res.json({ status });
+    } catch (error) {
+        console.error('Status update error:', error);
+        res.status(500).json({ error: 'Failed to update status' });
+    }
+});
+
 app.get('/api/users', authenticateToken, async (req, res) => {
     try {
         const users = await userDB.getAll();
@@ -211,6 +239,13 @@ app.post('/api/upload', authenticateToken, upload.single('file'), async (req, re
         }
 
         const { channelId } = req.body;
+        if (channelId) {
+            const channel = await channelDB.findById(channelId);
+            if (!channel || channel.type !== 'text' || !(await serverDB.isMember(channel.server_id || channel.serverId, req.user.id))) {
+                fs.unlink(req.file.path, () => {});
+                return res.status(403).json({ error: 'You cannot upload to this channel' });
+            }
+        }
         const fileRecord = await fileDB.create(
             req.file.filename,
             req.file.path,
@@ -229,6 +264,7 @@ app.post('/api/upload', authenticateToken, upload.single('file'), async (req, re
         });
     } catch (error) {
         console.error('Upload error:', error);
+        if (req.file?.path) fs.unlink(req.file.path, () => {});
         res.status(500).json({ error: 'Upload failed' });
     }
 });
@@ -242,7 +278,19 @@ app.use((err, req, res, next) => {
 
 app.get('/api/messages/:channelId', authenticateToken, async (req, res) => {
     try {
+        const channel = await channelDB.findById(req.params.channelId);
+        if (!channel || !(await serverDB.isMember(channel.server_id || channel.serverId, req.user.id))) {
+            return res.status(403).json({ error: 'You are not a member of this server' });
+        }
         const messages = await messageDB.getByChannel(req.params.channelId);
+        messages.forEach(message => {
+            if (message.attachment_url) message.file = {
+                url: message.attachment_url,
+                filename: message.attachment_name,
+                type: message.attachment_type,
+                size: message.attachment_size
+            };
+        });
         res.json(messages);
     } catch (error) {
         res.status(500).json({ error: 'Failed to get messages' });
@@ -251,7 +299,20 @@ app.get('/api/messages/:channelId', authenticateToken, async (req, res) => {
 
 app.get('/api/dm/:userId', authenticateToken, async (req, res) => {
     try {
+        if (String(req.user.id) === String(req.params.userId)) return res.status(400).json({ error: 'Cannot message yourself' });
+        const target = await userDB.findById(req.params.userId);
+        if (!target || !(await friendDB.checkFriendship(req.user.id, req.params.userId))) {
+            return res.status(403).json({ error: 'You can only message friends' });
+        }
         const messages = await dmDB.getConversation(req.user.id, req.params.userId);
+        messages.forEach(message => {
+            if (message.attachment_url) message.attachment = {
+                url: message.attachment_url,
+                filename: message.attachment_name,
+                type: message.attachment_type,
+                size: message.attachment_size
+            };
+        });
         res.json(messages);
     } catch (error) {
         res.status(500).json({ error: 'Failed to get messages' });
@@ -296,6 +357,7 @@ app.get('/api/servers', authenticateToken, async (req, res) => {
 
 app.get('/api/servers/:serverId/channels', authenticateToken, async (req, res) => {
     try {
+        if (!(await serverDB.isMember(req.params.serverId, req.user.id))) return res.status(403).json({ error: 'Forbidden' });
         const channels = await channelDB.getByServer(req.params.serverId);
         res.json(channels);
     } catch (error) {
@@ -306,6 +368,7 @@ app.get('/api/servers/:serverId/channels', authenticateToken, async (req, res) =
 
 app.get('/api/servers/:serverId/members', authenticateToken, async (req, res) => {
     try {
+        if (!(await serverDB.isMember(req.params.serverId, req.user.id))) return res.status(403).json({ error: 'Forbidden' });
         const members = await serverDB.getMembers(req.params.serverId);
         res.json(members);
     } catch (error) {
@@ -336,6 +399,12 @@ app.get('/api/friends/pending', authenticateToken, async (req, res) => {
 app.post('/api/friends/request', authenticateToken, async (req, res) => {
     try {
         const { friendId } = req.body;
+        if (!friendId || String(friendId) === String(req.user.id) || !(await userDB.findById(friendId))) {
+            return res.status(400).json({ error: 'Invalid friend' });
+        }
+        if (await friendDB.checkFriendship(req.user.id, friendId)) {
+            return res.status(409).json({ error: 'Already friends' });
+        }
         const result = await friendDB.sendRequest(req.user.id, friendId);
 
         if (result.changes > 0) {
@@ -345,6 +414,7 @@ app.post('/api/friends/request', authenticateToken, async (req, res) => {
             }
         }
 
+        if (result.changes === 0) return res.status(409).json({ error: 'Friend request already sent' });
         res.sendStatus(200);
     } catch (error) {
         console.error('Friend request error:', error);
@@ -443,25 +513,29 @@ io.on('connection', async (socket) => {
             if (!channelId || !message || !message.text || !message.text.trim()) {
                 return;
             }
+            const channel = await channelDB.findById(channelId);
+            if (!channel || !(await serverDB.isMember(channel.server_id || channel.serverId, socket.userId))) return;
+            const text = message.text.trim().slice(0, 4000);
 
             const user = await userDB.findById(socket.userId);
 
             const savedMessage = await messageDB.create(
-                message.text,
+                text,
                 socket.userId,
-                channelId
+                channelId,
+                message.file
             );
 
             const broadcastMessage = {
                 id: savedMessage.id,
                 author: user.username,
                 avatar: user.avatar || user.username.charAt(0).toUpperCase(),
-                text: message.text,
-                file: message.file || null,
+                text,
+                file: savedMessage.attachment || null,
                 timestamp: new Date()
             };
 
-            io.emit('new-message', {
+            io.to(`channel-${channelId}`).emit('new-message', {
                 channelId,
                 message: broadcastMessage
             });
@@ -470,22 +544,38 @@ io.on('connection', async (socket) => {
         }
     });
 
+    socket.on('join-channel', async ({ channelId } = {}) => {
+        if (!channelId) return;
+        const channel = await channelDB.findById(channelId);
+        if (!channel || channel.type !== 'text' || !(await serverDB.isMember(channel.server_id || channel.serverId, socket.userId))) return;
+        socket.join(`channel-${channelId}`);
+    });
+
+    socket.on('leave-channel', ({ channelId } = {}) => {
+        if (channelId) socket.leave(`channel-${channelId}`);
+    });
+
     socket.on('send-dm', async (data) => {
         try {
             const { receiverId, message } = data;
+            if (!receiverId || String(receiverId) === String(socket.userId) || !(await friendDB.checkFriendship(socket.userId, receiverId))) return;
+            const text = typeof message?.text === 'string' ? message.text.trim().slice(0, 4000) : '';
+            if (!text && !message?.file) return;
             const sender = await userDB.findById(socket.userId);
 
             const savedMessage = await dmDB.create(
-                message.text,
+                text || (message.file ? `Uploaded ${message.file.filename || 'a file'}` : ''),
                 socket.userId,
-                receiverId
+                receiverId,
+                message.file
             );
 
             const messagePayload = {
                 id: savedMessage.id,
                 author: sender.username,
                 avatar: sender.avatar || sender.username.charAt(0).toUpperCase(),
-                text: message.text,
+                text: savedMessage.content,
+                file: savedMessage.attachment || null,
                 timestamp: new Date()
             };
 
@@ -511,6 +601,9 @@ io.on('connection', async (socket) => {
     socket.on('add-reaction', async (data) => {
         try {
             const { messageId, emoji } = data;
+            const target = await messageDB.findById(messageId);
+            if (!target || !(await serverDB.isMember((await channelDB.findById(target.channel_id))?.server_id, socket.userId))) return;
+            if (typeof emoji !== 'string' || emoji.length > 8) return;
             await reactionDB.add(emoji, messageId, socket.userId);
 
             const reactions = await reactionDB.getByMessage(messageId);
@@ -523,6 +616,8 @@ io.on('connection', async (socket) => {
     socket.on('remove-reaction', async (data) => {
         try {
             const { messageId, emoji } = data;
+            const target = await messageDB.findById(messageId);
+            if (!target || !(await serverDB.isMember((await channelDB.findById(target.channel_id))?.server_id, socket.userId))) return;
             await reactionDB.remove(emoji, messageId, socket.userId);
 
             const reactions = await reactionDB.getByMessage(messageId);
@@ -658,7 +753,8 @@ io.on('connection', async (socket) => {
             console.log(`${user.username} disconnected`);
 
             try {
-                await userDB.updateStatus(socket.userId, 'Offline');
+                const stillConnected = Array.from(users.values()).some(u => String(u.id) === String(socket.userId) && u.socketId !== socket.id);
+                if (!stillConnected) await userDB.updateStatus(socket.userId, 'Offline');
             } catch (error) {
                 console.error('Error updating status:', error);
             }

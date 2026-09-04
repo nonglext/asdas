@@ -121,6 +121,10 @@ async function initializeDatabase() {
             ALTER TABLE messages ADD COLUMN IF NOT EXISTS content TEXT;
             ALTER TABLE messages ADD COLUMN IF NOT EXISTS user_id ${userIdType};
             ALTER TABLE messages ADD COLUMN IF NOT EXISTS channel_id ${channelIdType};
+            ALTER TABLE messages ADD COLUMN IF NOT EXISTS attachment_url TEXT;
+            ALTER TABLE messages ADD COLUMN IF NOT EXISTS attachment_name TEXT;
+            ALTER TABLE messages ADD COLUMN IF NOT EXISTS attachment_type TEXT;
+            ALTER TABLE messages ADD COLUMN IF NOT EXISTS attachment_size INTEGER;
             ALTER TABLE messages ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
         `);
 
@@ -142,6 +146,10 @@ async function initializeDatabase() {
             ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS sender_id ${userIdType};
             ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS receiver_id ${userIdType};
             ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS read BOOLEAN DEFAULT FALSE;
+            ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS attachment_url TEXT;
+            ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS attachment_name TEXT;
+            ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS attachment_type TEXT;
+            ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS attachment_size INTEGER;
             ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
         `);
 
@@ -290,10 +298,19 @@ const userDB = {
 
 // Message operations
 const messageDB = {
-    create: async (content, userId, channelId) => {
-        const sql = 'INSERT INTO messages (content, user_id, channel_id) VALUES ($1, $2, $3) RETURNING id';
-        const { rows } = await pool.query(sql, [content, userId, channelId]);
-        return { id: rows[0].id, content, userId, channelId };
+    create: async (content, userId, channelId, attachment = null) => {
+        const sql = `INSERT INTO messages
+            (content, user_id, channel_id, attachment_url, attachment_name, attachment_type, attachment_size)
+            VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`;
+        const values = [content, userId, channelId, attachment?.url || null, attachment?.filename || null,
+            attachment?.type || null, attachment?.size || null];
+        const { rows } = await pool.query(sql, values);
+        return { id: rows[0].id, content, userId, channelId, attachment };
+    },
+
+    findById: async (id) => {
+        const { rows } = await pool.query('SELECT * FROM messages WHERE id = $1', [id]);
+        return rows[0];
     },
 
     getByChannel: async (channelId, limit = 50) => {
@@ -312,10 +329,14 @@ const messageDB = {
 
 // Direct message operations
 const dmDB = {
-    create: async (content, senderId, receiverId) => {
-        const sql = 'INSERT INTO direct_messages (content, sender_id, receiver_id) VALUES ($1, $2, $3) RETURNING id';
-        const { rows } = await pool.query(sql, [content, senderId, receiverId]);
-        return { id: rows[0].id, content, senderId, receiverId };
+    create: async (content, senderId, receiverId, attachment = null) => {
+        const sql = `INSERT INTO direct_messages
+            (content, sender_id, receiver_id, attachment_url, attachment_name, attachment_type, attachment_size)
+            VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`;
+        const values = [content, senderId, receiverId, attachment?.url || null, attachment?.filename || null,
+            attachment?.type || null, attachment?.size || null];
+        const { rows } = await pool.query(sql, values);
+        return { id: rows[0].id, content, senderId, receiverId, attachment, created_at: rows[0].created_at };
     },
 
     getConversation: async (userId1, userId2, limit = 50) => {
@@ -522,6 +543,14 @@ const serverDB = {
             ON CONFLICT (server_id, user_id) DO NOTHING
         `;
         await pool.query(sql, [serverId, userId]);
+    },
+
+    isMember: async (serverId, userId) => {
+        const { rows } = await pool.query(
+            'SELECT 1 FROM server_members WHERE server_id = $1 AND user_id = $2 LIMIT 1',
+            [serverId, userId]
+        );
+        return rows.length > 0;
     },
 
     getMembers: async (serverId) => {

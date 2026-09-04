@@ -22,6 +22,7 @@ let currentView = 'friends';
 let currentServerId = null;
 let currentDMUserId = null;
 let currentChannelId = null;          // real DB id of the active text channel
+let joinedChannelId = null;
 let currentServerChannels = [];       // channels of the server currently open
 let currentVoiceChannelId = null;
 let messagesLoadRequest = 0;
@@ -57,7 +58,7 @@ async function apiFetch(url, options = {}) {
     const headers = authHeaders(options.headers || {});
     const response = await fetch(url, { ...options, headers });
 
-    if (response.status === 401) {
+    if (response.status === 401 || response.status === 403) {
         logout();
         throw new Error('Session expired');
     }
@@ -158,6 +159,8 @@ function updateUserInfo() {
 
     if (userAvatar) userAvatar.textContent = currentUser.avatar;
     if (username) username.textContent = currentUser.username;
+    const status = document.querySelector('.user-status');
+    if (status) status.textContent = currentUser.status || 'Online';
 }
 
 // ---------------------------------------------------------------------
@@ -168,7 +171,13 @@ function connectToSocketIO() {
 
     socket = io({ auth: { token: token } });
 
-    socket.on('connect', () => console.log('Connected to server'));
+    socket.on('connect', () => {
+        console.log('Connected to server');
+        if (currentChannelId) {
+            socket.emit('join-channel', { channelId: currentChannelId });
+            joinedChannelId = currentChannelId;
+        }
+    });
     socket.on('connect_error', (error) => console.error('Connection error:', error));
 
     socket.on('new-message', (data) => {
@@ -1013,8 +1022,15 @@ function switchChannel(channel) {
     if (typeof channel === 'string') {
         channel = { id: channel, name: channel };
     }
+    if (socket && socket.connected && joinedChannelId && String(joinedChannelId) !== String(channel.id)) {
+        socket.emit('leave-channel', { channelId: joinedChannelId });
+    }
     currentChannel = channel.name;
     currentChannelId = channel.id;
+    if (socket && socket.connected) {
+        socket.emit('join-channel', { channelId: channel.id });
+        joinedChannelId = channel.id;
+    }
 
     document.querySelectorAll('.text-channel').forEach(ch => ch.classList.remove('active'));
     const channelEl = document.querySelector(`[data-channel-id="${channel.id}"], [data-channel="${channel.name}"]`);
@@ -1043,6 +1059,12 @@ async function loadChannelMessages(channelId) {
                 author: message.username,
                 avatar: message.avatar || message.username.charAt(0).toUpperCase(),
                 text: message.content,
+                file: message.file || (message.attachment_url ? {
+                    url: message.attachment_url,
+                    filename: message.attachment_name,
+                    type: message.attachment_type,
+                    size: message.attachment_size
+                } : null),
                 timestamp: message.created_at
             });
         });
@@ -1158,8 +1180,10 @@ function addMessageToUI(message) {
         content.appendChild(fileEl);
     }
 
-    content.appendChild(reactionsContainer);
-    content.appendChild(addReactionBtn);
+    if (currentView === 'server') {
+        content.appendChild(reactionsContainer);
+        content.appendChild(addReactionBtn);
+    }
 
     messageGroup.appendChild(avatar);
     messageGroup.appendChild(content);
@@ -1295,7 +1319,7 @@ async function uploadFile(file) {
 
         const formData = new FormData();
         formData.append('file', file);
-        formData.append('channelId', channelId);
+        if (currentView === 'server' && channelId) formData.append('channelId', channelId);
 
         const fileData = await apiFetchJson('/api/upload', {
             method: 'POST',
@@ -1416,13 +1440,22 @@ function initializeUserControls() {
             closeProfile();
             if (confirm('Do you want to logout?')) logout();
         });
-        profileStatusBtn.addEventListener('click', () => {
-            const status = prompt('Set your status:', currentUser.status || 'Online');
+        profileStatusBtn.addEventListener('click', async () => {
+            const status = prompt('Set status (Online, Idle, Do Not Disturb, Invisible):', currentUser.status || 'Online');
             if (!status || !status.trim()) return;
-            currentUser.status = status.trim();
-            localStorage.setItem('currentUser', JSON.stringify(currentUser));
-            document.querySelector('.profile-tag').textContent = currentUser.status;
-            document.querySelector('.user-status').textContent = currentUser.status;
+            try {
+                const response = await apiFetchJson('/api/user/status', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: status.trim() })
+                });
+                currentUser.status = response.status;
+                localStorage.setItem('currentUser', JSON.stringify(currentUser));
+                document.querySelector('.profile-tag').textContent = response.status;
+                document.querySelector('.user-status').textContent = response.status;
+            } catch (error) {
+                notifyError(error.message || 'Failed to update status', error);
+            }
         });
         profileEditBtn.addEventListener('click', async () => {
             const username = prompt('Change username:', currentUser.username);
@@ -1739,6 +1772,12 @@ async function loadDMHistory(userId) {
                 author: message.username,
                 avatar: message.avatar || message.username.charAt(0).toUpperCase(),
                 text: message.content,
+                file: message.attachment || (message.attachment_url ? {
+                    url: message.attachment_url,
+                    filename: message.attachment_name,
+                    type: message.attachment_type,
+                    size: message.attachment_size
+                } : null),
                 timestamp: message.created_at
             });
         });
