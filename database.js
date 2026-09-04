@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const crypto = require('crypto');
 
 // На Render переменная DATABASE_URL создаётся автоматически,
 // когда ты привязываешь Postgres-инстанс к Web Service.
@@ -143,8 +144,30 @@ async function initializeDatabase() {
 // User operations
 const userDB = {
     create: async (username, email, hashedPassword) => {
-        const sql = 'INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING id';
-        const { rows } = await pool.query(sql, [username, email, hashedPassword]);
+        const { rows: typeRows } = await pool.query(`
+            SELECT format_type(a.atttypid, a.atttypmod) AS type
+            FROM pg_attribute a
+            JOIN pg_class c ON c.oid = a.attrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = current_schema()
+              AND c.relname = 'users'
+              AND a.attname = 'id'
+              AND a.attnum > 0
+              AND NOT a.attisdropped
+        `);
+        const userIdType = typeRows[0] && typeRows[0].type;
+        if (!userIdType) {
+            throw new Error('Unable to determine users.id type');
+        }
+
+        const generatedId = userIdType === 'integer' ? null : crypto.randomUUID();
+        const sql = generatedId
+            ? 'INSERT INTO users (id, username, email, password) VALUES ($1, $2, $3, $4) RETURNING id'
+            : 'INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING id';
+        const values = generatedId
+            ? [generatedId, username, email, hashedPassword]
+            : [username, email, hashedPassword];
+        const { rows } = await pool.query(sql, values);
         return { id: rows[0].id, username, email };
     },
 

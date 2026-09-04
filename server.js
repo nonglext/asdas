@@ -127,6 +127,9 @@ app.post('/api/register', async (req, res) => {
         });
     } catch (error) {
         console.error('Register error:', error);
+        if (error.code === '23505') {
+            return res.status(409).json({ error: 'Username or email already registered' });
+        }
         res.status(500).json({ error: 'Registration failed' });
     }
 });
