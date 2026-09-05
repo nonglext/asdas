@@ -1,4 +1,4 @@
-/* Профиль с баннером */
+﻿/* Профиль с баннером */
 .modal-profile { padding-top: 0; }
 .modal-profile-header {
   position: relative;
@@ -172,3 +172,5 @@
 .call-control.active-off { background: #fff; color: #000; }
 .call-control.active-off:hover { background: #e3e5e8; }
 
+
+/* ═══════════════════════════════════════════════════════════════════════════

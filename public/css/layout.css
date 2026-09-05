@@ -1,4 +1,4 @@
-/* ─── App Layout ───────────────────────────────────────────────────────── */
+﻿/* ─── App Layout ───────────────────────────────────────────────────────── */
 #app-screen { flex-direction: row; overflow: hidden; background: var(--bg); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -303,4 +303,3 @@
 #chat-head-click, #group-chat-head-click { cursor: pointer; }
 #chat-head-click:hover .chat-head-nick,
 #group-chat-head-click:hover .chat-head-nick { text-decoration: underline; }
-

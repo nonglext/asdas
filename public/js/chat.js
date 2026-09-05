@@ -1,6 +1,6 @@
 /* ============================================================================
- * UI WIRING: password toggle / tabs / rail
- * ==========================================================================*/
+  * UI WIRING: password toggle / tabs / rail
+  * ==========================================================================*/
 document.querySelectorAll('.pw-toggle').forEach(btn => {
   btn.addEventListener('click', () => {
     const input = $(btn.dataset.target);
@@ -1254,3 +1254,732 @@ document.addEventListener('keydown', e => {
   if (inputId) $(inputId)?.focus();
 });
 
+
+/* ============================================================================
+ * DELETE MESSAGE
+ * ==========================================================================*/
+function openDeleteConfirm(msgId) {
+  state.pendingDeleteId = msgId;
+  setDisplay('delete-confirm', 'flex');
+}
+function closeDeleteConfirm() {
+  state.pendingDeleteId = null;
+  setDisplay('delete-confirm', 'none');
+}
+window.closeDeleteConfirm = closeDeleteConfirm;
+
+on('delete-confirm', 'click', e => {
+  if (e.target === $('delete-confirm')) closeDeleteConfirm();
+});
+
+async function deleteMessage(idToDelete) {
+  if (!idToDelete || !state.me) return;
+  try {
+    const res = await authFetch(`${BACKEND_URL}/api/messages/${encodeURIComponent(idToDelete)}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const d = await safeJson(res);
+      showTransientNotice(d.error || 'Ошибка удаления');
+    }
+  } catch (e) {
+    if (!(e instanceof AuthError)) showTransientNotice('Ошибка сети');
+  }
+}
+
+on('btn-confirm-delete', 'click', () => {
+  if (!state.pendingDeleteId) return;
+  const id = state.pendingDeleteId;
+  closeDeleteConfirm();
+  deleteMessage(id);
+});
+
+/* ============================================================================
+ * PROFILE: view other user
+ * ==========================================================================*/
+on('chat-head-click', 'click', () => {
+  if (state.activeFriend) showUserProfile(state.activeFriend);
+});
+
+async function showUserProfile(userId) {
+  if (!userId) return;
+  const requestSeq = ++state.seq.profile;
+  try {
+    const res = await authFetch(BACKEND_URL + '/api/profile/' + encodeURIComponent(userId));
+    if (requestSeq !== state.seq.profile) return;
+    if (!res.ok) {
+      showTransientNotice(res.status === 404 ? 'Пользователь не найден' : 'Не удалось загрузить профиль');
+      return;
+    }
+    const u = await res.json();
+    if (requestSeq !== state.seq.profile) return;
+
+    renderAvWithDot($('profile-modal-avatar'), u.nickname, u.avatar, !!u.online);
+    setText('profile-modal-nick', u.nickname);
+    setText('profile-modal-id', '@' + u.id);
+
+    const onlineBadge = $('profile-modal-online');
+    if (onlineBadge) {
+      onlineBadge.textContent = u.online ? 'В сети' : 'Не в сети';
+      onlineBadge.className = 'modal-online-badge ' + (u.online ? 'online' : 'offline');
+    }
+
+    if (u.status) {
+      setText('profile-modal-status', u.status);
+      setDisplay('profile-modal-status-row', '');
+    } else {
+      setDisplay('profile-modal-status-row', 'none');
+    }
+    if (u.bio) {
+      setText('profile-modal-bio', u.bio);
+      setDisplay('profile-modal-bio-row', '');
+    } else {
+      setDisplay('profile-modal-bio-row', 'none');
+    }
+    setDisplay('profile-modal-body', (u.status || u.bio) ? '' : 'none');
+
+    const isFriend = !!state.me?.friends?.includes(userId);
+    const isMe = userId === state.me?.id;
+
+    const addBtn = $('btn-add-friend');
+    if (addBtn) {
+      addBtn.textContent = isFriend ? 'Написать' : 'Добавить в друзья';
+      addBtn.disabled = false;
+      addBtn.style.display = isMe ? 'none' : '';
+      addBtn.onclick = isFriend
+        ? () => { closeProfileModal(); openChat(userId); }
+        : () => {
+            socket.emit('sendFriendRequest', userId);
+            addBtn.textContent = 'Запрос отправлен';
+            addBtn.disabled = true;
+          };
+    }
+
+    const blockBtn = $('btn-block-user');
+    if (blockBtn) {
+      const isBlocked = !!state.me?.blockedUsers?.includes(userId);
+      blockBtn.style.display = isMe ? 'none' : '';
+      blockBtn.disabled = false;
+      blockBtn.className = 'btn-secondary btn-block' + (isBlocked ? '' : ' btn-danger-outline');
+      blockBtn.textContent = isBlocked ? 'Разблокировать' : 'Заблокировать';
+      blockBtn.onclick = () => (isBlocked ? performUnblock(userId) : performBlock(userId));
+    }
+
+    setDisplay('profile-modal', 'flex');
+  } catch (e) {
+    if (!(e instanceof AuthError)) showTransientNotice('Не удалось загрузить профиль');
+  }
+}
+
+async function performUnblock(userId) {
+  if (!state.me) return;
+  try {
+    const res = await authFetch(`${BACKEND_URL}/api/users/${encodeURIComponent(userId)}/unblock`, { method: 'POST' });
+    if (!res.ok) return showTransientNotice('Ошибка разблокировки');
+    state.me.blockedUsers = (state.me.blockedUsers || []).filter(id => id !== userId);
+    showUserProfile(userId);
+  } catch (e) {
+    if (!(e instanceof AuthError)) showTransientNotice('Ошибка сети');
+  }
+}
+
+async function performBlock(userId) {
+  if (!state.me) return;
+  if (!confirm(`Заблокировать @${userId}?`)) return;
+  try {
+    const res = await authFetch(`${BACKEND_URL}/api/users/${encodeURIComponent(userId)}/block`, { method: 'POST' });
+    if (!res.ok) {
+      const d = await safeJson(res);
+      return showTransientNotice(d.error || 'Ошибка блокировки');
+    }
+    if (!state.me.blockedUsers) state.me.blockedUsers = [];
+    if (!state.me.blockedUsers.includes(userId)) state.me.blockedUsers = [...state.me.blockedUsers, userId];
+    if (state.me.friends) state.me.friends = state.me.friends.filter(id => id !== userId);
+    delete state.friends[userId];
+    delete state.unread[userId];
+    renderFriendsList();
+    if (state.activeFriend === userId) closeActiveChat();
+    showUserProfile(userId);
+  } catch (e) {
+    if (!(e instanceof AuthError)) showTransientNotice('Ошибка сети');
+  }
+}
+
+function closeProfileModal() { setDisplay('profile-modal', 'none'); }
+window.closeProfileModal = closeProfileModal;
+
+on('profile-modal', 'click', e => {
+  if (e.target === $('profile-modal')) closeProfileModal();
+});
+
+/* ============================================================================
+ * PROFILE: edit own
+ * ==========================================================================*/
+function openEditProfileModal() {
+  if (!state.me) return;
+  renderAv($('edit-avatar'), state.me.nickname, state.me.avatar);
+  const nick = $('edit-nick'); if (nick) nick.value = state.me.nickname || '';
+  const st = $('edit-status'); if (st) st.value = state.me.status || '';
+  const bio = $('edit-bio'); if (bio) bio.value = state.me.bio || '';
+  setDisplay('edit-profile-modal', 'flex');
+}
+function closeEditProfileModal() { setDisplay('edit-profile-modal', 'none'); }
+window.closeEditProfileModal = closeEditProfileModal;
+
+on('edit-profile-modal', 'click', e => {
+  if (e.target === $('edit-profile-modal')) closeEditProfileModal();
+});
+
+on('avatar-input', 'change', async e => {
+  const input = e.target;
+  const file = input.files && input.files[0];
+  if (!file || !state.me) return;
+  if (!ALLOWED_AVATAR_TYPES.includes(file.type)) {
+    showTransientNotice('Разрешены только изображения (jpeg, png, webp, gif)');
+    input.value = '';
+    return;
+  }
+  if (file.size > MAX_AVATAR_SIZE) {
+    showTransientNotice('Файл слишком большой (максимум 5MB)');
+    input.value = '';
+    return;
+  }
+  const formData = new FormData();
+  formData.append('avatar', file);
+  try {
+    const res = await authFetch(BACKEND_URL + '/api/upload/avatar', { method: 'POST', body: formData });
+    if (!res.ok) {
+      const d = await safeJson(res);
+      showTransientNotice(d.error || 'Ошибка загрузки аватара');
+      return;
+    }
+    const data = await res.json();
+    state.me.avatar = data.avatar;
+    localStorage.setItem('chatapp_profile', JSON.stringify(state.me));
+    renderAv($('edit-avatar'), state.me.nickname, state.me.avatar);
+    renderAv($('my-avatar'), state.me.nickname, state.me.avatar);
+    showTransientNotice('Аватар обновлён');
+  } catch (err) {
+    if (!(err instanceof AuthError)) showTransientNotice('Ошибка сети');
+  } finally {
+    input.value = '';
+  }
+});
+
+on('btn-save-profile', 'click', async () => {
+  if (!state.me) return;
+  const nickname = ($('edit-nick')?.value || '').trim();
+  const status = ($('edit-status')?.value || '').trim();
+  const bio = ($('edit-bio')?.value || '').trim();
+  if (!nickname) return showTransientNotice('Никнейм не может быть пустым');
+
+  await withButtonBusy($('btn-save-profile'), 'Сохранение…', async () => {
+    try {
+      const res = await authFetch(BACKEND_URL + '/api/profile/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname, status, bio }),
+      });
+      const data = await safeJson(res);
+      if (!res.ok) return showTransientNotice(data.error || 'Ошибка сохранения');
+      const u = data.user || {};
+      state.me.nickname = u.nickname ?? nickname;
+      state.me.status = u.status ?? status;
+      state.me.bio = u.bio ?? bio;
+      localStorage.setItem('chatapp_profile', JSON.stringify(state.me));
+      setText('my-nick', state.me.nickname);
+      renderAv($('my-avatar'), state.me.nickname, state.me.avatar);
+      closeEditProfileModal();
+      showTransientNotice('Профиль сохранён');
+    } catch (e) {
+      if (!(e instanceof AuthError)) showTransientNotice('Ошибка сети');
+    }
+  });
+});
+
+/* ============================================================================
+ * BLOCKED USERS
+ * ==========================================================================*/
+on('btn-open-blocked', 'click', () => {
+  closeEditProfileModal();
+  openBlockedUsersModal();
+});
+
+async function openBlockedUsersModal() {
+  if (!state.me) return;
+  setDisplay('blocked-users-modal', 'flex');
+  const list = $('blocked-users-list');
+  if (!list) return;
+  list.innerHTML = '<div class="blocked-users-empty">Загрузка…</div>';
+  try {
+    const res = await authFetch(BACKEND_URL + '/api/users/blocked');
+    if (!res.ok) throw new Error('failed');
+    const users = await res.json();
+    state.me.blockedUsers = (Array.isArray(users) ? users : []).map(u => u.id);
+    renderBlockedUsersList(users);
+  } catch (e) {
+    if (e instanceof AuthError) return;
+    list.innerHTML = '<div class="blocked-users-empty" style="color:var(--red)">Ошибка загрузки</div>';
+  }
+}
+function closeBlockedUsersModal() { setDisplay('blocked-users-modal', 'none'); }
+window.closeBlockedUsersModal = closeBlockedUsersModal;
+
+on('blocked-users-modal', 'click', e => {
+  if (e.target === $('blocked-users-modal')) closeBlockedUsersModal();
+});
+
+function renderBlockedUsersList(users) {
+  const list = $('blocked-users-list');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!Array.isArray(users) || !users.length) {
+    list.innerHTML = '<div class="blocked-users-empty">Нет заблокированных пользователей</div>';
+    return;
+  }
+  users.forEach(u => {
+    const el = document.createElement('div');
+    el.className = 'blocked-user-item';
+    el.dataset.uid = u.id;
+    el.innerHTML = `
+      <div class="f-av"></div>
+      <div class="f-info">
+        <div class="blocked-user-nick">${esc(u.nickname)}</div>
+        <div class="blocked-user-id">@${esc(u.id)}</div>
+      </div>
+      <button class="btn-unblock" type="button">Разблокировать</button>`;
+    renderAv(el.querySelector('.f-av'), u.nickname, u.avatar);
+    const btn = el.querySelector('.btn-unblock');
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        const res = await authFetch(`${BACKEND_URL}/api/users/${encodeURIComponent(u.id)}/unblock`, { method: 'POST' });
+        if (!res.ok) { btn.disabled = false; return showTransientNotice('Ошибка разблокировки'); }
+        if (state.me?.blockedUsers) state.me.blockedUsers = state.me.blockedUsers.filter(id => id !== u.id);
+        el.remove();
+        if (!list.children.length) {
+          list.innerHTML = '<div class="blocked-users-empty">Нет заблокированных пользователей</div>';
+        }
+      } catch (e) {
+        btn.disabled = false;
+        if (!(e instanceof AuthError)) showTransientNotice('Ошибка сети');
+      }
+    });
+    list.appendChild(el);
+  });
+}
+
+/* ============================================================================
+ * SHARED PICKER (создание группы / добавление участников)
+ * ==========================================================================*/
+function renderPicker({ pickerId, countId, ids, selected, emptyText, onChange }) {
+  const picker = $(pickerId);
+  if (!picker) return;
+  if (!ids.length) {
+    picker.innerHTML = `<div class="empty-state" style="padding:16px"><div class="empty-sub">${esc(emptyText)}</div></div>`;
+    return;
+  }
+  picker.innerHTML = '';
+  // Онлайн сверху
+  const sortedIds = [...ids].sort((a, b) => {
+    const oa = !!state.friends[a]?.online, ob = !!state.friends[b]?.online;
+    if (oa !== ob) return oa ? -1 : 1;
+    return (state.friends[a]?.nickname || a).localeCompare(state.friends[b]?.nickname || b, 'ru');
+  });
+  sortedIds.forEach(id => {
+    const f = state.friends[id];
+    if (!f) return;
+    const isSel = selected.has(id);
+    const el = document.createElement('div');
+    el.className = 'picker-item' + (isSel ? ' selected' : '');
+    el.setAttribute('role', 'checkbox');
+    el.setAttribute('aria-checked', String(isSel));
+    el.tabIndex = 0;
+    el.innerHTML = `
+      <div class="f-av"></div>
+      <div style="flex:1;min-width:0">
+        <div class="f-nick" style="font-size:14px;color:var(--text)">${esc(f.nickname)}</div>
+        <div class="f-stat" style="font-size:12px">@${esc(id)}</div>
+      </div>
+      <div class="picker-check">${isSel ? '✓' : ''}</div>`;
+    renderAvWithDot(el.querySelector('.f-av'), f.nickname, f.avatar, f.online);
+    const toggle = () => {
+      if (selected.has(id)) selected.delete(id);
+      else selected.add(id);
+      setText(countId, 'выбрано: ' + selected.size);
+      el.classList.toggle('selected', selected.has(id));
+      el.setAttribute('aria-checked', String(selected.has(id)));
+      el.querySelector('.picker-check').textContent = selected.has(id) ? '✓' : '';
+      if (onChange) onChange();
+    };
+    el.addEventListener('click', toggle);
+    el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+    picker.appendChild(el);
+  });
+}
+
+/* ============================================================================
+ * CREATE GROUP MODAL
+ * ==========================================================================*/
+on('btn-create-group', 'click', () => {
+  if (!state.me) return;
+  selectedGroupMembers = new Set();
+  const nameInput = $('group-name-input');
+  if (nameInput) nameInput.value = '';
+  setText('group-selected-count', 'выбрано: 0');
+  renderGroupFriendsPicker();
+  setDisplay('create-group-modal', 'flex');
+  nameInput?.focus();
+});
+
+function closeCreateGroupModal() { setDisplay('create-group-modal', 'none'); }
+window.closeCreateGroupModal = closeCreateGroupModal;
+
+on('create-group-modal', 'click', e => {
+  if (e.target === $('create-group-modal')) closeCreateGroupModal();
+});
+
+function renderGroupFriendsPicker() {
+  renderPicker({
+    pickerId: 'group-friends-picker',
+    countId: 'group-selected-count',
+    ids: Object.keys(state.friends),
+    selected: selectedGroupMembers,
+    emptyText: 'Сначала добавь друзей',
+  });
+}
+
+on('group-name-input', 'keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); $('btn-confirm-create-group')?.click(); }
+});
+
+on('btn-confirm-create-group', 'click', async () => {
+  const name = ($('group-name-input')?.value || '').trim();
+  if (!name || name.length < 2) return showTransientNotice('Название минимум 2 символа');
+  if (selectedGroupMembers.size < 1) return showTransientNotice('Выберите хотя бы одного друга');
+
+  await withButtonBusy($('btn-confirm-create-group'), 'Создание…', async () => {
+    try {
+      const res = await authFetch(BACKEND_URL + '/api/groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, memberIds: [...selectedGroupMembers] }),
+      });
+      const data = await safeJson(res);
+      if (!res.ok) return showTransientNotice(data.error || 'Ошибка создания группы');
+      closeCreateGroupModal();
+      if (data.group?.id) {
+        state.groups[data.group.id] = data.group;
+        state.groupLastActivity[data.group.id] = Date.now();
+      }
+      await loadGroups();
+      switchSidebarTab('groups');
+      if (data.group?.id && state.groups[data.group.id]) openGroupChat(data.group.id);
+    } catch (e) {
+      if (!(e instanceof AuthError)) showTransientNotice('Ошибка сети');
+    }
+  });
+});
+
+/* ============================================================================
+ * GROUP INFO MODAL
+ * ==========================================================================*/
+function openGroupInfoModal(groupId) {
+  const g = state.groups[groupId];
+  if (!g) return;
+  state.infoGroupId = groupId;
+
+  renderGroupAv($('group-info-avatar'), g);
+  setText('group-info-name', g.name);
+  setText('group-info-created', 'Создана ' + fmtDate(g.createdAt || Date.now()));
+  setText('group-info-count', String((g.members || []).length));
+
+  const isOwner = isGroupOwner(g, state.me?.id);
+  setDisplay('group-info-owner-actions', isOwner ? '' : 'none');
+  const leaveBtn = $('btn-leave-group');
+  if (leaveBtn) leaveBtn.textContent = isOwner ? 'Удалить группу' : 'Покинуть группу';
+
+  renderGroupInfoMembers(g);
+  setDisplay('group-info-modal', 'flex');
+}
+
+function renderGroupInfoMembers(g) {
+  const list = $('group-info-members');
+  if (!list) return;
+  list.innerHTML = '';
+  const myId = state.me?.id;
+  const iAmOwner = isGroupOwner(g, myId);
+  setText('group-info-count', String((g.members || []).length));
+
+  const sorted = [...(g.members || [])].sort((a, b) => {
+    const ao = isGroupOwner(g, a.id), bo = isGroupOwner(g, b.id);
+    if (ao !== bo) return ao ? -1 : 1;
+    if (!!a.online !== !!b.online) return a.online ? -1 : 1;
+    return (a.nickname || '').localeCompare(b.nickname || '', 'ru');
+  });
+
+  sorted.forEach(m => {
+    const memberIsOwner = isGroupOwner(g, m.id);
+    const el = document.createElement('div');
+    el.className = 'group-member-item';
+    el.innerHTML = `
+      <div class="f-av"></div>
+      <div style="flex:1;min-width:0">
+        <div class="f-nick" style="font-size:14px;color:var(--text)">${esc(m.nickname)}${m.id === myId ? ' <span class="f-stat" style="display:inline">(вы)</span>' : ''} ${memberIsOwner ? '<span class="owner-badge" title="Владелец">👑</span>' : ''}</div>
+        <div class="f-stat" style="font-size:12px">@${esc(m.id)} · ${m.online ? 'В сети' : 'Не в сети'}</div>
+      </div>
+      ${m.id !== myId && iAmOwner ? '<button class="btn-kick" type="button" title="Удалить из группы">✕</button>' : ''}`;
+
+    renderAvWithDot(el.querySelector('.f-av'), m.nickname, m.avatar, m.online);
+
+    const kickBtn = el.querySelector('.btn-kick');
+    if (kickBtn) {
+      kickBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        if (confirm(`Удалить ${m.nickname} из группы?`)) {
+          socket.emit('kickGroupMember', { groupId: g.id, userId: m.id });
+        }
+      });
+    }
+    if (m.id !== myId) {
+      el.style.cursor = 'pointer';
+      el.addEventListener('click', () => {
+        closeGroupInfoModal();
+        showUserProfile(m.id);
+      });
+    }
+    list.appendChild(el);
+  });
+}
+
+function closeGroupInfoModal() {
+  state.infoGroupId = null;
+  setDisplay('group-info-modal', 'none');
+}
+window.closeGroupInfoModal = closeGroupInfoModal;
+
+on('group-info-modal', 'click', e => {
+  if (e.target === $('group-info-modal')) closeGroupInfoModal();
+});
+
+on('btn-leave-group', 'click', () => {
+  const groupId = state.infoGroupId || state.activeGroup;
+  const g = groupId && state.groups[groupId];
+  if (!g) return;
+  const isOwner = isGroupOwner(g, state.me?.id);
+  const msg = isOwner
+    ? 'Вы владелец группы. Группа будет УДАЛЕНА для всех. Продолжить?'
+    : 'Покинуть группу?';
+  if (!confirm(msg)) return;
+  socket.emit('leaveGroup', groupId);
+  closeGroupInfoModal();
+});
+
+/* ============================================================================
+ * ADD MEMBERS MODAL
+ * ==========================================================================*/
+function openAddMembersModal() {
+  const groupId = state.infoGroupId || state.activeGroup;
+  if (!groupId || !state.groups[groupId]) return;
+  selectedAddMembers = new Set();
+  setText('add-members-count', 'выбрано: 0');
+  renderAddMembersPicker(groupId);
+  $('add-members-modal').dataset.gid = groupId;
+  setDisplay('add-members-modal', 'flex');
+}
+
+on('btn-add-members', 'click', () => {
+  const gid = state.infoGroupId;
+  closeGroupInfoModal();
+  state.infoGroupId = gid; // сохраняем контекст для picker
+  openAddMembersModal();
+  state.infoGroupId = null;
+});
+
+on('btn-invite-group', 'click', openAddMembersModal);
+
+function closeAddMembersModal() { setDisplay('add-members-modal', 'none'); }
+window.closeAddMembersModal = closeAddMembersModal;
+
+on('add-members-modal', 'click', e => {
+  if (e.target === $('add-members-modal')) closeAddMembersModal();
+});
+
+function renderAddMembersPicker(groupId) {
+  const g = state.groups[groupId];
+  if (!g) return;
+  const memberIds = new Set((g.members || []).map(m => m.id));
+  renderPicker({
+    pickerId: 'add-members-picker',
+    countId: 'add-members-count',
+    ids: Object.keys(state.friends).filter(id => !memberIds.has(id)),
+    selected: selectedAddMembers,
+    emptyText: 'Все друзья уже в группе',
+  });
+}
+
+on('btn-confirm-add-members', 'click', () => {
+  const groupId = $('add-members-modal')?.dataset.gid || state.activeGroup;
+  if (!groupId || !selectedAddMembers.size) return;
+  selectedAddMembers.forEach(userId => {
+    socket.emit('addGroupMember', { groupId, userId });
+  });
+  closeAddMembersModal();
+  showTransientNotice('Приглашения отправлены');
+});
+
+/* ============================================================================
+ * MEMBERS PANEL (правая колонка) — секции «В СЕТИ» / «НЕ В СЕТИ» как в Discord
+ * ==========================================================================*/
+function renderGroupMembersPanel(g) {
+  if (!g) return;
+  const countEl = $('gm-count');
+  const list = $('group-members-list');
+  if (!countEl || !list) return;
+
+  countEl.textContent = (g.members || []).length;
+  list.innerHTML = '';
+
+  // Владелец сверху, потом по алфавиту
+  const byName = (a, b) => {
+    const aOwner = isGroupOwner(g, a.id);
+    const bOwner = isGroupOwner(g, b.id);
+    if (aOwner !== bOwner) return aOwner ? -1 : 1;
+    return (a.nickname || '').localeCompare(b.nickname || '', 'ru');
+  };
+  const online = (g.members || []).filter(m => m.online).sort(byName);
+  const offline = (g.members || []).filter(m => !m.online).sort(byName);
+
+  const addSection = (label, arr) => {
+    if (!arr.length) return;
+    const h = document.createElement('div');
+    h.className = 'gm-section';
+    h.textContent = `${label} — ${arr.length}`;
+    list.appendChild(h);
+    arr.forEach(m => {
+      const isOwner = isGroupOwner(g, m.id);
+      const el = document.createElement('div');
+      el.className = 'gm-item' + (m.online ? '' : ' offline');
+      el.title = `@${m.id}`;
+      el.innerHTML = `
+        <div class="gm-av"></div>
+        <div class="gm-name">${esc(m.nickname)}</div>
+        ${isOwner ? CROWN_SVG : ''}`;
+      renderAvWithDot(el.querySelector('.gm-av'), m.nickname, m.avatar, m.online);
+      if (m.id !== state.me?.id) el.addEventListener('click', () => showUserProfile(m.id));
+      else el.addEventListener('click', () => openEditProfileModal());
+      list.appendChild(el);
+    });
+  };
+  addSection('В сети', online);
+  addSection('Не в сети', offline);
+
+  setDisplay('btn-invite-group', isGroupOwner(g, state.me?.id) ? '' : 'none');
+}
+
+on('btn-toggle-members', 'click', () => {
+  $('group-members-panel')?.classList.toggle('hidden');
+  syncVoiceOverlayPosition();
+});
+
+/* ============================================================================
+ * MOBILE BACK BUTTONS / RESIZE / KEYBOARD
+ * ==========================================================================*/
+on('btn-back', 'click', goBackMobile);
+on('btn-back-group', 'click', goBackMobile);
+
+function goBackMobile() {
+  const prevFriend = state.activeFriend;
+  const prevGroup = state.activeGroup;
+  closeActiveChat();
+  document.querySelector('.sidebar')?.classList.remove('hidden');
+  document.querySelector('.chat-main')?.classList.add('hidden');
+  if (prevFriend) refreshFriendItem(prevFriend);
+  if (prevGroup) refreshGroupItem(prevGroup);
+}
+
+window.addEventListener('resize', () => {
+  syncVoiceOverlayPosition();
+  if (window.innerWidth > 640) {
+    document.querySelector('.sidebar')?.classList.remove('hidden');
+    document.querySelector('.chat-main')?.classList.remove('hidden');
+  }
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (isAnyModalOpen() || $('delete-confirm')?.style.display === 'flex') {
+      closeAllModals();
+      return;
+    }
+    closeDrop(false);
+    // Escape в открытом чате — прокрутка в самый низ (как в Discord)
+    if (state.activeFriend) scrollMsgs('messages');
+    if (state.activeGroup) scrollMsgs('group-messages');
+  }
+  // Ctrl/Cmd+K — фокус на поиск
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    $('search-input')?.focus();
+  }
+});
+
+// При возврате на вкладку помечаем открытый чат прочитанным
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !state.me) return;
+  if (state.activeFriend) socket.emit('markRead', state.activeFriend);
+  if (state.activeGroup) socket.emit('markGroupRead', state.activeGroup);
+});
+
+/* ============================================================================
+ * AUTO-LOGIN
+ * ==========================================================================*/
+(() => {
+  const token = localStorage.getItem('chatapp_token');
+  const cached = localStorage.getItem('chatapp_profile');
+  if (token && cached) {
+    try {
+      const me = JSON.parse(cached);
+      if (!me || !me.id) throw new Error('bad cache');
+      state.me = me;
+      enterApp(me);
+      return;
+    } catch (e) {
+      localStorage.removeItem('chatapp_profile');
+    }
+  }
+  document.documentElement.classList.remove('has-session');
+  $('login-id')?.focus();
+})();
+
+/* ============================================================================
+ * SOCKET CONNECTION ERROR HANDLING
+ * ==========================================================================*/
+let lastConnNoticeAt = 0;
+socket.on('connect_error', err => {
+  console.error('Socket error:', err);
+  if (err?.message === 'Unauthorized') {
+    forceLogoutToLogin('Сессия истекла, войдите снова');
+    return;
+  }
+  setConnBanner(true, 'Нет соединения с сервером — повторная попытка…');
+  const now = Date.now();
+  if (now - lastConnNoticeAt > 15000) {
+    lastConnNoticeAt = now;
+  }
+});
+
+socket.on('connect', () => {
+  lastConnNoticeAt = 0;
+  setConnBanner(false);
+});
+
+socket.on('disconnect', reason => {
+  console.warn('Socket disconnected:', reason);
+  if (reason === 'io client disconnect') return;
+  setConnBanner(true, 'Соединение потеряно — переподключение…');
+  // Сигнальный канал потерян — сервер удалит нас из звонка; завершаем локально.
+  if (callState.active || callState.pendingIncoming) closeCallOverlay();
+});
+
+window.addEventListener('beforeunload', () => {
+ if (callState.callId) socket.emit('callLeave', { callId: callState.callId });
+});

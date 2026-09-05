@@ -1,4 +1,4 @@
-/* ─── Auth ─────────────────────────────────────────────────────────────── */
+﻿/* ─── Auth ─────────────────────────────────────────────────────────────── */
 #auth-screen {
   align-items: center; justify-content: center;
   position: relative; overflow: hidden;
@@ -40,4 +40,3 @@
 .auth-switch { font-size: 14px; color: var(--text3); margin-top: -8px; }
 .auth-link { color: #00a8fc; font-size: 14px; font-weight: 500; padding: 0; }
 .auth-link:hover { text-decoration: underline; }
-
