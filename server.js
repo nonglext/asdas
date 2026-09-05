@@ -1094,20 +1094,22 @@ async function start() {
   // Lock must use a dedicated persistent PostgreSQL session, not transaction-mode PgBouncer.
   // Do not run this and the old unguarded server together against the same database.
   await sequelize.authenticate();
-  instanceConnection = await sequelize.connectionManager.getConnection({ type: 'WRITE' });
-  // During zero-downtime deploy on Render, the old container might take a few seconds to exit.
-  // Wait up to 15 seconds to acquire the advisory lock before failing.
-  let locked = false;
-  const lockKey = 1780317111;
-  for (let attempt = 0; attempt < 15; attempt++) {
-    const res = await instanceConnection.query("SELECT pg_try_advisory_lock(1780317111, hashtext(current_database())) AS locked");
-    if (res.rows[0].locked) { locked = true; break; }
-    logger.warn(`Waiting for previous instance to release database lock (attempt ${attempt + 1}/15)...`);
-    await new Promise(r => setTimeout(r, 1000));
+  const shouldLock = process.env.ENABLE_INSTANCE_LOCK === 'true';
+  if (shouldLock) {
+    instanceConnection = await sequelize.connectionManager.getConnection({ type: 'WRITE' });
+    let locked = false;
+    for (let attempt = 0; attempt < 15; attempt++) {
+      const res = await instanceConnection.query("SELECT pg_try_advisory_lock(1780317111, hashtext(current_database())) AS locked");
+      if (res.rows[0].locked) { locked = true; break; }
+      logger.warn(`Waiting for previous instance to release database lock (attempt ${attempt + 1}/15)...`);
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    if (!locked) fail('Another ChatApp instance holds this database. Stop it before starting this server.');
+    instanceConnection.on('error', err => { logger.error('Instance lock connection lost', { error: err.message }); shutdown(1); });
+    instanceConnection.on('end', () => { if (!stopping) { logger.error('Instance lock session ended'); shutdown(1); } });
+  } else {
+    logger.info('Instance advisory lock disabled (ENABLE_INSTANCE_LOCK!=true). Starting server directly.');
   }
-  if (!locked) fail('Another ChatApp instance holds this database. Stop it before starting this server.');
-  instanceConnection.on('error', err => { logger.error('Instance lock connection lost', { error: err.message }); shutdown(1); });
-  instanceConnection.on('end', () => { if (!stopping) { logger.error('Instance lock session ended'); shutdown(1); } });
   await ensureSchema();
   ready = true;
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(PORT, resolve); });
