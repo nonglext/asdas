@@ -26,8 +26,9 @@ ul, ol { list-style: none; }
   --bg5: #4e5058;   /* button-secondary-background */
   --bg6: #6d6f78;   /* button-secondary-background-hover */
   --bg7: #80848e;   /* button-secondary-background-active */
-  --panel-user: #232428;   /* background-secondary-alt (user panel) */
-  --bg-floating: #111214;  /* background-floating: тултипы, поповеры */
+  --panel-user: #232428;      /* background-secondary-alt (user panel) */
+  --bg-floating: #111214;     /* background-floating: тултипы, поповеры */
+  --bg-modal-footer: #2b2d31; /* modal-footer-background */
 
   /* Модификаторы (Discord background-modifier-*) */
   --hover:    rgba(78,80,88,0.30);   /* background-modifier-hover */
@@ -50,6 +51,7 @@ ul, ol { list-style: none; }
   --neutral-avatar-gradient: linear-gradient(135deg, #5865f2, #4752c4);
   --link: #00a8fc;          /* text-link */
   --focus: #00a8fc;         /* focus-primary */
+  --info: #00a8fc;
   --mention-bg: rgba(88,101,242,0.3);
   --mention-fg: #c9cdfb;
 
@@ -60,6 +62,7 @@ ul, ol { list-style: none; }
   --text3:  #949ba4;   /* text-muted */
   --text4:  #80848e;   /* text-muted-alt / placeholder */
   --text-active: #ffffff; /* interactive-active */
+  --text-brand: #949cf7;  /* text-brand */
   --text-danger: #fa777c;
   --text-positive: #2dc770;
   --text-warning: #f0b232;
@@ -96,6 +99,10 @@ ul, ol { list-style: none; }
   --dc-green-soft: rgba(35,165,89,0.35);
   --dc-red: #da373c;
   --dc-red-h: #a12828;
+
+  /* ── Скроллбары ── */
+  --scrollbar-thumb: #1a1b1e;   /* scrollbar-auto-thumb / thin-thumb */
+  --scrollbar-track: #2b2d31;   /* scrollbar-auto-track */
 
   /* ── Тени (Discord elevation-*) ── */
   --shadow-stroke: 0 0 0 1px rgba(4,4,5,0.15);
@@ -168,40 +175,60 @@ html, body {
 }
 :is(input, textarea, select):focus-visible { outline: none; }
 
-/* ── Скроллбары ── */
+/* ── Скроллбары ──
+   ВАЖНО: в Chromium 121+ любое `scrollbar-color` / `scrollbar-width` отключает
+   ::-webkit-scrollbar. Поэтому стандартные свойства — только для браузеров без
+   webkit-псевдоэлементов (Firefox). Иначе ломается 16px-скроллбар чата. */
+
+/* Тонкий (по умолчанию везде) */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-corner { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: #1a1b1e; border-radius: 4px;
+  background: var(--scrollbar-thumb); border-radius: 4px;
   border: 2px solid transparent; background-clip: padding-box; min-height: 40px;
 }
+
+/* Широкий — чат (scrollbar-auto) */
 .messages::-webkit-scrollbar, .group-messages::-webkit-scrollbar { width: 16px; }
 .messages::-webkit-scrollbar-track, .group-messages::-webkit-scrollbar-track {
-  background: var(--bg1); border: 4px solid var(--bg2); border-radius: 8px;
+  background: var(--scrollbar-track); border: 4px solid var(--bg2); border-radius: 8px;
+  background-clip: padding-box;
 }
 .messages::-webkit-scrollbar-thumb, .group-messages::-webkit-scrollbar-thumb {
-  background: #1a1b1e; border: 4px solid transparent; background-clip: padding-box; border-radius: 8px; min-height: 44px;
+  background: var(--scrollbar-thumb); border: 4px solid transparent;
+  background-clip: padding-box; border-radius: 8px; min-height: 40px;
 }
+
+/* Авто-скрытие в сайдбаре и панели участников */
+.sidebar-body::-webkit-scrollbar-thumb,
+#group-members-list::-webkit-scrollbar-thumb { background: transparent; }
+.sidebar-body:hover::-webkit-scrollbar-thumb,
+#group-members-list:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb); background-clip: padding-box;
+}
+
 .sidebar-body, .messages, .group-messages, .search-drop, .modal-box,
 #group-members-list, .friends-picker, .group-members-list,
-.blocked-users-list, .call-video-grid {
-  scrollbar-width: thin;
-  scrollbar-color: #1a1b1e transparent;
-  overscroll-behavior: contain;
-}
-.messages, .group-messages { scrollbar-width: auto; scrollbar-color: #1a1b1e var(--bg1); }
-/* Auto-hide скроллбар в сайдбаре и панели участников (как в Discord) */
-.sidebar-body, #group-members-list { scrollbar-color: transparent transparent; }
-.sidebar-body:hover, #group-members-list:hover { scrollbar-color: #1a1b1e transparent; }
-.sidebar-body::-webkit-scrollbar-thumb, #group-members-list::-webkit-scrollbar-thumb { background: transparent; }
-.sidebar-body:hover::-webkit-scrollbar-thumb, #group-members-list:hover::-webkit-scrollbar-thumb {
-  background: #1a1b1e; background-clip: padding-box;
+.blocked-users-list, .call-video-grid { overscroll-behavior: contain; }
+
+@supports not selector(::-webkit-scrollbar) {
+  .sidebar-body, .search-drop, .modal-box,
+  #group-members-list, .friends-picker, .group-members-list,
+  .blocked-users-list, .call-video-grid {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+  .messages, .group-messages { scrollbar-width: auto; scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); }
+  .sidebar-body, #group-members-list { scrollbar-color: transparent transparent; }
+  .sidebar-body:hover, #group-members-list:hover { scrollbar-color: var(--scrollbar-thumb) transparent; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Примитивы: аватары, кнопки, поля, бейджи
    ═══════════════════════════════════════════════════════════════════════════ */
+/* Без overflow:hidden — иначе статус-точка (.f-dot) внутри обрезается по кругу.
+   Картинка скругляется сама через border-radius: inherit. */
 .me-avatar, .s-mini-av, .f-av, .chat-head-avatar, .modal-avatar, .edit-avatar,
 .gm-av, .g-msg-av, .group-voice-member-avatar, .call-tile-avatar,
 .call-incoming-avatar {
@@ -209,7 +236,6 @@ html, body {
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
   border-radius: 50%;
-  overflow: hidden;
   color: #fff; font-weight: 600;
   background: var(--neutral-avatar-gradient);
   user-select: none;
@@ -220,6 +246,8 @@ html, body {
     .call-tile-avatar, .call-incoming-avatar) img {
   width: 100%; height: 100%; object-fit: cover; border-radius: inherit;
 }
+/* Если в аватаре есть текст-инициалы длиннее контейнера — не вылезаем */
+:is(.me-avatar, .s-mini-av, .f-av, .gm-av, .g-msg-av) { overflow-wrap: anywhere; }
 
 .me-avatar        { width: 32px; height: 32px; font-size: 13px; background: var(--accent); }
 .s-mini-av        { width: 32px; height: 32px; font-size: 13px; background: var(--accent); }
@@ -230,21 +258,45 @@ html, body {
 .g-msg-av         { width: 40px; height: 40px; font-size: 15px; margin-top: 2px; cursor: pointer; }
 .g-msg-av:hover   { filter: brightness(1.08); }
 
-/* Точка статуса (маска через бордер цвета подложки) */
+/* ── Точка статуса ──
+   --dot-bg — цвет подложки, на которой лежит аватар. Из него делается «маска»
+   (бордер), центр offline-кольца и вырезы у idle/dnd. Переопределяй в контексте. */
 .f-dot {
+  --dot-bg: var(--bg1);
   position: absolute; bottom: -2px; right: -2px;
   box-sizing: content-box;
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--green);
-  border: 3px solid var(--bg1);
+  border: 3px solid var(--dot-bg);
   pointer-events: none;
 }
-.f-dot.idle    { background: var(--yellow); }
-.f-dot.dnd     { background: var(--red); }
-.f-dot.offline { background: var(--grey-status); box-shadow: inset 0 0 0 2px var(--bg1); }
-.chat-head-avatar .f-dot { width: 6px; height: 6px; border-width: 2px; border-color: var(--bg2); }
-.me-avatar-wrap .f-dot { border-color: var(--panel-user); }
-.modal-avatar .f-dot { width: 16px; height: 16px; bottom: 2px; right: 2px; border-width: 5px; border-color: var(--bg2); }
+.f-dot::after { content: none; position: absolute; background: var(--dot-bg); }
+/* idle — полумесяц */
+.f-dot.idle { background: var(--yellow); }
+.f-dot.idle::after {
+  content: '';
+  width: 62.5%; height: 62.5%; border-radius: 50%;
+  top: -12.5%; left: -12.5%;
+}
+/* dnd — «не беспокоить», полоска */
+.f-dot.dnd { background: var(--red); }
+.f-dot.dnd::after {
+  content: '';
+  width: 62.5%; height: 25%; border-radius: 999px;
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+}
+/* offline — полое кольцо */
+.f-dot.offline {
+  background: var(--dot-bg);
+  box-shadow: inset 0 0 0 2px var(--grey-status);
+}
+/* Контексты */
+.chat-head-avatar .f-dot { --dot-bg: var(--bg2); width: 6px; height: 6px; border-width: 2px; bottom: -2px; right: -2px; }
+.chat-head-avatar .f-dot.offline { box-shadow: inset 0 0 0 1.5px var(--grey-status); }
+.g-msg-av .f-dot { --dot-bg: var(--bg2); }
+.me-avatar-wrap .f-dot { --dot-bg: var(--panel-user); }
+.modal-avatar .f-dot { --dot-bg: var(--bg2); width: 16px; height: 16px; bottom: 2px; right: 2px; border-width: 5px; }
+.modal-avatar .f-dot.offline { box-shadow: inset 0 0 0 4px var(--grey-status); }
 
 /* Кнопки (Discord: 38px, radius 3px, 14px/500) */
 .btn-primary, .btn-secondary, .btn-ghost, .btn-success, .btn-danger {
@@ -254,7 +306,7 @@ html, body {
   border-radius: var(--radius-xs);
   font-size: 14px; font-weight: 500; line-height: 16px;
   user-select: none; white-space: nowrap;
-  transition: background-color var(--ease), color var(--ease), opacity var(--ease);
+  transition: background-color var(--ease), color var(--ease), opacity var(--ease), box-shadow var(--ease);
 }
 .btn-primary { background: var(--accent); color: #fff; }
 .btn-primary:hover { background: var(--accent-h); }
@@ -265,9 +317,10 @@ html, body {
 .btn-secondary:hover { background: var(--bg6); }
 .btn-secondary:active { background: var(--bg7); }
 .btn-secondary:disabled { opacity: 0.5; background: var(--bg5); }
-.btn-secondary.btn-danger-outline { background: transparent; color: var(--red); box-shadow: inset 0 0 0 1px var(--red-border); }
-.btn-secondary.btn-danger-outline:hover { background: var(--red-h); color: #fff; box-shadow: none; }
-.btn-secondary.btn-danger-outline:active { background: var(--red-a); color: #fff; box-shadow: none; }
+/* Outline-danger: белый текст, красная обводка, при ховере — заливка */
+.btn-secondary.btn-danger-outline { background: transparent; color: var(--text-h); box-shadow: inset 0 0 0 1px var(--red-h); }
+.btn-secondary.btn-danger-outline:hover { background: var(--red-h); color: #fff; box-shadow: inset 0 0 0 1px var(--red-h); }
+.btn-secondary.btn-danger-outline:active { background: var(--red-a); color: #fff; box-shadow: inset 0 0 0 1px var(--red-a); }
 
 .btn-success { background: var(--green-btn); color: #fff; }
 .btn-success:hover { background: var(--green-btn-h); }
@@ -285,6 +338,20 @@ html, body {
 
 .btn-block { width: 100%; }
 .btn-sm { min-height: 32px; min-width: 60px; padding: 2px 16px; }
+
+/* Состояние загрузки: <button class="btn-primary is-loading"><span class="spinner"></span></button> */
+.is-loading { color: transparent !important; pointer-events: none; }
+.is-loading .spinner { position: absolute; inset: 0; margin: auto; }
+.spinner { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; gap: 3px; }
+.spinner::before, .spinner::after, .spinner { --dot: 6px; }
+.spinner::before, .spinner::after {
+  content: ''; width: var(--dot); height: var(--dot); border-radius: 50%;
+  background: currentColor; color: #fff;
+  animation: dc-pulse 1.4s infinite ease-in-out both;
+}
+.spinner::before { animation-delay: -0.32s; }
+.spinner::after  { animation-delay: -0.16s; }
+@keyframes dc-pulse { 0%, 80%, 100% { transform: scale(0.5); opacity: 0.4; } 40% { transform: scale(1); opacity: 1; } }
 
 .btn-add, .btn-unblock {
   display: inline-flex; align-items: center; justify-content: center;
@@ -311,6 +378,7 @@ html, body {
   flex-shrink: 0;
   transition: color var(--ease), background-color var(--ease);
 }
+.btn-ok svg, .btn-no svg { width: 20px; height: 20px; }
 :is(.friend-item, .req-item, .request-item):hover :is(.btn-ok, .btn-no) { background: var(--bg); }
 .btn-ok:hover { color: var(--green); }
 .btn-no:hover { color: var(--red); }
@@ -360,6 +428,10 @@ html, body {
 .btn-link-row:hover .chev { color: var(--text); }
 .btn-link-row:active { background: var(--bg5); }
 
+/* Разделитель (как в поповерах/меню Discord) */
+.divider { height: 1px; margin: 8px 0; background: var(--divider); }
+.divider.thin { margin: 4px 0; background: var(--border-subtle); }
+
 /* Поля (Discord: label 12/700 uppercase, input 40px bg-tertiary) */
 .field { display: flex; flex-direction: column; gap: 8px; }
 .field label {
@@ -403,6 +475,10 @@ html, body {
   caret-color: var(--text);
   transition: background-color 9999s ease-out;
 }
+/* Убираем нативные «глазки» пароля в Edge/Chrome — есть свой .pw-toggle */
+.field input::-ms-reveal, .field input::-ms-clear { display: none; }
+.field input[type="search"]::-webkit-search-decoration,
+.field input[type="search"]::-webkit-search-cancel-button { -webkit-appearance: none; }
 
 .pw-wrap { position: relative; }
 .pw-wrap input { padding-right: 40px; }
@@ -451,7 +527,7 @@ html, body {
   display: inline-flex; align-items: center; justify-content: center;
 }
 
-/* Тултип-подсказки (title-like), если используются */
+/* Тултипы (Discord: bg-floating, 14/500, radius 5px, стрелка 5px) */
 .tooltip {
   position: absolute; z-index: var(--z-popup);
   background: var(--bg-floating); color: var(--text);
@@ -459,7 +535,17 @@ html, body {
   padding: 8px 12px; border-radius: 5px;
   box-shadow: var(--shadow);
   pointer-events: none; white-space: nowrap;
+  max-width: 190px;
 }
+.tooltip::after {
+  content: ''; position: absolute; width: 0; height: 0;
+  border: 5px solid transparent;
+}
+.tooltip.top::after    { top: 100%; left: 50%; transform: translateX(-50%); border-top-color: var(--bg-floating); }
+.tooltip.bottom::after { bottom: 100%; left: 50%; transform: translateX(-50%); border-bottom-color: var(--bg-floating); }
+.tooltip.left::after   { left: 100%; top: 50%; transform: translateY(-50%); border-left-color: var(--bg-floating); }
+.tooltip.right::after  { right: 100%; top: 50%; transform: translateY(-50%); border-right-color: var(--bg-floating); }
+.tooltip.wrap { white-space: normal; text-align: center; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Экраны
@@ -468,4 +554,4 @@ html, body {
 .screen.active { display: flex; }
 
 /* ─── Auth ─────────────────────────────────────────────────────────────── */
-/* (секция не была прислана — вставь сюда свою, либо пришли её, доведу в том же стиле) */
+/* (секция не была прислана — пришли её, доведу в том же стиле) */

@@ -1,3 +1,24 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Calls — оверлей звонка (fullscreen / voice-mode / detached)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Токены звонка. Если они уже объявлены в chat.css — этот блок можно удалить. */
+:root {
+  --call-bg: #1e1f22;
+  --call-tile: #2b2d31;
+  --call-tile-2: #383a40;
+  --call-radius: 8px;
+  --call-pill: rgba(0,0,0,0.55);
+  --call-ctrl: #2b2d31;
+  --call-ctrl-h: #3f4147;
+}
+
+/* Три режима:
+   1) по умолчанию      — полноэкранный видеозвонок
+   2) .voice-mode       — компактная голосовая полоса над чатом
+   3) .detached         — ты в ДРУГОМ чате: карточка над панелью пользователя (как в Discord)
+   Класс .detached ставит JS (см. snippet ниже). */
+
 .call-overlay {
   position: fixed; inset: 0; z-index: var(--z-modal);
   display: flex; flex-direction: column;
@@ -7,8 +28,9 @@
     var(--call-bg);
   user-select: none;
 }
+.call-overlay[hidden] { display: none !important; }
 
-/* Шапка */
+/* ── Шапка ─────────────────────────────────────────────────────────────── */
 .call-overlay-top {
   position: relative; z-index: 2; flex-shrink: 0;
   display: flex; flex-direction: column; align-items: center;
@@ -24,7 +46,7 @@
   letter-spacing: 1.2px; text-transform: uppercase;
 }
 .call-live-dot {
-  position: relative;
+  position: relative; flex-shrink: 0;
   width: 8px; height: 8px; border-radius: 50%; background: var(--dc-green);
 }
 .call-live-dot::after {
@@ -37,9 +59,9 @@
   100% { transform: scale(1.5); opacity: 0; }
 }
 .call-overlay-title  { font-size: 20px; font-weight: 700; color: var(--text-h); margin-top: 8px; }
-.call-overlay-status { font-size: 13px; color: var(--dc-muted); margin-top: 2px; }
+.call-overlay-status { font-size: 13px; color: var(--dc-muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
 
-/* Сетка участников */
+/* ── Сетка участников ──────────────────────────────────────────────────── */
 .call-video-grid {
   flex: 1; min-height: 0;
   display: grid; gap: 8px;
@@ -50,8 +72,7 @@
   width: 100%; max-width: 1280px; margin: 0 auto;
   overflow: auto;
 }
-/* Один участник — крупный тайл по центру */
-/* Стало: */
+/* Один участник — крупный тайл; два — рядом */
 .call-overlay:not(.voice-mode) .call-video-grid:has(.call-tile:only-child) {
   grid-template-columns: minmax(0, 900px);
 }
@@ -59,13 +80,13 @@
   grid-template-columns: repeat(2, minmax(0, 620px));
 }
 
-/* Тайл */
+/* ── Тайл ──────────────────────────────────────────────────────────────── */
 .call-tile {
   position: relative; isolation: isolate;
+  container-type: inline-size;              /* нужно для cqw у аватара */
   display: flex; align-items: center; justify-content: center;
   width: 100%; aspect-ratio: 16 / 9; min-height: 140px;
-  background:
-    radial-gradient(ellipse at 50% 30%, var(--call-tile-2), var(--call-tile) 75%);
+  background: radial-gradient(ellipse at 50% 30%, var(--call-tile-2), var(--call-tile) 75%);
   border-radius: var(--call-radius);
   box-shadow: inset 0 0 0 2px transparent, 0 1px 0 rgba(255,255,255,0.02);
   overflow: hidden;
@@ -81,7 +102,7 @@
 }
 .call-tile.local video { transform: scaleX(-1); }
 .call-tile.audio-only video { display: none; }
-/* затемнение снизу под ником, если включено видео */
+/* затемнение под ником, если включено видео */
 .call-tile:not(.audio-only)::after {
   content: ""; position: absolute; inset: auto 0 0 0; height: 40%;
   background: linear-gradient(to top, rgba(0,0,0,0.55), transparent);
@@ -91,7 +112,7 @@
 /* Аватар */
 .call-tile-avatar {
   position: relative; z-index: 1;
-  width: clamp(64px, 18%, 96px); aspect-ratio: 1; height: auto;
+  width: clamp(64px, 18cqw, 96px); aspect-ratio: 1; height: auto;
   font-size: clamp(22px, 5cqw, 32px);
   border-radius: 50%; overflow: visible;
   box-shadow: 0 0 0 0 rgba(35,165,89,0), 0 8px 24px rgba(0,0,0,0.45);
@@ -128,7 +149,7 @@
 }
 .call-tile-mic-off svg { width: 16px; height: 16px; }
 
-/* Панель управления */
+/* ── Панель управления ─────────────────────────────────────────────────── */
 .call-overlay-controls {
   position: relative; z-index: 2; flex-shrink: 0;
   display: flex; justify-content: center; align-items: center; gap: 12px;
@@ -161,11 +182,13 @@
 }
 .call-overlay-controls .call-round-btn.call-decline:hover { background: var(--dc-red-h); }
 
-/* Автоскрытие шапки и контролов при бездействии (добавь класс .idle через JS) */
-.call-overlay.idle:not(.voice-mode) .call-overlay-top      { opacity: 0; transform: translateY(-8px); pointer-events: none; }
-.call-overlay.idle:not(.voice-mode) .call-overlay-controls { opacity: 0; transform: translateY(12px); pointer-events: none; }
+/* Автоскрытие шапки и контролов при бездействии (класс .idle через JS) */
+.call-overlay.idle:not(.voice-mode):not(.detached) .call-overlay-top      { opacity: 0; transform: translateY(-8px); pointer-events: none; }
+.call-overlay.idle:not(.voice-mode):not(.detached) .call-overlay-controls { opacity: 0; transform: translateY(12px); pointer-events: none; }
 
-/* ── Компактный голосовой режим ─────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════════
+   Компактный голосовой режим (полоса над чатом)
+   ═══════════════════════════════════════════════════════════════════════════ */
 .call-overlay.voice-mode {
   left: var(--call-left, calc(var(--rail-w) + var(--sidebar-w)));
   right: 0; width: auto;
@@ -188,6 +211,7 @@
 }
 .voice-mode .call-tile {
   width: 80px; height: 80px; min-height: 80px; aspect-ratio: auto;
+  container-type: normal;
   background: transparent; border-radius: 50%;
   box-shadow: none; overflow: visible; filter: none;
 }
@@ -220,14 +244,14 @@
   left: 50%; bottom: -22px; transform: translateX(-50%);
   max-width: 112px; padding: 2px 7px; font-size: 11px; font-weight: 600;
   border-radius: 4px; background: rgba(17,18,20,0.92);
-  backdrop-filter: none;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
 }
 .voice-mode .call-tile.local .call-tile-nick::after { display: none; }
 .voice-mode .call-tile-mic-off {
   box-sizing: content-box;
   right: -2px; bottom: -2px; width: 16px; height: 16px; border-radius: 50%;
   background: var(--dc-red); color: #fff; border: 3px solid var(--call-bg);
-  backdrop-filter: none;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
 }
 .voice-mode .call-tile-mic-off svg { width: 10px; height: 10px; }
 
@@ -242,14 +266,105 @@
 .call-overlay.voice-mode .call-overlay-controls .call-round-btn.call-decline { width: 52px; }
 .call-overlay.voice-mode .call-overlay-controls .call-round-btn:hover { transform: none; }
 
-/* ── Адаптив (заменить соответствующие строки внутри @media (max-width: 640px)) ── */
+/* ═══════════════════════════════════════════════════════════════════════════
+   DETACHED — звонок идёт, но открыт другой чат/группа.
+   Карточка «Голосовое подключение» над панелью пользователя, как в Discord.
+   Ставится JS-ом: overlay.classList.toggle('detached', openChatId !== callChatId)
+   ═══════════════════════════════════════════════════════════════════════════ */
+.call-overlay.detached,
+.call-overlay.detached.voice-mode {
+  inset: auto;                                 /* сброс fixed-геометрии обоих режимов */
+  left: var(--rail-w); right: auto;
+  bottom: var(--user-panel-h); top: auto;
+  width: var(--sidebar-w); height: auto;
+  z-index: calc(var(--z-modal) - 1);           /* ниже модалок, но выше контента */
+  display: flex; flex-direction: column; gap: 0;
+  padding: 8px;
+  background: var(--bg1);
+  border-top: 1px solid var(--divider);
+  border-bottom: 0; box-shadow: none;
+  cursor: pointer;                             /* клик по карточке → вернуться в чат */
+}
+
+/* Шапка карточки: [●] Голосовое подключение / Название / 00:42 */
+.call-overlay.detached .call-overlay-top {
+  display: grid !important;
+  grid-template-columns: 1fr;
+  align-items: start; justify-items: start;
+  padding: 2px 4px 6px; text-align: left;
+  background: none; opacity: 1; transform: none; pointer-events: auto;
+}
+.call-overlay.detached .call-overlay-heading {
+  padding: 0; background: none;
+  color: var(--text-positive); font-size: 14px; font-weight: 600;
+  letter-spacing: 0; text-transform: none;
+}
+.call-overlay.detached .call-live-dot { width: 8px; height: 8px; }
+.call-overlay.detached .call-live-dot::after { inset: -3px; border-width: 1.5px; }
+.call-overlay.detached .call-overlay-title {
+  margin-top: 0;
+  font-size: 12px; font-weight: 500; color: var(--text3);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.call-overlay.detached .call-overlay-status {
+  margin-top: 0; font-size: 12px; color: var(--text3);
+}
+.call-overlay.detached .call-overlay-title:hover { color: var(--text); text-decoration: underline; }
+
+/* Сетку участников в карточке не показываем (Discord показывает её в списке каналов) */
+.call-overlay.detached .call-video-grid { display: none; }
+
+/* Контролы — ряд иконок 32px, без пилюли и стекла */
+.call-overlay.detached .call-overlay-controls {
+  position: static; transform: none;
+  width: 100%; margin: 0; padding: 0; gap: 4px;
+  justify-content: flex-end;
+  background: none; border: 0; box-shadow: none;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  opacity: 1; pointer-events: auto;
+  cursor: default;
+}
+.call-overlay.detached .call-overlay-controls .call-round-btn {
+  width: 32px; height: 32px; border-radius: 4px;
+  background: transparent; color: var(--text2);
+}
+.call-overlay.detached .call-overlay-controls .call-round-btn svg { width: 20px; height: 20px; }
+.call-overlay.detached .call-overlay-controls .call-round-btn:hover {
+  background: var(--hover); color: var(--text); transform: none;
+}
+.call-overlay.detached .call-overlay-controls .call-round-btn.active-off {
+  background: transparent; color: var(--text2);
+  position: relative;
+}
+/* красная косая черта на выключенном мике/камере, как в Discord */
+.call-overlay.detached .call-overlay-controls .call-round-btn.active-off::after {
+  content: ""; position: absolute; left: 50%; top: 50%;
+  width: 2px; height: 24px; border-radius: 1px;
+  background: var(--dc-red);
+  transform: translate(-50%, -50%) rotate(45deg);
+  pointer-events: none;
+}
+.call-overlay.detached .call-overlay-controls .call-round-btn.call-decline {
+  width: 32px; margin-left: 4px; border-radius: 4px;
+  background: transparent; color: var(--text2);
+}
+.call-overlay.detached .call-overlay-controls .call-round-btn.call-decline:hover {
+  background: var(--red-bg2); color: var(--text-danger);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Адаптив
+   ═══════════════════════════════════════════════════════════════════════════ */
 @media (max-width: 640px) {
   .call-overlay.voice-mode { left: 0; width: 100%; top: var(--call-top, 48px); height: 168px; }
   .call-overlay-top { padding-top: 16px; }
   .call-overlay-title { font-size: 17px; }
 
   .call-video-grid { padding: 8px 10px; gap: 6px; }
-  .call-video-grid:has(.call-tile:nth-child(2):last-child) { grid-template-columns: 1fr; }
+  /* специфичность выровнена с десктопным правилом, иначе оно перебивает */
+  .call-overlay:not(.voice-mode) .call-video-grid:has(.call-tile:nth-child(2):last-child) {
+    grid-template-columns: 1fr;
+  }
 
   .voice-mode .call-video-grid {
     grid-template-columns: repeat(auto-fit, 56px);
@@ -266,4 +381,19 @@
   }
   .call-overlay-controls .call-round-btn { width: 44px; height: 44px; }
   .call-overlay-controls .call-round-btn.call-decline { width: 60px; }
+
+  /* Detached на мобиле: плавающая полоска снизу */
+  .call-overlay.detached,
+  .call-overlay.detached.voice-mode {
+    left: 8px; right: 8px; width: auto;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    top: auto; height: auto;
+    flex-direction: row; align-items: center; gap: 8px;
+    padding: 8px 8px 8px 12px;
+    border: 1px solid var(--divider); border-radius: 8px;
+    box-shadow: var(--shadow);
+  }
+  .call-overlay.detached .call-overlay-top { flex: 1; min-width: 0; padding: 0; }
+  .call-overlay.detached .call-overlay-status { display: none; }
+  .call-overlay.detached .call-overlay-controls { width: auto; flex-shrink: 0; }
 }

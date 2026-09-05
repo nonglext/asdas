@@ -247,6 +247,106 @@ function resetCallControls() {
   }
 }
 
+/* ── Привязка звонка к чату (detached-режим) ───────────────────────────
+ * Если открыт не тот чат, где идёт звонок, оверлей сворачивается в карточку
+ * над панелью пользователя (CSS .call-overlay.detached). Класс ставится здесь.
+ * ────────────────────────────────────────────────────────────────────── */
+
+let callTimerId = null;
+let callConnectedAt = 0;
+
+function callChatKey() {
+  if (!callState.active) return null;
+  return callState.isGroup ? `group:${callState.groupId}` : `dm:${callState.peerFriendId}`;
+}
+
+function openChatKey() {
+  if (state.activeGroup != null) return `group:${state.activeGroup}`;
+  if (state.activeFriend != null) return `dm:${state.activeFriend}`;
+  return null; // экран друзей / ничего не открыто
+}
+
+function syncCallDetached() {
+  const overlay = $('call-overlay');
+  if (!overlay || !callState.active) return;
+  const detached = callChatKey() !== openChatKey();
+  if (overlay.classList.contains('detached') === detached) return;
+
+  overlay.classList.toggle('detached', detached);
+  overlay.title = detached ? 'Вернуться к звонку' : '';
+  setText('call-overlay-mode', detached
+    ? (callState.video ? 'Видеоподключение' : 'Голосовое подключение')
+    : (callState.video ? 'ВИДЕОКАНАЛ' : 'ГОЛОСОВОЙ КАНАЛ'));
+  // В свёрнутом виде контролы прятать нельзя
+  if (detached) { overlay.classList.remove('idle'); clearTimeout(idleTimer); }
+}
+
+function returnToCallChat() {
+  if (!callState.active) return;
+  try {
+    if (callState.isGroup) {
+      if (typeof openGroupChat === 'function') openGroupChat(callState.groupId);
+    } else if (typeof openChat === 'function') {
+      openChat(callState.peerFriendId);
+    }
+  } catch (e) {
+    console.warn('[call] returnToCallChat failed', e);
+  }
+}
+
+// Клик по свёрнутой карточке — вернуться в чат со звонком (кнопки не перехватываем)
+whenDomReady(() => {
+  const overlay = $('call-overlay');
+  if (!overlay) return;
+  overlay.addEventListener('click', e => {
+    if (!overlay.classList.contains('detached')) return;
+    if (e.target.closest('button, a, input, [role="button"]')) return;
+    returnToCallChat();
+  });
+});
+
+// Перехватываем смену активного чата: любой код, который пишет
+// state.activeFriend / state.activeGroup, автоматически обновит оверлей.
+(function watchActiveChat() {
+  for (const key of ['activeFriend', 'activeGroup']) {
+    const desc = Object.getOwnPropertyDescriptor(state, key);
+    if (desc && (desc.get || desc.set)) continue; // уже обёрнуто
+    let value = state[key];
+    try {
+      Object.defineProperty(state, key, {
+        configurable: true, enumerable: true,
+        get() { return value; },
+        set(v) { value = v; scheduleOverlaySync(); },
+      });
+    } catch (e) {
+      console.warn('[call] cannot watch state.' + key, e);
+    }
+  }
+})();
+
+/* ── Таймер длительности звонка ─────────────────────────────────────── */
+function fmtDuration(sec) {
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  const mm = String(m).padStart(2, '0'), ss = String(s).padStart(2, '0');
+  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+function startCallTimer() {
+  if (callTimerId) return;
+  callConnectedAt = Date.now();
+  callTimerId = setInterval(() => {
+    const st = $('call-overlay-status');
+    if (!st || !callState.active) return;
+    // Обновляем только если статус — «в звонке» (не трогаем «переподключение…»)
+    if (!/^в звонке/.test(st.textContent || '')) return;
+    st.textContent = `в звонке · ${fmtDuration(Math.floor((Date.now() - callConnectedAt) / 1000))}`;
+  }, 1000);
+}
+function stopCallTimer() {
+  clearInterval(callTimerId);
+  callTimerId = null;
+  callConnectedAt = 0;
+}
+
 function openCallOverlay(statusText) {
   callState.active = true;
   const overlay = $('call-overlay');
@@ -254,17 +354,19 @@ function openCallOverlay(statusText) {
     console.warn('[call] #call-overlay not found');
     return;
   }
+  overlay.classList.remove('detached', 'idle');
   overlay.classList.toggle('voice-mode', !callState.video);
   overlay.classList.toggle('video-mode', callState.video);
   setText('call-overlay-mode', callState.video ? 'ВИДЕОКАНАЛ' : 'ГОЛОСОВОЙ КАНАЛ');
   overlay.style.display = 'flex';
-  syncVoiceOverlayPosition();
   setText('call-overlay-title', callState.isGroup
     ? (state.groups[callState.groupId]?.name || 'Групповой звонок')
     : callPeerName(callState.peerFriendId));
   setText('call-overlay-status', statusText || '');
   resetCallControls();
   renderCallGrid();
+  syncVoiceOverlayPosition();
+  syncCallDetached();
   if (callState.isGroup) {
     updateGroupVoiceBar(callState.groupId);
     renderGroupsList();
@@ -297,6 +399,7 @@ function scheduleOverlaySync() {
   overlaySyncRaf = requestAnimationFrame(() => {
     overlaySyncRaf = null;
     syncVoiceOverlayPosition();
+    syncCallDetached();
   });
 }
 window.addEventListener('resize', scheduleOverlaySync);
@@ -313,12 +416,13 @@ function closeCallOverlay() {
   const overlay = $('call-overlay');
   if (overlay) {
     overlay.style.display = 'none';
-    overlay.classList.remove('voice-mode', 'video-mode');
-    overlay.classList.remove('voice-mode', 'video-mode', 'idle');
+    overlay.classList.remove('voice-mode', 'video-mode', 'idle', 'detached');
+    overlay.title = '';
     clearTimeout(idleTimer);
     overlay.style.removeProperty('--call-left');
     overlay.style.removeProperty('--call-top');
   }
+  stopCallTimer();
   setDisplay('incoming-call-modal', 'none');
   clearTimeout(callState.ringTimer);
   clearTimeout(callState.incomingTimer);
@@ -455,7 +559,7 @@ function updateCallTile(tile, nickname, avatarUrl, stream, isLocal) {
     label.className = 'call-tile-nick';
     tile.appendChild(label);
   }
-  label.textContent = isLocal ? `${nickname} (вы)` : nickname;
+    label.textContent = nickname; // «вы» дорисовывает CSS: .call-tile.local .call-tile-nick::after
 
   // Бейдж выключенного микрофона — только у себя (чужой статус достоверно неизвестен)
   let badge = tile.querySelector('.call-tile-mic-off');
@@ -631,10 +735,7 @@ function createPeerConnection(peerId) {
       clearTimeout(callState.ringTimer);
       sfx.stopRing();
       setText('call-overlay-status', 'в звонке');
-    } else if (st === 'disconnected') {
-      setText('call-overlay-status', 'переподключение…');
-    } else if (st === 'failed') {
-      handlePeerFailed(peerId, pc);
+      startCallTimer();
     }
   };
 
@@ -1162,13 +1263,11 @@ let idleTimer = null;
 function pokeCallIdle() {
   const overlay = $('call-overlay');
   if (!overlay || !callState.active || !callState.video) return;
+  if (overlay.classList.contains('detached')) return; // в карточке не скрываем
   overlay.classList.remove('idle');
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => overlay.classList.add('idle'), 3000);
 }
-['mousemove', 'pointerdown', 'keydown', 'touchstart'].forEach(ev =>
-  document.addEventListener(ev, pokeCallIdle, { passive: true })
-);
 
 // Пульс статуса, пока идёт вызов/соединение
 whenDomReady(() => {
