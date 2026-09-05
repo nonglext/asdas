@@ -5,22 +5,40 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
   <title>ChatApp</title>
   <meta name="theme-color" content="#1e1f22"/>
+  <meta name="color-scheme" content="dark"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%235865f2'/%3E%3Cpath fill='%23fff' d='M18 14.5a1.5 1.5 0 0 1-1.5 1.5H8.3L5 19V7.5A1.5 1.5 0 0 1 6.5 6h10A1.5 1.5 0 0 1 18 7.5z'/%3E%3C/svg%3E"/>
+
   <script>
+    // Не мигать экраном логина, если сессия уже есть
     if (localStorage.getItem('chatapp_token') && localStorage.getItem('chatapp_profile')) {
       document.documentElement.classList.add('has-session');
     }
   </script>
-  <style>.has-session #auth-screen { display: none !important; }</style>
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Порядок важен: base → layout → chat → calls → адаптив/утилиты -->
+  <link rel="stylesheet" href="/css/base.css"/>
+  <link rel="stylesheet" href="/css/layout.css"/>
+  <link rel="stylesheet" href="/css/chat.css"/>
+  <link rel="stylesheet" href="/css/calls-responsive.css"/>
   <link rel="stylesheet" href="/css/style.css"/>
 </head>
 <body>
+<noscript>
+  <div style="padding:24px;text-align:center;font-family:system-ui,sans-serif;color:#dbdee1;background:#313338">
+    Для работы ChatApp нужен включённый JavaScript.
+  </div>
+</noscript>
 
 <!-- ═══════════════════════════════ AUTH ═══════════════════════════════ -->
 <div id="auth-screen" class="screen active">
-  <div class="auth-bg">
+  <div class="auth-bg" aria-hidden="true">
     <div class="auth-blob b1"></div>
     <div class="auth-blob b2"></div>
     <div class="auth-blob b3"></div>
@@ -28,94 +46,96 @@
 
   <div class="auth-box">
     <div class="auth-logo">
-      <div class="auth-logo-icon">
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+      <div class="auth-logo-icon" aria-hidden="true">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
       </div>
       <span class="auth-logo-text">ChatApp</span>
     </div>
 
     <!-- Табы остаются для JS, визуально скрыты — переключение через ссылки ниже -->
-    <div class="tabs">
-      <button class="tab active" data-tab="login" type="button">Войти</button>
-      <button class="tab" data-tab="register" type="button">Регистрация</button>
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="login" type="button" role="tab">Войти</button>
+      <button class="tab" data-tab="register" type="button" role="tab">Регистрация</button>
     </div>
 
-    <div id="tab-login" class="tab-content active">
+    <div id="tab-login" class="tab-content active" role="tabpanel">
       <div class="auth-heading">
         <h1 class="auth-title">С возвращением!</h1>
         <p class="auth-sub">Мы так рады видеть тебя снова!</p>
       </div>
       <div class="field">
-        <label for="login-id">Ваш ID <span class="req">*</span></label>
-        <input type="text" id="login-id" placeholder="" maxlength="32" autocomplete="username"/>
+        <label for="login-id">Ваш ID <span class="req" aria-hidden="true">*</span></label>
+        <input type="text" id="login-id" maxlength="32" autocomplete="username"
+               autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="next" required/>
       </div>
       <div class="field">
-        <label for="login-pw">Пароль <span class="req">*</span></label>
+        <label for="login-pw">Пароль <span class="req" aria-hidden="true">*</span></label>
         <div class="pw-wrap">
-          <input type="password" id="login-pw" placeholder="" maxlength="64" autocomplete="current-password"/>
-          <button class="pw-toggle" data-target="login-pw" type="button" aria-label="Показать пароль">
-            <svg class="eye-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          <input type="password" id="login-pw" maxlength="64" autocomplete="current-password" enterkeyhint="go" required/>
+          <button class="pw-toggle" data-target="login-pw" type="button" aria-label="Показать пароль" aria-pressed="false">
+            <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
         </div>
       </div>
-      <button id="btn-login" class="btn-primary btn-block">Войти</button>
+      <button id="btn-login" class="btn-primary btn-block" type="button">Войти</button>
       <p class="auth-switch">Нужна учётная запись?
         <button type="button" class="auth-link" onclick="document.querySelector('.tab[data-tab=&quot;register&quot;]').click()">Зарегистрироваться</button>
       </p>
     </div>
 
-    <div id="tab-register" class="tab-content">
+    <div id="tab-register" class="tab-content" role="tabpanel">
       <div class="auth-heading">
         <h1 class="auth-title">Создать учётную запись</h1>
       </div>
       <div class="field">
-        <label for="reg-id">ID <span class="req">*</span> <span class="hint">только a-z, 0-9, _</span></label>
-        <input type="text" id="reg-id" placeholder="" maxlength="32" autocomplete="username"/>
+        <label for="reg-id">ID <span class="req" aria-hidden="true">*</span> <span class="hint">только a-z, 0-9, _</span></label>
+        <input type="text" id="reg-id" maxlength="32" autocomplete="username"
+               autocapitalize="off" autocorrect="off" spellcheck="false" pattern="[a-z0-9_]+" enterkeyhint="next" required/>
       </div>
       <div class="field">
         <label for="reg-nick">Отображаемое имя <span class="hint">необязательно</span></label>
-        <input type="text" id="reg-nick" placeholder="" maxlength="32"/>
+        <input type="text" id="reg-nick" maxlength="32" autocomplete="nickname" enterkeyhint="next"/>
       </div>
       <div class="field">
-        <label for="reg-pw">Пароль <span class="req">*</span> <span class="hint">мин. 8 символов</span></label>
+        <label for="reg-pw">Пароль <span class="req" aria-hidden="true">*</span> <span class="hint">мин. 8 символов</span></label>
         <div class="pw-wrap">
-          <input type="password" id="reg-pw" placeholder="" maxlength="64" autocomplete="new-password"/>
-          <button class="pw-toggle" data-target="reg-pw" type="button" aria-label="Показать пароль">
-            <svg class="eye-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          <input type="password" id="reg-pw" maxlength="64" minlength="8" autocomplete="new-password" enterkeyhint="go" required/>
+          <button class="pw-toggle" data-target="reg-pw" type="button" aria-label="Показать пароль" aria-pressed="false">
+            <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
         </div>
       </div>
-      <button id="btn-register" class="btn-primary btn-block">Продолжить</button>
+      <button id="btn-register" class="btn-primary btn-block" type="button">Продолжить</button>
       <p class="auth-switch">
         <button type="button" class="auth-link" onclick="document.querySelector('.tab[data-tab=&quot;login&quot;]').click()">Уже зарегистрированы?</button>
       </p>
     </div>
 
-    <div id="auth-error" class="error-msg" role="alert"></div>
+    <div id="auth-error" class="error-msg" role="alert" aria-live="assertive"></div>
   </div>
 </div>
 
 <!-- ═══════════════════════════════ APP ═══════════════════════════════ -->
 <div id="app-screen" class="screen">
-  <aside class="sidebar">
+  <aside class="sidebar" aria-label="Список бесед">
 
     <!-- Рельса слева (как список серверов в Discord) -->
     <nav class="guild-rail" aria-label="Разделы">
-      <button class="rail-btn rail-home" data-rail="dm" title="Личные сообщения" type="button"
+      <button class="rail-btn rail-home" data-rail="dm" title="Личные сообщения" aria-label="Личные сообщения" type="button"
               onclick="document.querySelector('.sidebar-tab[data-stab=&quot;dm&quot;]').click()">
-        <span class="rail-pill"></span>
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        <span class="rail-pill" aria-hidden="true"></span>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
       </button>
-      <div class="rail-divider"></div>
-      <button class="rail-btn" data-rail="groups" title="Группы" type="button"
+      <div class="rail-divider" role="separator"></div>
+      <button class="rail-btn" data-rail="groups" title="Группы" aria-label="Группы" type="button"
               onclick="document.querySelector('.sidebar-tab[data-stab=&quot;groups&quot;]').click()">
-        <span class="rail-pill"></span>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+        <span class="rail-pill" aria-hidden="true"></span>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
       </button>
-      <button class="rail-btn rail-add" title="Создать группу" type="button"
+      <button class="rail-btn rail-add" title="Создать группу" aria-label="Создать группу" type="button"
               onclick="document.getElementById('btn-create-group').click()">
-        <span class="rail-pill"></span>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="rail-pill" aria-hidden="true"></span>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       </button>
     </nav>
 
@@ -123,23 +143,25 @@
     <div class="sidebar-inner">
       <div class="sidebar-top">
         <div class="search-box">
-          <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          <input type="text" id="search-input" placeholder="Найти или начать беседу" autocomplete="off"/>
-          <div id="search-results" class="search-drop"></div>
+          <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input type="text" id="search-input" placeholder="Найти или начать беседу" autocomplete="off"
+                 autocapitalize="off" spellcheck="false" aria-label="Поиск пользователей"
+                 aria-controls="search-results" aria-autocomplete="list" enterkeyhint="search"/>
+          <div id="search-results" class="search-drop" role="listbox" aria-label="Результаты поиска"></div>
         </div>
 
         <!-- Переключатель Личные / Группы (скрыт визуально, управляется рельсой) -->
-        <div class="sidebar-tabs">
-          <button class="sidebar-tab active" data-stab="dm" type="button">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <div class="sidebar-tabs" role="tablist">
+          <button class="sidebar-tab active" data-stab="dm" type="button" role="tab">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             Личные
           </button>
-          <button class="sidebar-tab" data-stab="groups" type="button">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+          <button class="sidebar-tab" data-stab="groups" type="button" role="tab">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
             Группы
           </button>
-          <button class="sidebar-tab-add" id="btn-create-group" title="Создать группу" type="button">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+          <button class="sidebar-tab-add" id="btn-create-group" title="Создать группу" aria-label="Создать группу" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
           </button>
         </div>
       </div>
@@ -148,38 +170,39 @@
         <!-- DM панель -->
         <div id="dm-panel">
           <div id="requests-section" style="display:none">
-            <div class="section-label">Запросы в друзья <span id="req-badge" class="badge"></span></div>
+            <div class="section-label">Запросы в друзья <span id="req-badge" class="badge" aria-label="Количество запросов"></span></div>
             <div id="requests-list"></div>
           </div>
           <div class="section-label">Личные сообщения</div>
-          <div id="friends-list"></div>
+          <div id="friends-list" role="list"></div>
         </div>
 
         <!-- Группы панель -->
         <div id="groups-panel" style="display:none">
           <div class="section-label">
             Мои группы
-            <button class="section-add" type="button" title="Создать группу"
+            <button class="section-add" type="button" title="Создать группу" aria-label="Создать группу"
                     onclick="document.getElementById('btn-create-group').click()">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
             </button>
           </div>
-          <div id="groups-list"></div>
+          <div id="groups-list" role="list"></div>
         </div>
       </div>
 
       <!-- Панель пользователя внизу, как в Discord -->
       <div class="sidebar-footer">
-        <div class="me-card" id="me-card" title="Редактировать профиль" role="button" tabindex="0">
+        <div class="me-card" id="me-card" title="Редактировать профиль" role="button" tabindex="0" aria-label="Мой профиль">
           <div class="me-avatar-wrap">
-            <div class="me-avatar" id="my-avatar"></div>
+            <div class="me-avatar" id="my-avatar" aria-hidden="true"></div>
           </div>
           <div class="me-info">
             <div class="me-nick" id="my-nick">—</div>
             <div class="me-id" id="my-id">—</div>
           </div>
-          <button id="btn-logout" class="icon-btn logout-btn" title="Выйти" type="button">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+          <button id="btn-logout" class="icon-btn logout-btn" title="Выйти" aria-label="Выйти" type="button"
+                  onclick="event.stopPropagation()">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
           </button>
         </div>
       </div>
@@ -189,7 +212,7 @@
   <main class="chat-main">
     <!-- Плейсхолдер -->
     <div id="chat-placeholder" class="chat-empty">
-      <div class="chat-empty-icon">
+      <div class="chat-empty-icon" aria-hidden="true">
         <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
       </div>
       <div class="chat-empty-title">Нет открытых чатов</div>
@@ -197,66 +220,67 @@
     </div>
 
     <!-- DM Chat Window -->
-    <div id="chat-window" class="chat-window" style="display:none">
+    <section id="chat-window" class="chat-window" style="display:none" aria-label="Личный чат">
       <div class="chat-head">
-        <button class="icon-btn back-btn" id="btn-back" type="button" aria-label="Назад">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+        <button class="icon-btn back-btn" id="btn-back" type="button" aria-label="Назад к списку">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
         </button>
-        <div class="chat-head-avatar" id="chat-avatar"></div>
-        <div class="chat-head-info" id="chat-head-click" style="cursor:pointer">
+        <div class="chat-head-avatar" id="chat-avatar" aria-hidden="true"></div>
+        <div class="chat-head-info" id="chat-head-click" role="button" tabindex="0" title="Открыть профиль">
           <div class="chat-head-nick" id="chat-nick">—</div>
           <div class="chat-head-status" id="chat-status">офлайн</div>
         </div>
         <div class="chat-head-actions">
-          <button class="icon-btn" id="btn-call-audio" title="Аудиозвонок" type="button">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
+          <button class="icon-btn" id="btn-call-audio" title="Аудиозвонок" aria-label="Аудиозвонок" type="button">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
           </button>
-          <button class="icon-btn" id="btn-call-video" title="Видеозвонок" type="button">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+          <button class="icon-btn" id="btn-call-video" title="Видеозвонок" aria-label="Видеозвонок" type="button">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
           </button>
         </div>
       </div>
-      <div class="messages" id="messages"></div>
+      <div class="messages" id="messages" role="log" aria-label="Сообщения"></div>
       <div class="msg-bar-wrap">
         <div class="msg-bar">
-          <input type="text" id="msg-input" placeholder="Написать сообщение…" maxlength="4000" autocomplete="off"/>
-          <button id="btn-send" class="send-btn" title="Отправить" type="button">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+          <input type="text" id="msg-input" placeholder="Написать сообщение…" maxlength="4000" autocomplete="off"
+                 enterkeyhint="send" aria-label="Текст сообщения"/>
+          <button id="btn-send" class="send-btn" title="Отправить" aria-label="Отправить" type="button">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
           </button>
         </div>
       </div>
-    </div>
+    </section>
 
     <!-- Group Chat Window -->
-    <div id="group-chat-window" class="chat-window" style="display:none">
+    <section id="group-chat-window" class="chat-window" style="display:none" aria-label="Групповой чат">
       <div class="chat-head">
-        <button class="icon-btn back-btn" id="btn-back-group" type="button" aria-label="Назад">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+        <button class="icon-btn back-btn" id="btn-back-group" type="button" aria-label="Назад к списку">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
         </button>
-        <div class="chat-head-avatar group-av" id="group-chat-avatar"></div>
-        <div class="chat-head-info" id="group-chat-head-click" style="cursor:pointer">
+        <div class="chat-head-avatar group-av" id="group-chat-avatar" aria-hidden="true"></div>
+        <div class="chat-head-info" id="group-chat-head-click" role="button" tabindex="0" title="Информация о группе">
           <div class="chat-head-nick" id="group-chat-name">—</div>
           <div class="chat-head-status on" id="group-chat-members-count">0 участников</div>
         </div>
         <div class="chat-head-actions">
-          <button class="icon-btn" id="btn-group-call-audio" title="Групповой аудиозвонок" type="button">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
+          <button class="icon-btn" id="btn-group-call-audio" title="Групповой аудиозвонок" aria-label="Групповой аудиозвонок" type="button">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
           </button>
-          <button class="icon-btn" id="btn-group-call-video" title="Групповой видеозвонок" type="button">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+          <button class="icon-btn" id="btn-group-call-video" title="Групповой видеозвонок" aria-label="Групповой видеозвонок" type="button">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
           </button>
-          <button class="icon-btn" id="btn-group-info" title="Информация о группе" type="button">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <button class="icon-btn" id="btn-group-info" title="Информация о группе" aria-label="Информация о группе" type="button">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
           </button>
-          <button class="icon-btn" id="btn-toggle-members" title="Показать/скрыть участников" type="button">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+          <button class="icon-btn" id="btn-toggle-members" title="Показать/скрыть участников" aria-label="Показать или скрыть участников" aria-controls="group-members-panel" type="button">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
           </button>
         </div>
       </div>
 
-      <div id="group-voice-bar" class="group-voice-bar" style="display:none">
+      <div id="group-voice-bar" class="group-voice-bar" style="display:none" aria-live="polite">
         <div class="group-voice-title">
-          <span class="group-voice-dot"></span>
+          <span class="group-voice-dot" aria-hidden="true"></span>
           <b>Голосовой канал</b>
           <small id="group-voice-count">0 участников</small>
         </div>
@@ -268,41 +292,45 @@
 
       <div class="group-chat-body">
         <div class="group-chat-left">
-          <div class="messages group-messages" id="group-messages"></div>
+          <div class="messages group-messages" id="group-messages" role="log" aria-label="Сообщения группы"></div>
           <div class="msg-bar-wrap">
             <div class="msg-bar">
-              <input type="text" id="group-msg-input" placeholder="Написать в группу…" maxlength="4000" autocomplete="off"/>
-              <button id="btn-group-send" class="send-btn" title="Отправить" type="button">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+              <input type="text" id="group-msg-input" placeholder="Написать в группу…" maxlength="4000" autocomplete="off"
+                     enterkeyhint="send" aria-label="Текст сообщения"/>
+              <button id="btn-group-send" class="send-btn" title="Отправить" aria-label="Отправить" type="button">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
               </button>
             </div>
           </div>
         </div>
 
         <!-- Правая панель участников -->
-        <aside class="group-members-panel" id="group-members-panel">
+        <aside class="group-members-panel" id="group-members-panel" aria-label="Участники группы">
           <div class="section-label">Участники — <span id="gm-count">0</span></div>
-          <div id="group-members-list"></div>
+          <div id="group-members-list" role="list"></div>
           <button id="btn-invite-group" class="btn-invite" type="button">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg>
             Добавить участников
           </button>
         </aside>
       </div>
-    </div>
+    </section>
   </main>
+
+  <!-- Щиток под выезжающей панелью участников (мобилка) -->
+  <div class="members-backdrop" aria-hidden="true"></div>
 </div>
 
 <!-- ═══════════════════════════════ MODALS ═══════════════════════════════ -->
 
 <!-- View Profile -->
-<div id="profile-modal" class="modal-overlay" style="display:none">
+<div id="profile-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="profile-modal-nick">
   <div class="modal-box modal-profile">
     <button class="modal-close-btn" onclick="closeProfileModal()" type="button" aria-label="Закрыть">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
     <div class="modal-profile-header">
-      <div class="modal-avatar" id="profile-modal-avatar"></div>
+      <div class="modal-avatar" id="profile-modal-avatar" aria-hidden="true"></div>
       <div class="modal-profile-name" id="profile-modal-nick">—</div>
       <div class="modal-profile-id" id="profile-modal-id">—</div>
       <div class="modal-online-badge" id="profile-modal-online"></div>
@@ -325,23 +353,23 @@
 </div>
 
 <!-- Edit Profile -->
-<div id="edit-profile-modal" class="modal-overlay" style="display:none">
+<div id="edit-profile-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="edit-profile-title">
   <div class="modal-box">
     <button class="modal-close-btn" onclick="closeEditProfileModal()" type="button" aria-label="Закрыть">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
-    <h2 class="modal-title">Мой профиль</h2>
+    <h2 class="modal-title" id="edit-profile-title">Мой профиль</h2>
     <div class="edit-avatar-wrap">
-      <div class="edit-avatar" id="edit-avatar"></div>
+      <div class="edit-avatar" id="edit-avatar" aria-hidden="true"></div>
       <label class="avatar-upload-btn" title="Загрузить фото">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
-        <input type="file" id="avatar-input" accept="image/*" style="display:none"/>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        <input type="file" id="avatar-input" accept="image/jpeg,image/png,image/webp,image/gif" class="visually-hidden-input" aria-label="Загрузить аватар"/>
       </label>
     </div>
     <div class="form-stack">
       <div class="field">
         <label for="edit-nick">Отображаемое имя</label>
-        <input type="text" id="edit-nick" maxlength="32" placeholder="Как тебя зовут?"/>
+        <input type="text" id="edit-nick" maxlength="32" placeholder="Как тебя зовут?" autocomplete="nickname"/>
       </div>
       <div class="field">
         <label for="edit-status">Статус</label>
@@ -352,9 +380,9 @@
         <textarea id="edit-bio" maxlength="200" rows="3" placeholder="Расскажи о себе…"></textarea>
       </div>
       <button id="btn-open-blocked" class="btn-link-row" type="button">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M4.9 4.9l14.2 14.2"/></svg>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M4.9 4.9l14.2 14.2"/></svg>
         Заблокированные пользователи
-        <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+        <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
       </button>
     </div>
     <div class="edit-profile-actions modal-footer">
@@ -365,32 +393,32 @@
 </div>
 
 <!-- Blocked Users -->
-<div id="blocked-users-modal" class="modal-overlay" style="display:none">
+<div id="blocked-users-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="blocked-users-title">
   <div class="modal-box">
     <button class="modal-close-btn" onclick="closeBlockedUsersModal()" type="button" aria-label="Закрыть">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
-    <h2 class="modal-title">Заблокированные</h2>
-    <div id="blocked-users-list" class="blocked-users-list"></div>
+    <h2 class="modal-title" id="blocked-users-title">Заблокированные</h2>
+    <div id="blocked-users-list" class="blocked-users-list" role="list"></div>
   </div>
 </div>
 
 <!-- Create Group -->
-<div id="create-group-modal" class="modal-overlay" style="display:none">
+<div id="create-group-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="create-group-title">
   <div class="modal-box">
     <button class="modal-close-btn" onclick="closeCreateGroupModal()" type="button" aria-label="Закрыть">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
-    <h2 class="modal-title">Создать группу</h2>
+    <h2 class="modal-title" id="create-group-title">Создать группу</h2>
     <p class="modal-sub">Выбери друзей, с которыми хочешь общаться.</p>
     <div class="form-stack">
       <div class="field">
         <label for="group-name-input">Название группы</label>
-        <input type="text" id="group-name-input" maxlength="50" placeholder="Например: Друзья 🎮"/>
+        <input type="text" id="group-name-input" maxlength="50" placeholder="Например: Друзья 🎮" autocomplete="off"/>
       </div>
       <div class="field">
-        <label>Участники <span class="hint" id="group-selected-count">выбрано: 0</span></label>
-        <div id="group-friends-picker" class="friends-picker">
+        <label id="group-picker-label">Участники <span class="hint" id="group-selected-count">выбрано: 0</span></label>
+        <div id="group-friends-picker" class="friends-picker" role="listbox" aria-multiselectable="true" aria-labelledby="group-picker-label">
           <div class="empty-state" style="padding:16px">
             <div class="empty-sub">Сначала добавь друзей</div>
           </div>
@@ -405,19 +433,19 @@
 </div>
 
 <!-- Group Info -->
-<div id="group-info-modal" class="modal-overlay" style="display:none">
+<div id="group-info-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="group-info-name">
   <div class="modal-box modal-profile">
     <button class="modal-close-btn" onclick="closeGroupInfoModal()" type="button" aria-label="Закрыть">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
     <div class="modal-profile-header">
-      <div class="modal-avatar group-av" id="group-info-avatar"></div>
+      <div class="modal-avatar group-av" id="group-info-avatar" aria-hidden="true"></div>
       <div class="modal-profile-name" id="group-info-name">—</div>
       <div class="modal-profile-id" id="group-info-created">—</div>
     </div>
     <div class="modal-profile-body">
       <div class="section-label">Участники — <span id="group-info-count">0</span></div>
-      <div id="group-info-members" class="group-members-list"></div>
+      <div id="group-info-members" class="group-members-list" role="list"></div>
     </div>
     <div class="modal-actions">
       <div id="group-info-owner-actions" style="display:none">
@@ -429,16 +457,16 @@
 </div>
 
 <!-- Add Members -->
-<div id="add-members-modal" class="modal-overlay" style="display:none">
+<div id="add-members-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="add-members-title">
   <div class="modal-box">
     <button class="modal-close-btn" onclick="closeAddMembersModal()" type="button" aria-label="Закрыть">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
-    <h2 class="modal-title">Добавить участников</h2>
+    <h2 class="modal-title" id="add-members-title">Добавить участников</h2>
     <div class="form-stack">
       <div class="field">
-        <label>Друзья <span class="hint" id="add-members-count">выбрано: 0</span></label>
-        <div id="add-members-picker" class="friends-picker"></div>
+        <label id="add-members-label">Друзья <span class="hint" id="add-members-count">выбрано: 0</span></label>
+        <div id="add-members-picker" class="friends-picker" role="listbox" aria-multiselectable="true" aria-labelledby="add-members-label"></div>
       </div>
     </div>
     <div class="modal-footer">
@@ -449,57 +477,120 @@
 </div>
 
 <!-- Incoming Call -->
-<div id="incoming-call-modal" class="modal-overlay" style="display:none">
+<div id="incoming-call-modal" class="modal-overlay" style="display:none" role="alertdialog" aria-modal="true" aria-labelledby="incoming-call-nick" aria-describedby="incoming-call-sub">
   <div class="modal-box call-incoming-box">
-    <div class="call-incoming-avatar" id="incoming-call-avatar"></div>
+    <div class="call-incoming-avatar" id="incoming-call-avatar" aria-hidden="true"></div>
     <div class="call-incoming-nick" id="incoming-call-nick">—</div>
     <div class="call-incoming-sub" id="incoming-call-sub">входящий звонок…</div>
     <div class="call-incoming-actions">
-      <button id="btn-call-decline" class="call-round-btn call-decline" title="Отклонить" type="button">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/><line x1="23" y1="1" x2="1" y2="23"/></svg>
+      <button id="btn-call-decline" class="call-round-btn call-decline" title="Отклонить" aria-label="Отклонить звонок" type="button">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/><line x1="23" y1="1" x2="1" y2="23"/></svg>
       </button>
-      <button id="btn-call-accept" class="call-round-btn call-accept" title="Принять" type="button">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
+      <button id="btn-call-accept" class="call-round-btn call-accept" title="Принять" aria-label="Принять звонок" type="button">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
       </button>
     </div>
   </div>
 </div>
 
 <!-- Active Call Overlay -->
-<div id="call-overlay" class="call-overlay" style="display:none">
+<div id="call-overlay" class="call-overlay" style="display:none" role="region" aria-label="Активный звонок">
   <div class="call-overlay-top">
     <div class="call-overlay-heading">
-      <span class="call-live-dot"></span>
+      <span class="call-live-dot" aria-hidden="true"></span>
       <span class="call-overlay-label" id="call-overlay-mode">ГОЛОСОВОЙ КАНАЛ</span>
     </div>
     <div class="call-overlay-title" id="call-overlay-title">—</div>
-    <div class="call-overlay-status" id="call-overlay-status">соединение…</div>
+    <div class="call-overlay-status" id="call-overlay-status" aria-live="polite">соединение…</div>
   </div>
-  <div class="call-video-grid" id="call-video-grid"></div>
-  <div class="call-overlay-controls">
-    <button id="btn-call-toggle-mic" class="call-round-btn call-control" title="Микрофон" aria-label="Выключить микрофон" type="button">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>
+  <div class="call-video-grid" id="call-video-grid" data-count="1"></div>
+  <div class="call-overlay-controls" role="toolbar" aria-label="Управление звонком">
+    <button id="btn-call-toggle-mic" class="call-round-btn call-control" title="Микрофон (Ctrl+Shift+M)" aria-label="Выключить микрофон" type="button">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>
     </button>
     <button id="btn-call-toggle-cam" class="call-round-btn call-control" title="Камера" aria-label="Выключить камеру" type="button">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
     </button>
     <button id="btn-call-hangup" class="call-round-btn call-decline" title="Завершить звонок" aria-label="Завершить звонок" type="button">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/><line x1="23" y1="1" x2="1" y2="23"/></svg>
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/><line x1="23" y1="1" x2="1" y2="23"/></svg>
     </button>
   </div>
 </div>
 
 <!-- Delete Confirm -->
-<div id="delete-confirm" class="delete-confirm-popup" style="display:none">
+<div id="delete-confirm" class="delete-confirm-popup" style="display:none" role="alertdialog" aria-label="Удалить сообщение?">
   <span>Удалить сообщение?</span>
   <button id="btn-confirm-delete" class="btn-danger-sm" type="button">Удалить</button>
   <button onclick="closeDeleteConfirm()" class="btn-ghost-sm" type="button">Отмена</button>
 </div>
 
+<!-- ═══════════════════════════ MOBILE NAV GLUE ═══════════════════════════
+     Не требует правок chat-ui.js: следит за открытием чата и прячет сайдбар на ≤640px,
+     закрывает панель участников по тапу на щиток.
+     ═════════════════════════════════════════════════════════════════════════ -->
+<script>
+(function () {
+  var mq = window.matchMedia('(max-width: 640px)');
+  var sidebar = document.querySelector('.sidebar');
+  var wins = [document.getElementById('chat-window'), document.getElementById('group-chat-window')].filter(Boolean);
+  var panel = document.getElementById('group-members-panel');
+  var backdrop = document.querySelector('.members-backdrop');
+
+  function chatOpen() {
+    return wins.some(function (w) { return w.style.display !== 'none' && getComputedStyle(w).display !== 'none'; });
+  }
+  function sync() {
+    if (!sidebar) return;
+    var open = mq.matches && chatOpen();
+    sidebar.classList.toggle('hidden', open);
+    // На мобилке при открытии чата панель участников по умолчанию скрыта
+    if (mq.matches && open && panel && !panel.dataset.userOpened) panel.classList.add('hidden');
+    if (!mq.matches && panel) delete panel.dataset.userOpened;
+  }
+
+  if ('MutationObserver' in window) {
+    var mo = new MutationObserver(sync);
+    wins.forEach(function (w) { mo.observe(w, { attributes: true, attributeFilter: ['style', 'class'] }); });
+  }
+  if (mq.addEventListener) mq.addEventListener('change', sync); else mq.addListener(sync);
+  window.addEventListener('resize', sync);
+  sync();
+
+  // Пользователь явно открыл/закрыл панель участников
+  var toggle = document.getElementById('btn-toggle-members');
+  if (toggle && panel) toggle.addEventListener('click', function () {
+    setTimeout(function () {
+      if (panel.classList.contains('hidden')) delete panel.dataset.userOpened;
+      else panel.dataset.userOpened = '1';
+    }, 0);
+  });
+  if (backdrop && panel) backdrop.addEventListener('click', function () {
+    panel.classList.add('hidden');
+    delete panel.dataset.userOpened;
+  });
+
+  // Esc закрывает панель участников на мобилке (модалки закрываются своим кодом)
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && mq.matches && panel && !panel.classList.contains('hidden')) {
+      panel.classList.add('hidden'); delete panel.dataset.userOpened;
+    }
+  });
+})();
+</script>
+
 <script src="/socket.io/socket.io.js"></script>
+<!--
+  Если код разбит по файлам (core / auth-ui / chat-ui / calls), а app.js их НЕ содержит —
+  замени строку ниже на эти четыре в таком порядке:
   <script src="/js/core.js"></script>
-  <script src="/js/chat.js"></script>
+  <script src="/js/auth-ui.js"></script>
+  <script src="/js/chat-ui.js"></script>
   <script src="/js/calls.js"></script>
+  Если app.js — единая сборка, оставь как есть (иначе будет ошибка «Identifier has already been declared»).
+-->
+<script src="/js/core.js" defer></script>
+<script src="/js/auth-ui.js" defer></script>
+<script src="/js/chat-ui.js" defer></script>
+<script src="/js/calls.js" defer></script>
 </body>
 </html>
-

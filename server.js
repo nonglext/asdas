@@ -65,7 +65,6 @@ const MAX_FRIEND_REQUESTS = 200;
 const MAX_GROUP_MEMBERS = 50;
 const MAX_GROUPS_PER_USER = 100;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const MAX_IMAGE_BASE64_CHARS = Math.ceil(MAX_IMAGE_BYTES * (4 / 3)) + 64; // + data:-префикс
 const MAX_NICKNAME_LENGTH = 50;
 const MAX_STATUS_LENGTH = 150;
 const MAX_BIO_LENGTH = 1000;
@@ -73,12 +72,16 @@ const MAX_TEXT_LENGTH = 4000;
 const MIN_PASSWORD_LENGTH = 8;
 const MAX_PASSWORD_LENGTH = 128;
 const MAX_GROUP_NAME_LENGTH = 50;
+// NEW: лимиты для загрузок картинок сообщений и сигналинга
+const MAX_PENDING_UPLOADS = 20;                 // незакреплённых за сообщением файлов на пользователя
+const PENDING_UPLOAD_TTL = 24 * 60 * 60 * 1000; // через сколько удалять неиспользованную загрузку
+const TMP_UPLOAD_TTL = 60 * 60 * 1000;          // брошенные .tmp от multer
+const MAX_SIGNAL_BYTES = 64_000;                // SDP/ICE укладываются в десятки КБ
+const MAX_CLIENT_ID_LENGTH = 64;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const USER_ID_RE = /^[a-z0-9_]{3,30}$/;
 const UPLOAD_PATH_RE = /^\/uploads\/[0-9a-f-]{36}\.(jpg|png|webp|gif)$/;
-// FIX: картинка в сообщении — только data-URL с известным image/* типом
-const IMAGE_DATA_URL_RE = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/;
 
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -92,7 +95,8 @@ function corsOrigin(origin, callback) {
 
 const io = new Server(server, {
   cors: { origin: corsOrigin, methods: ['GET', 'POST'] },
-  maxHttpBufferSize: MAX_IMAGE_BASE64_CHARS + 100_000
+  // FIX: картинки больше не ходят через сокеты — буфер уменьшен с ~7 МБ до 100 КБ
+  maxHttpBufferSize: 100_000
 });
 
 app.set('trust proxy', 1);
@@ -101,8 +105,6 @@ app.set('trust proxy', 1);
 app.use(helmet({
   contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
-  // FIX: иначе helmet ставит CORP: same-origin и картинки из /uploads
-  // не грузятся на фронтенде с другого origin.
   crossOriginResourcePolicy: { policy: 'cross-origin' }
 }));
 app.use(cors({ origin: corsOrigin }));
@@ -113,7 +115,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// FIX: 10mb для JSON не нужно — картинки идут через multer/сокеты
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(express.static(PUBLIC_DIR));
@@ -168,8 +169,9 @@ const User = sequelize.define('User', {
   id: { type: DataTypes.STRING, primaryKey: true, allowNull: false },
   nickname: { type: DataTypes.STRING(MAX_NICKNAME_LENGTH), allowNull: false },
   passwordHash: { type: DataTypes.STRING, allowNull: false },
-  // NEW: инвалидация старых токенов после смены пароля
-  passwordChangedAt: { type: DataTypes.DATE, allowNull: true },
+  // FIX: вместо passwordChangedAt — счётчик версии токена. Позволяет отзывать
+  // токены без смены пароля (logout-all) и не имеет проблемы округления iat.
+  tokenVersion: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   avatar: { type: DataTypes.STRING, defaultValue: null },
   status: { type: DataTypes.STRING(150), defaultValue: 'Привет! Я использую ChatApp' },
   bio: { type: DataTypes.TEXT, defaultValue: '' },
@@ -185,6 +187,7 @@ const Message = sequelize.define('Message', {
   from: { type: DataTypes.STRING, allowNull: false },
   to: { type: DataTypes.STRING, allowNull: true },
   text: { type: DataTypes.TEXT, defaultValue: '' },
+  // новые сообщения хранят путь /uploads/...; старые могут содержать legacy base64
   image: { type: DataTypes.TEXT, defaultValue: null },
   type: { type: DataTypes.ENUM('text', 'image'), defaultValue: 'text' },
   read: { type: DataTypes.BOOLEAN, defaultValue: false },
@@ -192,9 +195,9 @@ const Message = sequelize.define('Message', {
 }, {
   timestamps: true, underscored: true, tableName: 'messages',
   indexes: [
-    // FIX: составные индексы под реальные запросы пагинации/непрочитанных
-    { fields: ['chat_key', 'created_at'] },
-    { fields: ['group_id', 'created_at'] },
+    // FIX: индексы под курсорную пагинацию (created_at, id)
+    { fields: ['chat_key', 'created_at', 'id'] },
+    { fields: ['group_id', 'created_at', 'id'] },
     { fields: ['to', 'read'] },
     { fields: ['from'] }
   ]
@@ -217,12 +220,22 @@ const GroupMember = sequelize.define('GroupMember', {
   indexes: [{ unique: true, fields: ['group_id', 'user_id'] }, { fields: ['user_id'] }]
 });
 
-// NEW: персональное состояние прочтения групповых чатов
 const GroupReadState = sequelize.define('GroupReadState', {
   groupId: { type: DataTypes.UUID, primaryKey: true },
   userId: { type: DataTypes.STRING, primaryKey: true },
   lastReadAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW }
 }, { timestamps: false, underscored: true, tableName: 'group_read_states' });
+
+// NEW: загруженные, но ещё не прикреплённые к сообщению файлы.
+// Строка живёт до момента прикрепления (тогда удаляется — файл «закреплён»)
+// либо до PENDING_UPLOAD_TTL (тогда файл удаляется с диска как мусор).
+const Upload = sequelize.define('Upload', {
+  path: { type: DataTypes.STRING, primaryKey: true },
+  ownerId: { type: DataTypes.STRING, allowNull: false }
+}, {
+  timestamps: true, updatedAt: false, underscored: true, tableName: 'uploads',
+  indexes: [{ fields: ['owner_id'] }, { fields: ['created_at'] }]
+});
 
 Group.hasMany(GroupMember, { foreignKey: 'groupId', onDelete: 'CASCADE' });
 GroupMember.belongsTo(Group, { foreignKey: 'groupId' });
@@ -280,12 +293,15 @@ function privateUser(u) {
     friends: u.friends, friendRequests: u.friendRequests, blockedUsers: u.blockedUsers
   };
 }
-function signToken(userId) {
-  return jwt.sign({ id: userId }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+// FIX: в токен зашивается версия — старые токены отзываются инкрементом tokenVersion
+function signToken(user) {
+  return jwt.sign({ id: user.id, v: user.tokenVersion || 0 }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+}
+function sanitizeClientId(clientId) {
+  return (typeof clientId === 'string' && clientId.length <= MAX_CLIENT_ID_LENGTH) ? clientId : undefined;
 }
 
-// FIX: удаляем только файлы из /uploads с ожидаемым именем, иначе сюда могли
-// прилетать base64-строки картинок сообщений.
+// Удаляем только файлы из /uploads с ожидаемым именем (legacy base64 игнорируется)
 async function deleteUploadedFile(publicPath) {
   if (!publicPath || typeof publicPath !== 'string' || !UPLOAD_PATH_RE.test(publicPath)) return;
   const fullPath = path.join(UPLOAD_DIR, path.basename(publicPath));
@@ -295,13 +311,22 @@ async function deleteUploadedFile(publicPath) {
     if (err.code !== 'ENOENT') logger.error('Ошибка удаления файла', { file: fullPath, error: err.message });
   }
 }
+async function deleteUploadedFiles(paths) {
+  for (const p of paths) await deleteUploadedFile(p);
+}
 
-function validateImagePayload(image) {
-  if (image === undefined || image === null) return { ok: true, image: null };
-  if (typeof image !== 'string') return { ok: false, reason: 'invalid_image' };
-  if (image.length > MAX_IMAGE_BASE64_CHARS) return { ok: false, reason: 'image_too_large' };
-  if (!IMAGE_DATA_URL_RE.test(image)) return { ok: false, reason: 'invalid_image' };
+// FIX: картинка в сообщении — только путь к файлу, загруженному через /api/upload/image
+function validateImagePath(image) {
+  if (image === undefined || image === null || image === '') return { ok: true, image: null };
+  if (typeof image !== 'string' || !UPLOAD_PATH_RE.test(image)) return { ok: false, reason: 'invalid_image' };
   return { ok: true, image };
+}
+// Атомарно «закрепляет» загрузку за отправителем: удаление строки uploads —
+// одновременно проверка владельца и защита от повторного использования файла.
+async function claimUpload(imagePath, userId) {
+  if (!imagePath) return true;
+  const n = await Upload.destroy({ where: { path: imagePath, ownerId: userId } });
+  return n > 0;
 }
 
 function makeSocketLimiter(maxPerWindow, windowMs) {
@@ -323,6 +348,9 @@ const canSendFriendRequest = makeSocketLimiter(20, 60 * 1000);
 const canSendMessage = makeSocketLimiter(30, 10 * 1000);
 const canGroupAction = makeSocketLimiter(20, 60 * 1000);
 const canTyping = makeSocketLimiter(30, 10 * 1000);
+// NEW: лимиты на звонки и сигналинг
+const canStartCall = makeSocketLimiter(10, 60 * 1000);
+const canSignal = makeSocketLimiter(300, 10 * 1000);
 
 // ─── Group rooms ──────────────────────────────────────────────────────────────
 function joinUserToGroupRoom(userId, groupId) {
@@ -356,7 +384,6 @@ async function isGroupMember(userId, groupId) {
   return !!(await GroupMember.findOne({ where: { userId, groupId }, attributes: ['id'] }));
 }
 
-// NEW: непрочитанные в группах считаются персонально через group_read_states
 async function getGroupUnreadCounts(userId, groupIds) {
   if (!groupIds.length) return {};
   const rows = await sequelize.query(
@@ -374,19 +401,15 @@ async function getGroupUnreadCounts(userId, groupIds) {
 }
 
 // ─── Auth (JWT) ───────────────────────────────────────────────────────────────
-const authCache = new Map(); // userId -> { exists, pwdChangedAt, exp }
+const authCache = new Map(); // userId -> { exists, v, exp }
 const AUTH_CACHE_TTL = 30_000;
 
 async function getAuthInfo(id) {
   const now = Date.now();
   const hit = authCache.get(id);
   if (hit && hit.exp > now) return hit;
-  const u = await User.findByPk(id, { attributes: ['id', 'passwordChangedAt'] });
-  const info = {
-    exists: !!u,
-    pwdChangedAt: u?.passwordChangedAt ? new Date(u.passwordChangedAt).getTime() : 0,
-    exp: now + (u ? AUTH_CACHE_TTL : 5000)
-  };
+  const u = await User.findByPk(id, { attributes: ['id', 'tokenVersion'] });
+  const info = { exists: !!u, v: u ? (u.tokenVersion || 0) : 0, exp: now + (u ? AUTH_CACHE_TTL : 5000) };
   authCache.set(id, info);
   if (authCache.size > 10_000) authCache.clear();
   return info;
@@ -400,7 +423,8 @@ async function verifyToken(token) {
   if (!payload?.id || typeof payload.id !== 'string') return null;
   const info = await getAuthInfo(payload.id);
   if (!info.exists) return null;
-  if (info.pwdChangedAt && (payload.iat || 0) * 1000 < info.pwdChangedAt) return null;
+  // FIX: старые токены (без v) считаются версией 0 — обратная совместимость
+  if ((typeof payload.v === 'number' ? payload.v : 0) !== info.v) return null;
   return payload;
 }
 
@@ -415,6 +439,14 @@ async function authMiddleware(req, res, next) {
   } catch (err) { next(err); }
 }
 
+// Отзыв всех токенов пользователя + сброс сокетов
+async function revokeAllSessions(user) {
+  user.tokenVersion = (user.tokenVersion || 0) + 1;
+  await user.save();
+  authCache.delete(user.id);
+  io.in(user.id).disconnectSockets(true);
+}
+
 // ─── File Upload ──────────────────────────────────────────────────────────────
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
@@ -424,7 +456,6 @@ const ALLOWED_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const upload = multer({
   storage: multer.diskStorage({
     destination: UPLOAD_DIR,
-    // расширение проставляем позже, по реальному содержимому
     filename: (req, file, cb) => cb(null, crypto.randomUUID() + '.tmp')
   }),
   limits: { fileSize: MAX_IMAGE_BYTES, files: 1 },
@@ -461,6 +492,32 @@ async function finalizeUpload(file) {
     return null;
   }
 }
+async function discardTmp(file) {
+  if (file?.path) await fs.promises.unlink(file.path).catch(() => {});
+}
+
+// NEW: уборка брошенных .tmp и неиспользованных загрузок
+async function cleanupUploads() {
+  const now = Date.now();
+  try {
+    for (const name of await fs.promises.readdir(UPLOAD_DIR)) {
+      if (!name.endsWith('.tmp')) continue;
+      const full = path.join(UPLOAD_DIR, name);
+      try {
+        const st = await fs.promises.stat(full);
+        if (now - st.mtimeMs > TMP_UPLOAD_TTL) await fs.promises.unlink(full);
+      } catch { /* уже удалён */ }
+    }
+  } catch (err) { logger.warn('cleanupUploads: readdir failed', { error: err.message }); }
+
+  try {
+    const stale = await Upload.findAll({
+      where: { createdAt: { [Op.lt]: new Date(now - PENDING_UPLOAD_TTL) } }, limit: 500
+    });
+    for (const u of stale) { await deleteUploadedFile(u.path); await u.destroy(); }
+    if (stale.length) logger.info(`cleanupUploads: удалено ${stale.length} неиспользованных загрузок`);
+  } catch (err) { logger.warn('cleanupUploads: db failed', { error: err.message }); }
+}
 
 // ─── Auth Routes ──────────────────────────────────────────────────────────────
 app.post('/api/register', authLimiter, async (req, res) => {
@@ -482,19 +539,20 @@ app.post('/api/register', authLimiter, async (req, res) => {
     try {
       user = await User.create({ id, nickname: nick, passwordHash, friends: [], friendRequests: [], blockedUsers: [] });
     } catch (err) {
-      // FIX: гонка двух одновременных регистраций одного ID — ловим по PK
       if (err.name === 'SequelizeUniqueConstraintError') return res.status(400).json({ error: 'Этот ID уже занят' });
       throw err;
     }
 
-    res.json({ success: true, token: signToken(user.id), user: privateUser(user) });
+    res.json({ success: true, token: signToken(user), user: privateUser(user) });
   } catch (err) {
     logger.error('Register error', { requestId: req.requestId, error: err.message, stack: err.stack });
     res.status(500).json({ error: 'Ошибка регистрации' });
   }
 });
 
-const DUMMY_PASSWORD_HASH = '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewKNjM4YFf6/EHou';
+// FIX: dummy-hash генерируется при старте с теми же SALT_ROUNDS — одинаковое
+// время сравнения для несуществующих и существующих пользователей
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync(crypto.randomBytes(32).toString('hex'), SALT_ROUNDS);
 
 app.post('/api/login', authLimiter, async (req, res) => {
   try {
@@ -508,14 +566,13 @@ app.post('/api/login', authLimiter, async (req, res) => {
     const match = await bcrypt.compare(password, user ? user.passwordHash : DUMMY_PASSWORD_HASH);
     if (!user || !match) return res.status(401).json({ error: 'Неверный ID или пароль' });
 
-    res.json({ success: true, token: signToken(user.id), user: privateUser(user) });
+    res.json({ success: true, token: signToken(user), user: privateUser(user) });
   } catch (err) {
     logger.error('Login error', { requestId: req.requestId, error: err.message, stack: err.stack });
     res.status(500).json({ error: 'Ошибка входа' });
   }
 });
 
-// NEW: смена пароля с инвалидацией всех ранее выданных токенов
 app.post('/api/password/change', authMiddleware, authLimiter, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body || {};
@@ -533,19 +590,25 @@ app.post('/api/password/change', authMiddleware, authLimiter, async (req, res) =
     }
 
     user.passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
-    // iat в JWT округлён до секунд — отступаем на секунду назад, чтобы
-    // только что выданный токен не считался "старым"
-    user.passwordChangedAt = new Date(Math.floor(Date.now() / 1000) * 1000 - 1000);
-    await user.save();
-    authCache.delete(user.id);
-
-    const token = signToken(user.id);
-    // все старые сокет-сессии сбрасываем — клиент переподключится с новым токеном
-    io.in(user.id).disconnectSockets(true);
-    res.json({ success: true, token });
+    // FIX: инвалидация через версию — нет окна «той же секунды», как с iat
+    await revokeAllSessions(user);
+    res.json({ success: true, token: signToken(user) });
   } catch (err) {
     logger.error('Change password error', { requestId: req.requestId, error: err.message, stack: err.stack });
     res.status(500).json({ error: 'Ошибка смены пароля' });
+  }
+});
+
+// NEW: «выйти на всех устройствах» — отзывает все токены, включая текущий
+app.post('/api/logout-all', authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findByPk(req.user.id);
+    if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+    await revokeAllSessions(user);
+    res.json({ success: true });
+  } catch (err) {
+    logger.error('Logout-all error', { requestId: req.requestId, error: err.message, stack: err.stack });
+    res.status(500).json({ error: 'Ошибка выхода' });
   }
 });
 
@@ -561,7 +624,6 @@ app.get('/api/me', authMiddleware, async (req, res) => {
   }
 });
 
-// NEW: друзья + входящие заявки с никами/аватарами/онлайном одним запросом
 app.get('/api/friends', authMiddleware, async (req, res) => {
   try {
     const me = await User.findByPk(req.user.id, { attributes: ['id', 'friends', 'friendRequests'] });
@@ -588,10 +650,16 @@ app.get('/api/search', authMiddleware, searchLimiter, async (req, res) => {
     const escaped = q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
     const results = await User.findAll({
       where: {
-        id: { [Op.ne]: req.user.id },
-        [Op.or]: [
-          { id: { [Op.iLike]: `%${escaped}%` } },
-          { nickname: { [Op.iLike]: `%${escaped}%` } }
+        [Op.and]: [
+          { id: { [Op.ne]: req.user.id } },
+          // FIX: те, кто меня заблокировал, не показываются в поиске
+          sequelize.literal(`NOT (${sequelize.escape(req.user.id)} = ANY("blocked_users"))`),
+          {
+            [Op.or]: [
+              { id: { [Op.iLike]: `%${escaped}%` } },
+              { nickname: { [Op.iLike]: `%${escaped}%` } }
+            ]
+          }
         ]
       },
       attributes: ['id', 'nickname', 'avatar', 'status'],
@@ -608,7 +676,8 @@ app.get('/api/profile/:userId', authMiddleware, async (req, res) => {
   try {
     if (!USER_ID_RE.test(req.params.userId)) return res.status(404).json({ error: 'Пользователь не найден' });
     const user = await User.findByPk(req.params.userId);
-    if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+    // FIX: заблокировавшему пользователю профиль недоступен (404, чтобы не раскрывать факт блокировки)
+    if (!user || user.blockedUsers.includes(req.user.id)) return res.status(404).json({ error: 'Пользователь не найден' });
     res.json({ ...publicUser(user), bio: user.bio, createdAt: user.createdAt });
   } catch (err) {
     logger.error('Profile error', { requestId: req.requestId, error: err.message, stack: err.stack });
@@ -636,8 +705,6 @@ app.post('/api/profile/update', authMiddleware, async (req, res) => {
     const user = await User.findByPk(req.user.id);
     if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
 
-    // FIX: раньше можно было подставить путь к любому чужому файлу в /uploads.
-    // Здесь аватар можно только убрать (null) или оставить текущим.
     if (avatar !== undefined && avatar !== null && avatar !== user.avatar) {
       return res.status(400).json({ error: 'Аватар можно изменить только через загрузку файла' });
     }
@@ -651,7 +718,6 @@ app.post('/api/profile/update', authMiddleware, async (req, res) => {
     if (oldAvatar) await deleteUploadedFile(oldAvatar);
 
     const payload = { id: user.id, nickname: user.nickname, avatar: user.avatar, status: user.status, bio: user.bio };
-    // NEW: друзья и остальные вкладки сразу видят новые ник/аватар
     io.to(user.id).emit('profileUpdated', payload);
     user.friends.forEach(fId => io.to(fId).emit('userUpdated', payload));
 
@@ -689,6 +755,30 @@ app.post('/api/upload/avatar', authMiddleware, uploadLimiter, upload.single('ava
   }
 });
 
+// NEW: загрузка картинки для сообщения. Клиент: upload → { url } → sendMessage({ image: url })
+app.post('/api/upload/image', authMiddleware, uploadLimiter, upload.single('image'), async (req, res) => {
+  let publicPath = null;
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Файл не загружен' });
+
+    const pending = await Upload.count({ where: { ownerId: req.user.id } });
+    if (pending >= MAX_PENDING_UPLOADS) {
+      await discardTmp(req.file);
+      return res.status(429).json({ error: 'Слишком много неотправленных загрузок' });
+    }
+
+    publicPath = await finalizeUpload(req.file);
+    if (!publicPath) return res.status(400).json({ error: 'Файл не является допустимым изображением' });
+
+    await Upload.create({ path: publicPath, ownerId: req.user.id });
+    res.json({ success: true, url: publicPath });
+  } catch (err) {
+    if (publicPath) await deleteUploadedFile(publicPath);
+    logger.error('Image upload error', { requestId: req.requestId, error: err.message, stack: err.stack });
+    res.status(500).json({ error: 'Ошибка загрузки изображения' });
+  }
+});
+
 // ─── Block / Unblock ──────────────────────────────────────────────────────────
 app.post('/api/users/:id/block', authMiddleware, async (req, res) => {
   try {
@@ -697,7 +787,6 @@ app.post('/api/users/:id/block', authMiddleware, async (req, res) => {
     if (!USER_ID_RE.test(targetId)) return res.status(400).json({ error: 'Некорректный ID' });
     if (targetId === myId) return res.status(400).json({ error: 'Нельзя заблокировать самого себя' });
 
-    // FIX: атомарно, без read-modify-write гонок
     const rows = await sequelize.query(
       `UPDATE "users"
        SET blocked_users = array_append(blocked_users, :t),
@@ -717,7 +806,7 @@ app.post('/api/users/:id/block', authMiddleware, async (req, res) => {
       const me = await User.findByPk(myId, { attributes: ['blockedUsers'] });
       if (!me) return res.status(404).json({ error: 'Пользователь не найден' });
       if (!me.blockedUsers.includes(targetId)) return res.status(400).json({ error: `Лимит заблокированных (${MAX_BLOCKED})` });
-      blockedUsers = me.blockedUsers; // уже заблокирован — идемпотентно
+      blockedUsers = me.blockedUsers;
     }
 
     const targetRows = await sequelize.query(
@@ -729,7 +818,6 @@ app.post('/api/users/:id/block', authMiddleware, async (req, res) => {
     );
     if (targetRows.length) io.to(targetId).emit('friendRemoved', { id: myId });
 
-    // синхронизируем остальные вкладки
     io.to(myId).emit('friendRemoved', { id: targetId });
     io.to(myId).emit('userBlocked', { id: targetId, blockedUsers });
 
@@ -774,16 +862,33 @@ app.get('/api/users/blocked', authMiddleware, async (req, res) => {
 });
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
+// FIX: курсорная пагинация по (created_at, id) — при равных created_at сообщения
+// больше не теряются между страницами. `beforeId` необязателен (совместимость).
 function parsePagination(query) {
   const parsedLimit = parseInt(query.limit, 10);
   const limit = Math.min(100, Math.max(1, Number.isFinite(parsedLimit) ? parsedLimit : 50));
   let before = null;
   if (query.before) {
-    before = new Date(query.before);
-    if (Number.isNaN(before.getTime())) return { error: 'Некорректный параметр before' };
+    const time = new Date(query.before);
+    if (Number.isNaN(time.getTime())) return { error: 'Некорректный параметр before' };
+    const id = (typeof query.beforeId === 'string' && UUID_RE.test(query.beforeId)) ? query.beforeId : null;
+    before = { time, id };
   }
   return { limit, before };
 }
+function withCursor(where, before) {
+  if (!before) return where;
+  if (!before.id) return { ...where, createdAt: { [Op.lt]: before.time } };
+  return {
+    ...where,
+    [Op.or]: [
+      { createdAt: { [Op.lt]: before.time } },
+      { createdAt: before.time, id: { [Op.lt]: before.id } }
+    ]
+  };
+}
+const MESSAGE_ORDER = [['createdAt', 'DESC'], ['id', 'DESC']];
+
 function serializeMessage(m) {
   return {
     _id: m.id, from: m.from, to: m.to, groupId: m.groupId, text: m.text, image: m.image,
@@ -803,9 +908,8 @@ app.get('/api/messages/:userId/:friendId', authMiddleware, async (req, res) => {
     const pg = parsePagination(req.query);
     if (pg.error) return res.status(400).json({ error: pg.error });
 
-    const where = { chatKey: getChatKey(req.user.id, friendId), groupId: null };
-    if (pg.before) where.createdAt = { [Op.lt]: pg.before };
-    const messages = await Message.findAll({ where, order: [['createdAt', 'DESC']], limit: pg.limit });
+    const where = withCursor({ chatKey: getChatKey(req.user.id, friendId), groupId: null }, pg.before);
+    const messages = await Message.findAll({ where, order: MESSAGE_ORDER, limit: pg.limit });
     res.json(messages.reverse().map(serializeMessage));
   } catch (err) {
     logger.error('Messages error', { requestId: req.requestId, error: err.message, stack: err.stack });
@@ -823,7 +927,6 @@ app.delete('/api/messages/:messageId', authMiddleware, async (req, res) => {
     if (!msg) return res.status(404).json({ error: 'Сообщение не найдено' });
     if (msg.deleted) return res.json({ success: true });
 
-    // NEW: владелец группы может удалять любые сообщения в своей группе
     let allowed = msg.from === userId;
     if (!allowed && msg.groupId) {
       const group = await Group.findByPk(msg.groupId, { attributes: ['ownerId'] });
@@ -831,10 +934,13 @@ app.delete('/api/messages/:messageId', authMiddleware, async (req, res) => {
     }
     if (!allowed) return res.status(403).json({ error: 'Нет доступа' });
 
+    const oldImage = msg.image;
     msg.deleted = true;
     msg.text = '';
     msg.image = null;
     await msg.save();
+    // FIX: файл картинки удаляется с диска вместе с сообщением
+    if (oldImage) await deleteUploadedFile(oldImage);
 
     if (msg.groupId) {
       io.to(`group:${msg.groupId}`).emit('messageDeleted', { messageId, chatWith: null, groupId: msg.groupId, by: userId });
@@ -880,7 +986,6 @@ app.post('/api/groups', authMiddleware, async (req, res) => {
     for (const memberId of cleanMemberIds) {
       if (!friendSet.has(memberId)) return res.status(400).json({ error: `Пользователь ${memberId} не в друзьях` });
     }
-    // FIX: не добавляем тех, кто нас заблокировал
     if (cleanMemberIds.length) {
       const targets = await User.findAll({ where: { id: { [Op.in]: cleanMemberIds } }, attributes: ['id', 'blockedUsers'] });
       const blockedMe = targets.find(t => t.blockedUsers.includes(userId));
@@ -901,14 +1006,12 @@ app.post('/api/groups', authMiddleware, async (req, res) => {
       return g;
     });
 
-    // FIX: владелец тоже должен быть в комнате группы
     for (const memberId of uniqueMembers) joinUserToGroupRoom(memberId, group.id);
 
     const groupData = await getGroupWithMembers(group.id);
     for (const memberId of uniqueMembers) {
       if (memberId !== userId) io.to(memberId).emit('addedToGroup', { group: groupData });
     }
-    // остальные вкладки владельца
     io.to(userId).emit('groupCreated', { group: groupData });
 
     res.json({ success: true, group: groupData });
@@ -985,20 +1088,21 @@ app.post('/api/groups/:groupId/avatar', authMiddleware, uploadLimiter, upload.si
   try {
     const { groupId } = req.params;
     if (!UUID_RE.test(groupId)) {
-      if (req.file) await fs.promises.unlink(req.file.path).catch(() => {});
+      await discardTmp(req.file);
       return res.status(400).json({ error: 'Некорректный ID группы' });
     }
     if (!req.file) return res.status(400).json({ error: 'Файл не загружен' });
 
-    publicPath = await finalizeUpload(req.file);
-    if (!publicPath) return res.status(400).json({ error: 'Файл не является допустимым изображением' });
-
+    // FIX: права проверяем ДО обработки файла — не тратим CPU/диск на чужие запросы
     const group = await Group.findByPk(groupId);
-    if (!group) { await deleteUploadedFile(publicPath); return res.status(404).json({ error: 'Группа не найдена' }); }
+    if (!group) { await discardTmp(req.file); return res.status(404).json({ error: 'Группа не найдена' }); }
     if (group.ownerId !== req.user.id) {
-      await deleteUploadedFile(publicPath);
+      await discardTmp(req.file);
       return res.status(403).json({ error: 'Только владелец может менять аватар группы' });
     }
+
+    publicPath = await finalizeUpload(req.file);
+    if (!publicPath) return res.status(400).json({ error: 'Файл не является допустимым изображением' });
 
     const oldAvatar = group.avatar;
     group.avatar = publicPath;
@@ -1023,9 +1127,8 @@ app.get('/api/groups/:groupId/messages', authMiddleware, async (req, res) => {
     const pg = parsePagination(req.query);
     if (pg.error) return res.status(400).json({ error: pg.error });
 
-    const where = { groupId };
-    if (pg.before) where.createdAt = { [Op.lt]: pg.before };
-    const messages = await Message.findAll({ where, order: [['createdAt', 'DESC']], limit: pg.limit });
+    const where = withCursor({ groupId }, pg.before);
+    const messages = await Message.findAll({ where, order: MESSAGE_ORDER, limit: pg.limit });
     res.json(messages.reverse().map(serializeMessage));
   } catch (err) {
     logger.error('Group messages error', { requestId: req.requestId, error: err.message, stack: err.stack });
@@ -1034,16 +1137,16 @@ app.get('/api/groups/:groupId/messages', authMiddleware, async (req, res) => {
 });
 
 // ─── Health ───────────────────────────────────────────────────────────────────
+// FIX: публичный эндпоинт не раскрывает uptime/число онлайн
 app.get('/api/health', async (req, res) => {
   try {
     await sequelize.authenticate();
-    res.json({ status: 'ok', db: 'connected', uptimeSeconds: Math.round(process.uptime()), online: Object.keys(onlineUsers).length });
+    res.json({ status: 'ok' });
   } catch {
-    res.status(503).json({ status: 'error', db: 'disconnected' });
+    res.status(503).json({ status: 'error' });
   }
 });
 
-// NEW: JSON-404 для неизвестных API-маршрутов и SPA-fallback для остального
 app.use('/api', (req, res) => res.status(404).json({ error: 'Маршрут не найден' }));
 const INDEX_HTML = path.join(PUBLIC_DIR, 'index.html');
 if (fs.existsSync(INDEX_HTML)) {
@@ -1081,17 +1184,9 @@ io.use(async (socket, next) => {
 });
 
 // ─── Calls registry ───────────────────────────────────────────────────────────
-// Протокол событий сервер → клиент (совпадает с фронтендом):
-//   callIncoming      — входящее приглашение
-//   callStarted       — подтверждение инициатору ({ callId, chatKey, video, participants })
-//   callJoined        — подтверждение присоединившемуся ({ callId, chatKey, video, participants })
-//   callPeerJoined    — в звонок вошёл пир ({ callId, peerId })
-//   callPeerLeft      — пир вышел ({ callId, peerId, reason })
-//   callRejected      — звонок отклонён ({ callId, peerId, reason })
-//   callEnded         — звонок завершён ({ callId, chatKey, reason })
-//   callSignal        — WebRTC-сигналинг ({ callId, from, data })
-//   groupVoiceState   — состояние голосового канала группы
-//   callError         — ошибка ({ reason, callId? })
+// Протокол событий сервер → клиент:
+//   callIncoming, callStarted, callJoined, callPeerJoined, callPeerLeft,
+//   callRejected, callEnded, callSignal, groupVoiceState, callError
 const activeCalls = new Map(); // chatKey -> call
 const callsById = new Map();   // callId  -> call
 const pendingCalls = new Map(); // userId -> [invitation]
@@ -1123,7 +1218,6 @@ function removePendingInvite(userId, callId) {
   if (rest.length) pendingCalls.set(userId, rest); else pendingCalls.delete(userId);
 }
 
-// Полное завершение звонка: уведомляем всех, чистим комнаты и pending
 function endCall(call, reason = 'ended') {
   if (!callsById.has(call.callId)) return;
   unregisterCall(call);
@@ -1132,8 +1226,6 @@ function endCall(call, reason = 'ended') {
 
   io.to(room).emit('callEnded', payload);
   if (call.type === 'dm') {
-    // FIX: собеседник, который ещё не принял звонок, не был в комнате и не
-    // узнавал об отмене — "звонил" до бесконечности
     io.to(call.initiator).emit('callEnded', payload);
     io.to(call.targetId).emit('callEnded', payload);
     removePendingInvite(call.targetId, call.callId);
@@ -1157,18 +1249,15 @@ function leaveCall(userId, callId, reason = 'left') {
     s.leave(room);
     s.activeCallKeys?.delete(call.chatKey);
   }
-  // FIX(protocol): peerLeft -> callPeerLeft
   io.to(room).emit('callPeerLeft', { callId: call.callId, peerId: userId, reason });
 
   if (call.participants.size === 0 || (call.type === 'dm' && call.answered)) {
-    // DM после ответа — уход любого из двух завершает звонок
     endCall(call, reason === 'left' ? 'ended' : reason);
   } else if (call.type === 'group') {
     emitGroupVoiceState(call.groupId);
   }
 }
 
-// FIX: уборка утечек — пустые/неотвеченные звонки и протухшие приглашения
 setInterval(() => {
   const now = Date.now();
   for (const call of [...callsById.values()]) {
@@ -1190,7 +1279,6 @@ io.on('connection', (socket) => {
 
   let expiryTimer = null;
   if (socket.user.exp) {
-    // FIX: setTimeout > 2^31-1 мс срабатывает мгновенно — ограничиваем
     const msUntilExpiry = Math.min(Math.max(socket.user.exp * 1000 - Date.now(), 0), 2 ** 31 - 1);
     expiryTimer = setTimeout(() => socket.disconnect(true), msUntilExpiry);
   }
@@ -1198,13 +1286,24 @@ io.on('connection', (socket) => {
   const cameOnline = markOnline(currentUserId, socket.id);
   socket.join(currentUserId);
 
-  // Ленивое подтверждение членства в группе (сокет мог подключиться до вступления)
   async function ensureGroupRoom(groupId) {
     if (socket.groupIds.has(groupId)) return true;
     if (!(await isGroupMember(currentUserId, groupId))) return false;
     socket.groupIds.add(groupId);
     socket.join(`group:${groupId}`);
     return true;
+  }
+
+  // Проверка возможности общения в DM: друзья и никто никого не блокировал
+  async function canInteractDm(otherId) {
+    const [me, other] = await Promise.all([
+      User.findByPk(currentUserId, { attributes: ['id', 'friends', 'blockedUsers'] }),
+      User.findByPk(otherId, { attributes: ['id', 'blockedUsers'] })
+    ]);
+    if (!me || !other) return { ok: false, reason: 'not_found' };
+    if (!me.friends.includes(otherId)) return { ok: false, reason: 'not_friends' };
+    if (me.blockedUsers.includes(otherId) || other.blockedUsers.includes(currentUserId)) return { ok: false, reason: 'blocked' };
+    return { ok: true };
   }
 
   (async () => {
@@ -1238,7 +1337,6 @@ io.on('connection', (socket) => {
       pendingCalls.delete(currentUserId);
       for (const pending of pendingForUser) {
         if (Date.now() - pending.createdAt < PENDING_CALL_TTL && findCallById(pending.callId)) {
-          // FIX(protocol): incomingCall -> callIncoming
           socket.emit('callIncoming', pending);
         }
       }
@@ -1261,11 +1359,10 @@ io.on('connection', (socket) => {
       if (from.friends.length >= MAX_FRIENDS) return socket.emit('friendRequestError', { toId, reason: 'limit_reached' });
       if (to.friends.includes(currentUserId)) return socket.emit('friendRequestError', { toId, reason: 'already_friends' });
       if (to.friendRequests.includes(currentUserId)) return socket.emit('friendRequestError', { toId, reason: 'already_sent' });
-      // NEW: у нас уже есть входящая заявка от этого человека — надо её принять
       if (from.friendRequests.includes(toId)) return socket.emit('friendRequestError', { toId, reason: 'incoming_request_exists' });
-      if (to.blockedUsers.includes(currentUserId) || from.blockedUsers.includes(toId)) {
-        return socket.emit('friendRequestError', { toId, reason: 'blocked' });
-      }
+      // FIX: заблокировавшему нельзя понять, что его заблокировали — единый ответ not_found
+      if (to.blockedUsers.includes(currentUserId)) return socket.emit('friendRequestError', { toId, reason: 'not_found' });
+      if (from.blockedUsers.includes(toId)) return socket.emit('friendRequestError', { toId, reason: 'blocked' });
       if (to.friendRequests.length >= MAX_FRIEND_REQUESTS) return socket.emit('friendRequestError', { toId, reason: 'target_limit_reached' });
 
       const affected = await sequelize.query(
@@ -1317,8 +1414,6 @@ io.on('connection', (socket) => {
              RETURNING id`,
             { replacements: { fromId, myId: currentUserId, maxFriends: MAX_FRIENDS }, type: sequelize.QueryTypes.SELECT, transaction: t }
           );
-          // FIX: если вторую сторону обновить не удалось (лимит/блок/удалён) —
-          // откатываем, иначе дружба становилась односторонней
           if (!themResult.length) throw Object.assign(new Error('peer_update_failed'), { code: 'PEER_FAILED' });
           return 'ok';
         });
@@ -1353,16 +1448,21 @@ io.on('connection', (socket) => {
   socket.on('removeFriend', async (friendId) => {
     try {
       if (typeof friendId !== 'string' || !USER_ID_RE.test(friendId)) return;
-      const result = await sequelize.query(
-        `UPDATE "users" SET friends = array_remove(friends, :friendId)
-         WHERE id = :myId AND :friendId = ANY(friends) RETURNING id`,
-        { replacements: { friendId, myId: currentUserId }, type: sequelize.QueryTypes.SELECT }
-      );
-      if (!result.length) return;
-      await sequelize.query(
-        `UPDATE "users" SET friends = array_remove(friends, :myId) WHERE id = :friendId`,
-        { replacements: { friendId, myId: currentUserId }, type: sequelize.QueryTypes.UPDATE }
-      );
+      // FIX: оба апдейта в одной транзакции — иначе дружба могла остаться односторонней
+      const removed = await sequelize.transaction(async (t) => {
+        const result = await sequelize.query(
+          `UPDATE "users" SET friends = array_remove(friends, :friendId)
+           WHERE id = :myId AND :friendId = ANY(friends) RETURNING id`,
+          { replacements: { friendId, myId: currentUserId }, type: sequelize.QueryTypes.SELECT, transaction: t }
+        );
+        if (!result.length) return false;
+        await sequelize.query(
+          `UPDATE "users" SET friends = array_remove(friends, :myId) WHERE id = :friendId`,
+          { replacements: { friendId, myId: currentUserId }, type: sequelize.QueryTypes.UPDATE, transaction: t }
+        );
+        return true;
+      });
+      if (!removed) return;
       io.to(currentUserId).emit('friendRemoved', { id: friendId });
       io.to(friendId).emit('friendRemoved', { id: currentUserId });
     } catch (err) { logger.error('Remove friend error', { socketId: socket.id, error: err.message, stack: err.stack }); }
@@ -1370,38 +1470,42 @@ io.on('connection', (socket) => {
 
   // ─── DM Messages ────────────────────────────────────────────────────────────
   socket.on('sendMessage', async ({ toId, text, image, clientId } = {}) => {
+    const cid = sanitizeClientId(clientId);
+    let claimedImage = null;
     try {
       if (!canSendMessage(currentUserId)) return socket.emit('rateLimited', 'sendMessage');
       if (typeof toId !== 'string' || !USER_ID_RE.test(toId)) return;
       if (text !== undefined && text !== null && typeof text !== 'string') return;
       const cleanText = (text || '').trim();
-      const img = validateImagePayload(image);
-      if (!img.ok) return socket.emit('sendMessageError', { toId, clientId, reason: img.reason });
+      const img = validateImagePath(image);
+      if (!img.ok) return socket.emit('sendMessageError', { toId, clientId: cid, reason: img.reason });
       if (!cleanText && !img.image) return;
-      if (cleanText.length > MAX_TEXT_LENGTH) return socket.emit('sendMessageError', { toId, clientId, reason: 'text_too_long' });
+      if (cleanText.length > MAX_TEXT_LENGTH) return socket.emit('sendMessageError', { toId, clientId: cid, reason: 'text_too_long' });
 
-      const [meUser, toUser] = await Promise.all([
-        User.findByPk(currentUserId, { attributes: ['id', 'friends', 'blockedUsers'] }),
-        User.findByPk(toId, { attributes: ['id', 'blockedUsers'] })
-      ]);
-      if (!meUser || !toUser || !meUser.friends.includes(toId)) {
-        return socket.emit('sendMessageError', { toId, clientId, reason: 'not_friends' });
-      }
-      if (toUser.blockedUsers.includes(currentUserId) || meUser.blockedUsers.includes(toId)) {
-        return socket.emit('sendMessageError', { toId, clientId, reason: 'blocked' });
+      const access = await canInteractDm(toId);
+      if (!access.ok) return socket.emit('sendMessageError', { toId, clientId: cid, reason: access.reason });
+
+      // FIX: файл должен быть загружен именно этим пользователем и ещё не использован
+      if (img.image) {
+        if (!(await claimUpload(img.image, currentUserId))) {
+          return socket.emit('sendMessageError', { toId, clientId: cid, reason: 'invalid_image' });
+        }
+        claimedImage = img.image;
       }
 
       const msg = await Message.create({
         chatKey: getChatKey(currentUserId, toId), groupId: null, from: currentUserId, to: toId,
         text: cleanText, image: img.image, type: img.image ? 'image' : 'text'
       });
+      claimedImage = null;
 
-      const msgData = { ...serializeMessage(msg), clientId };
+      const msgData = { ...serializeMessage(msg), clientId: cid };
       io.to(currentUserId).emit('newMessage', { chatWith: toId, msg: msgData });
       io.to(toId).emit('newMessage', { chatWith: currentUserId, msg: msgData });
     } catch (err) {
+      if (claimedImage) await deleteUploadedFile(claimedImage);
       logger.error('Send message error', { socketId: socket.id, error: err.message, stack: err.stack });
-      socket.emit('sendMessageError', { toId, clientId, reason: 'server_error' });
+      socket.emit('sendMessageError', { toId, clientId: cid, reason: 'server_error' });
     }
   });
 
@@ -1428,21 +1532,20 @@ io.on('connection', (socket) => {
       } while (rows.length === BATCH);
 
       if (total > 0) {
-        // NEW: отправитель видит "прочитано", остальные вкладки сбрасывают счётчик
         io.to(friendId).emit('messagesRead', { by: currentUserId, count: total });
         socket.to(currentUserId).emit('unreadCleared', { chatWith: friendId });
       }
     } catch (err) { logger.error('Mark read error', { socketId: socket.id, error: err.message, stack: err.stack }); }
   });
 
-  // NEW: индикатор набора текста
   socket.on('typing', async ({ toId, groupId, isTyping } = {}) => {
     try {
       if (!canTyping(currentUserId)) return;
       const payload = { from: currentUserId, isTyping: !!isTyping };
       if (typeof toId === 'string' && USER_ID_RE.test(toId)) {
-        const me = await User.findByPk(currentUserId, { attributes: ['friends'] });
-        if (!me || !me.friends.includes(toId)) return;
+        // FIX: учитываем блокировку в обе стороны, а не только дружбу
+        const access = await canInteractDm(toId);
+        if (!access.ok) return;
         io.to(toId).emit('typing', payload);
       } else if (typeof groupId === 'string' && UUID_RE.test(groupId)) {
         if (!(await ensureGroupRoom(groupId))) return;
@@ -1453,29 +1556,39 @@ io.on('connection', (socket) => {
 
   // ─── Group Messages ─────────────────────────────────────────────────────────
   socket.on('groupMessage', async ({ groupId, text, image, clientId } = {}) => {
+    const cid = sanitizeClientId(clientId);
+    let claimedImage = null;
     try {
       if (!canSendMessage(currentUserId)) return socket.emit('rateLimited', 'sendMessage');
       if (typeof groupId !== 'string' || !UUID_RE.test(groupId)) return;
       if (text !== undefined && text !== null && typeof text !== 'string') return;
       const cleanText = (text || '').trim();
-      const img = validateImagePayload(image);
-      if (!img.ok) return socket.emit('sendMessageError', { groupId, clientId, reason: img.reason });
+      const img = validateImagePath(image);
+      if (!img.ok) return socket.emit('sendMessageError', { groupId, clientId: cid, reason: img.reason });
       if (!cleanText && !img.image) return;
-      if (cleanText.length > MAX_TEXT_LENGTH) return socket.emit('sendMessageError', { groupId, clientId, reason: 'text_too_long' });
+      if (cleanText.length > MAX_TEXT_LENGTH) return socket.emit('sendMessageError', { groupId, clientId: cid, reason: 'text_too_long' });
 
-      if (!(await ensureGroupRoom(groupId))) return socket.emit('sendMessageError', { groupId, clientId, reason: 'not_member' });
+      if (!(await ensureGroupRoom(groupId))) return socket.emit('sendMessageError', { groupId, clientId: cid, reason: 'not_member' });
+
+      if (img.image) {
+        if (!(await claimUpload(img.image, currentUserId))) {
+          return socket.emit('sendMessageError', { groupId, clientId: cid, reason: 'invalid_image' });
+        }
+        claimedImage = img.image;
+      }
 
       const msg = await Message.create({
         chatKey: null, groupId, from: currentUserId, to: null,
         text: cleanText, image: img.image, type: img.image ? 'image' : 'text'
       });
-      // отправитель свои сообщения "прочитал"
+      claimedImage = null;
       await GroupReadState.upsert({ groupId, userId: currentUserId, lastReadAt: msg.createdAt });
 
-      io.to(`group:${groupId}`).emit('newGroupMessage', { groupId, msg: { ...serializeMessage(msg), clientId } });
+      io.to(`group:${groupId}`).emit('newGroupMessage', { groupId, msg: { ...serializeMessage(msg), clientId: cid } });
     } catch (err) {
+      if (claimedImage) await deleteUploadedFile(claimedImage);
       logger.error('Group message error', { socketId: socket.id, error: err.message, stack: err.stack });
-      socket.emit('sendMessageError', { groupId, clientId, reason: 'server_error' });
+      socket.emit('sendMessageError', { groupId, clientId: cid, reason: 'server_error' });
     }
   });
 
@@ -1483,8 +1596,6 @@ io.on('connection', (socket) => {
     try {
       if (typeof groupId !== 'string' || !UUID_RE.test(groupId)) return;
       if (!(await ensureGroupRoom(groupId))) return;
-      // FIX: раньше ставился общий флаг read на сообщениях — прочтение одним
-      // участником обнуляло непрочитанные у всех
       await GroupReadState.upsert({ groupId, userId: currentUserId, lastReadAt: new Date() });
       socket.to(currentUserId).emit('unreadCleared', { groupId });
     } catch (err) { logger.error('Mark group read error', { socketId: socket.id, error: err.message, stack: err.stack }); }
@@ -1502,22 +1613,29 @@ io.on('connection', (socket) => {
       if (!membership) return socket.emit('groupError', { groupId, reason: 'not_member' });
       if (membership.role !== 'owner') return socket.emit('groupError', { groupId, reason: 'not_owner' });
 
-      const memberCount = await GroupMember.count({ where: { groupId } });
-      if (memberCount >= MAX_GROUP_MEMBERS) return socket.emit('groupError', { groupId, reason: 'limit_reached' });
-
       const [owner, target] = await Promise.all([User.findByPk(currentUserId), User.findByPk(userId)]);
       if (!owner || !owner.friends.includes(userId)) return socket.emit('groupError', { groupId, reason: 'not_friends' });
       if (!target) return socket.emit('groupError', { groupId, reason: 'not_found' });
       if (target.blockedUsers.includes(currentUserId) || owner.blockedUsers.includes(userId)) {
         return socket.emit('groupError', { groupId, reason: 'blocked' });
       }
-      // FIX: лимит групп проверяем и для добавляемого
-      const targetGroupCount = await GroupMember.count({ where: { userId } });
-      if (targetGroupCount >= MAX_GROUPS_PER_USER) return socket.emit('groupError', { groupId, reason: 'target_limit_reached' });
 
-      const [, created] = await GroupMember.findOrCreate({ where: { groupId, userId }, defaults: { role: 'member' } });
-      if (!created) return socket.emit('groupError', { groupId, reason: 'already_member' });
-      await GroupReadState.upsert({ groupId, userId, lastReadAt: new Date() });
+      // FIX: проверка лимитов и вставка под advisory-lock группы — без гонки на count()
+      const outcome = await sequelize.transaction(async (t) => {
+        await sequelize.query('SELECT pg_advisory_xact_lock(hashtext(:key))',
+          { replacements: { key: `group:${groupId}` }, transaction: t });
+        const memberCount = await GroupMember.count({ where: { groupId }, transaction: t });
+        if (memberCount >= MAX_GROUP_MEMBERS) return 'limit_reached';
+        const targetGroupCount = await GroupMember.count({ where: { userId }, transaction: t });
+        if (targetGroupCount >= MAX_GROUPS_PER_USER) return 'target_limit_reached';
+        const [, created] = await GroupMember.findOrCreate({
+          where: { groupId, userId }, defaults: { role: 'member' }, transaction: t
+        });
+        if (!created) return 'already_member';
+        await GroupReadState.upsert({ groupId, userId, lastReadAt: new Date() }, { transaction: t });
+        return 'ok';
+      });
+      if (outcome !== 'ok') return socket.emit('groupError', { groupId, reason: outcome });
 
       joinUserToGroupRoom(userId, groupId);
 
@@ -1544,16 +1662,21 @@ io.on('connection', (socket) => {
       if (!group) return;
 
       if (membership.role === 'owner') {
-        const avatarToDelete = group.avatar;
+        // FIX: собираем файлы картинок ДО удаления сообщений, чтобы не оставлять мусор на диске
+        const imageRows = await Message.findAll({
+          where: { groupId, image: { [Op.ne]: null } }, attributes: ['image']
+        });
+        const filesToDelete = imageRows.map(r => r.image);
+        if (group.avatar) filesToDelete.push(group.avatar);
+
         await sequelize.transaction(async (t) => {
           await Message.destroy({ where: { groupId }, transaction: t });
           await GroupReadState.destroy({ where: { groupId }, transaction: t });
           await GroupMember.destroy({ where: { groupId }, transaction: t });
           await group.destroy({ transaction: t });
         });
-        if (avatarToDelete) await deleteUploadedFile(avatarToDelete);
+        await deleteUploadedFiles(filesToDelete);
 
-        // FIX: завершаем активный звонок группы
         const call = activeCalls.get(groupChatKey(groupId));
         if (call) endCall(call, 'group_deleted');
 
@@ -1570,7 +1693,7 @@ io.on('connection', (socket) => {
         if (call) leaveCall(currentUserId, call.callId, 'left_group');
         leaveUserFromGroupRoom(currentUserId, groupId);
         io.to(`group:${groupId}`).emit('groupMemberLeft', { groupId, userId: currentUserId });
-        io.to(currentUserId).emit('groupDeleted', { groupId }); // все вкладки вышедшего
+        io.to(currentUserId).emit('groupDeleted', { groupId });
       }
     } catch (err) {
       logger.error('Leave group error', { socketId: socket.id, error: err.message, stack: err.stack });
@@ -1594,7 +1717,6 @@ io.on('connection', (socket) => {
       await targetMembership.destroy();
       await GroupReadState.destroy({ where: { groupId, userId } });
 
-      // FIX: выкидываем и из активного звонка группы
       const call = activeCalls.get(groupChatKey(groupId));
       if (call) leaveCall(userId, call.callId, 'kicked');
       leaveUserFromGroupRoom(userId, groupId);
@@ -1610,17 +1732,16 @@ io.on('connection', (socket) => {
   // ─── Calls (WebRTC signaling) ──────────────────────────────────────────────
   socket.on('callStart', async ({ toId, groupId, video } = {}) => {
     try {
+      // FIX: лимит на инициацию звонков — нельзя «прозвонить» всех друзей за секунду
+      if (!canStartCall(currentUserId)) return socket.emit('callError', { reason: 'rate_limited' });
+
       if (typeof toId === 'string' && USER_ID_RE.test(toId)) {
         if (toId === currentUserId) return socket.emit('callError', { reason: 'bad_request' });
-        const [me, target] = await Promise.all([
-          User.findByPk(currentUserId, { attributes: ['id', 'nickname', 'avatar', 'friends', 'blockedUsers'] }),
-          User.findByPk(toId, { attributes: ['id', 'blockedUsers'] })
-        ]);
-        if (!me || !target || !me.friends.includes(toId)) return socket.emit('callError', { reason: 'not_friend' });
-        // FIX: не учитывалась блокировка со стороны собеседника
-        if (me.blockedUsers.includes(toId) || target.blockedUsers.includes(currentUserId)) {
-          return socket.emit('callError', { reason: 'blocked' });
-        }
+        const access = await canInteractDm(toId);
+        if (!access.ok) return socket.emit('callError', { reason: access.reason === 'not_friends' ? 'not_friend' : access.reason });
+        const me = await User.findByPk(currentUserId, { attributes: ['id', 'nickname', 'avatar'] });
+        if (!me) return;
+
         const chatKey = dmChatKey(currentUserId, toId);
         if (activeCalls.has(chatKey)) return socket.emit('callError', { reason: 'busy' });
 
@@ -1633,8 +1754,6 @@ io.on('connection', (socket) => {
         socket.join(`call:${call.callId}`);
         socket.activeCallKeys.add(chatKey);
 
-        // FIX(protocol): callStarted теперь содержит participants (пиры, к
-        // которым нужно подключаться; в новом DM их ещё нет)
         socket.emit('callStarted', {
           callId: call.callId, chatKey, video: call.video, isGroup: false,
           participants: [...call.participants].filter(id => id !== currentUserId)
@@ -1643,7 +1762,6 @@ io.on('connection', (socket) => {
           callId: call.callId, chatKey, isGroup: false, video: !!video,
           from: currentUserId, fromNick: me.nickname, fromAvatar: me.avatar, createdAt: Date.now()
         };
-        // FIX(protocol): incomingCall -> callIncoming
         if (isOnline(toId)) io.to(toId).emit('callIncoming', invitation);
         else {
           const queued = pendingCalls.get(toId) || [];
@@ -1666,9 +1784,6 @@ io.on('connection', (socket) => {
           registerCall(call);
         }
 
-        // FIX(protocol): инициатор группового звонка сразу становится участником:
-        // попадает в participants и в комнату call:<id>, чтобы остальные могли
-        // строить к нему peer-соединения и он получал callPeerJoined/callPeerLeft.
         const existingPeers = [...call.participants].filter(id => id !== currentUserId);
         const alreadyIn = call.participants.has(currentUserId);
         call.participants.add(currentUserId);
@@ -1679,7 +1794,9 @@ io.on('connection', (socket) => {
         }
 
         if (isNewCall) {
-          io.to(`group:${groupId}`).except(socket.id).emit('callIncoming', {
+          // FIX: исключаем ВСЕ сокеты инициатора (комната userId), а не только текущий —
+          // иначе другие его вкладки получали «входящий звонок» от самого себя
+          io.to(`group:${groupId}`).except(currentUserId).emit('callIncoming', {
             callId: call.callId, chatKey, isGroup: true, groupId, video: !!video,
             from: currentUserId, fromNick: me.nickname, fromAvatar: me.avatar, createdAt: Date.now()
           });
@@ -1722,7 +1839,6 @@ io.on('connection', (socket) => {
       socket.join(`call:${call.callId}`);
       socket.activeCallKeys.add(call.chatKey);
 
-      // FIX(protocol): callParticipants -> callJoined, peerJoined -> callPeerJoined
       socket.emit('callJoined', {
         callId: call.callId, chatKey: call.chatKey, video: call.video,
         isGroup: call.type === 'group', groupId: call.groupId || null,
@@ -1742,10 +1858,8 @@ io.on('connection', (socket) => {
     try {
       const call = findCallById(callId);
       if (!call) return;
-      // FIX(protocol): в callRejected передаём reason (rejected | busy | timeout)
       const rejectReason = (typeof reason === 'string' && REJECT_REASONS.has(reason)) ? reason : 'rejected';
       if (call.type === 'dm') {
-        // FIX: отклонить может только адресат
         if (currentUserId !== call.targetId) return;
         io.to(call.initiator).emit('callRejected', { callId: call.callId, peerId: currentUserId, reason: rejectReason });
         endCall(call, rejectReason);
@@ -1763,17 +1877,20 @@ io.on('connection', (socket) => {
   });
 
   socket.on('callSignal', ({ callId, to, data } = {}) => {
+    // FIX: лимит частоты и размера — сигналинг нельзя использовать как канал для флуда
+    if (!canSignal(currentUserId)) return;
     const call = findCallById(callId);
     if (!call || typeof to !== 'string' || data === undefined) return;
-    // FIX: сигналить можно только участникам этого же звонка
     if (!call.participants.has(currentUserId) || !call.participants.has(to) || to === currentUserId) return;
+    let size;
+    try { size = JSON.stringify(data).length; } catch { return; }
+    if (size > MAX_SIGNAL_BYTES) return;
     io.to(to).emit('callSignal', { callId: call.callId, from: currentUserId, data });
   });
 
   socket.on('callLeave', ({ callId } = {}) => {
     const call = findCallById(callId);
     if (!call) return;
-    // инициатор DM отменяет до ответа
     if (call.type === 'dm' && !call.answered && currentUserId === call.initiator) return endCall(call, 'cancelled');
     leaveCall(currentUserId, callId, 'left');
   });
@@ -1787,7 +1904,6 @@ io.on('connection', (socket) => {
     for (const chatKey of [...socket.activeCallKeys]) {
       const call = activeCalls.get(chatKey);
       if (!call) continue;
-      // если у пользователя остались другие сокеты в комнате звонка — не выкидываем
       const stillInRoom = userSockets(currentUserId).some(s => s.rooms.has(`call:${call.callId}`));
       if (stillInRoom) continue;
       if (call.type === 'dm' && !call.answered && currentUserId === call.initiator) endCall(call, 'cancelled');
@@ -1843,9 +1959,19 @@ async function ensureSchema() {
         PRIMARY KEY ("group_id", "user_id")
       );
     `);
-    logger.info('✅ Миграция: таблицы groups/group_members/group_read_states проверены');
+    // NEW: таблица незакреплённых загрузок
+    await sequelize.query(`
+      CREATE TABLE IF NOT EXISTS "uploads" (
+        "path" VARCHAR(255) PRIMARY KEY,
+        "owner_id" VARCHAR(255) NOT NULL,
+        "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await sequelize.query(`CREATE INDEX IF NOT EXISTS "uploads_owner_id" ON "uploads" ("owner_id");`);
+    await sequelize.query(`CREATE INDEX IF NOT EXISTS "uploads_created_at" ON "uploads" ("created_at");`);
+    logger.info('✅ Миграция: таблицы groups/group_members/group_read_states/uploads проверены');
   } catch (err) {
-    logger.error('❌ Ошибка миграции (groups)', { error: err.message, stack: err.stack });
+    logger.error('❌ Ошибка миграции (таблицы)', { error: err.message, stack: err.stack });
   }
 
   try {
@@ -1867,9 +1993,9 @@ async function ensureSchema() {
     }
     if (tableSet.has('users')) {
       const cols = await qi.describeTable('users');
-      if (!cols.password_changed_at) {
-        logger.info('🔧 Миграция: добавляю колонку users.password_changed_at');
-        await qi.addColumn('users', 'password_changed_at', { type: DataTypes.DATE, allowNull: true });
+      if (!cols.token_version) {
+        logger.info('🔧 Миграция: добавляю колонку users.token_version');
+        await sequelize.query(`ALTER TABLE "users" ADD COLUMN "token_version" INTEGER NOT NULL DEFAULT 0;`);
       }
     }
   } catch (err) {
@@ -1877,8 +2003,8 @@ async function ensureSchema() {
   }
 
   const indexes = [
-    ['messages_chat_key_created_at', 'messages', '"chat_key", "created_at"'],
-    ['messages_group_id_created_at', 'messages', '"group_id", "created_at"'],
+    ['messages_chat_key_created_at_id', 'messages', '"chat_key", "created_at", "id"'],
+    ['messages_group_id_created_at_id', 'messages', '"group_id", "created_at", "id"'],
     ['messages_to_read', 'messages', '"to", "read"'],
     ['messages_from', 'messages', '"from"']
   ];
@@ -1918,6 +2044,9 @@ const PORT = process.env.PORT || 3000;
         logger.error('❌ Sync error', { error: err.message, stack: err.stack });
       }
     }
+    // NEW: уборка мусора в uploads при старте и раз в час
+    cleanupUploads().catch(err => logger.warn('cleanupUploads (startup)', { error: err.message }));
+    setInterval(() => cleanupUploads().catch(err => logger.warn('cleanupUploads', { error: err.message })), 60 * 60 * 1000).unref();
   } else {
     logger.warn('⚠️  Сервер запускается без подтверждённого подключения к БД.');
   }
@@ -1940,7 +2069,6 @@ function gracefulShutdown(signal, exitCode = 0) {
   shuttingDown = true;
   logger.info(`Получен ${signal}, штатная остановка сервера...`);
 
-  // FIX: io.close() сам закрывал http-сервер, и server.close() вызывался дважды
   io.disconnectSockets(true);
   server.close(async () => {
     try {

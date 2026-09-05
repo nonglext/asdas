@@ -1,32 +1,45 @@
-﻿/* ═══════════════════════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════════════════
    Reset & Base
    ═══════════════════════════════════════════════════════════════════════════ */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+.has-session #auth-screen { display: none !important; }
+
 button, input, textarea, select { font: inherit; color: inherit; }
-button { background: none; border: 0; cursor: pointer; }
+button { background: none; border: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 button:disabled { cursor: not-allowed; }
 img, svg, video { display: block; max-width: 100%; }
+img { -webkit-user-drag: none; user-select: none; }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { list-style: none; }
 
 :root {
   color-scheme: dark;
 
-  /* ── Поверхности (Discord dark) ── */
-  --bg:  #1e1f22;   /* рельса, инпуты, самое тёмное */
-  --bg1: #2b2d31;   /* сайдбар, панель участников, футеры модалок */
-  --bg2: #313338;   /* область чата, модалки */
-  --bg3: #383a40;   /* поле ввода сообщений */
-  --bg4: #404249;   /* активные элементы */
-  --bg5: #4e5058;   /* серые кнопки */
-  --bg6: #6d6f78;   /* hover серых кнопок */
-  --panel-user: #232428;
+  /* ── Поверхности (Discord dark, точные токены) ── */
+  --bg:  #1e1f22;   /* background-tertiary: рельса, инпуты */
+  --bg1: #2b2d31;   /* background-secondary: сайдбар, панель участников */
+  --bg2: #313338;   /* background-primary: чат, модалки */
+  --bg3: #383a40;   /* channel-textarea-background */
+  --bg4: #404249;   /* background-secondary-alt / active */
+  --bg5: #4e5058;   /* button-secondary-background */
+  --bg6: #6d6f78;   /* button-secondary-background-hover */
+  --bg7: #80848e;   /* button-secondary-background-active */
+  --panel-user: #232428;   /* background-secondary-alt (user panel) */
+  --bg-floating: #111214;  /* background-floating: тултипы, поповеры */
 
-  --hover: #35373c;
+  /* Модификаторы (Discord background-modifier-*) */
+  --hover:    rgba(78,80,88,0.30);   /* background-modifier-hover */
+  --active:   rgba(78,80,88,0.48);   /* background-modifier-active */
+  --selected: rgba(78,80,88,0.60);   /* background-modifier-selected */
+  --accent-modifier: rgba(88,101,242,0.16);
   --msg-hover: #2e3035;
   --divider: #3f4147;
   --border: rgba(255,255,255,0.06);
+  --border-subtle: rgba(78,80,88,0.48);
 
-  /* ── Акцент ── */
+  /* ── Акцент (brand) ── */
   --accent: #5865f2;
   --accent-h: #4752c4;
   --accent-a: #3c45a5;
@@ -35,32 +48,47 @@ img, svg, video { display: block; max-width: 100%; }
   --accent-border: rgba(88,101,242,0.4);
   --accent-gradient: linear-gradient(135deg, #5865f2, #7289da);
   --neutral-avatar-gradient: linear-gradient(135deg, #5865f2, #4752c4);
+  --link: #00a8fc;          /* text-link */
+  --focus: #00a8fc;         /* focus-primary */
+  --mention-bg: rgba(88,101,242,0.3);
+  --mention-fg: #c9cdfb;
 
   /* ── Текст ── */
-  --text-h: #f2f3f5;
-  --text:   #dbdee1;
-  --text2:  #b5bac1;
-  --text3:  #949ba4;
-  --text4:  #80848e;
+  --text-h: #f2f3f5;   /* header-primary */
+  --text:   #dbdee1;   /* text-normal */
+  --text2:  #b5bac1;   /* interactive-normal / header-secondary */
+  --text3:  #949ba4;   /* text-muted */
+  --text4:  #80848e;   /* text-muted-alt / placeholder */
+  --text-active: #ffffff; /* interactive-active */
+  --text-danger: #fa777c;
+  --text-positive: #2dc770;
+  --text-warning: #f0b232;
 
   /* ── Статусы ── */
-  --green: #23a559;
+  --green: #23a559;         /* status-online */
   --green-h: #1a6334;
+  --green-btn: #248046;     /* button-positive-background */
+  --green-btn-h: #1a6334;
+  --green-btn-a: #15562b;
   --green-bg: rgba(35,165,89,0.16);
   --green-border: rgba(35,165,89,0.4);
-  --red: #f23f43;
-  --red-h: #da373c;
+  --yellow: #f0b232;        /* status-idle */
+  --red: #f23f43;           /* status-dnd / unread */
+  --red-h: #da373c;         /* button-danger-background */
+  --red-a: #a12828;         /* button-danger-background-hover */
+  --red-aa: #8e2a2e;        /* button-danger-background-active */
   --red-bg: rgba(242,63,67,0.12);
   --red-bg2: rgba(242,63,67,0.24);
   --red-border: rgba(242,63,67,0.4);
+  --grey-status: #80848e;   /* status-offline */
   --gold: #f0b132;
 
-  /* ── Discord-палитра для голосовых/звонков ── */
+  /* ── Discord-палитра для голосовых/звонков (алиасы) ── */
   --dc-bg: #1e1f22;
   --dc-bg2: #313338;
   --dc-bg3: #404249;
   --dc-voice-bg: transparent;
-  --dc-voice-bg-h: #35373c;
+  --dc-voice-bg-h: rgba(78,80,88,0.3);
   --dc-muted: #949ba4;
   --dc-muted2: #b5bac1;
   --dc-green: #23a559;
@@ -69,19 +97,37 @@ img, svg, video { display: block; max-width: 100%; }
   --dc-red: #da373c;
   --dc-red-h: #a12828;
 
-  /* ── Прочее ── */
+  /* ── Тени (Discord elevation-*) ── */
+  --shadow-stroke: 0 0 0 1px rgba(4,4,5,0.15);
   --shadow-header: 0 1px 0 rgba(4,4,5,0.2), 0 1.5px 0 rgba(6,6,7,0.05), 0 2px 0 rgba(4,4,5,0.05);
+  --shadow-low: var(--shadow-header);
+  --shadow-medium: 0 4px 4px rgba(0,0,0,0.16);
   --shadow: 0 8px 16px rgba(0,0,0,0.24);
-  --shadow-lg: 0 8px 24px rgba(0,0,0,0.45);
+  --shadow-lg: 0 8px 16px rgba(0,0,0,0.24);
+  --shadow-modal: 0 0 0 1px rgba(30,31,34,0.6), 0 2px 10px 0 rgba(0,0,0,0.2);
+
+  /* ── Геометрия ── */
   --radius: 8px;
   --radius-sm: 4px;
+  --radius-xs: 3px;
   --radius-lg: 8px;
   --rail-w: 72px;
   --sidebar-w: 240px;
+  --members-w: 240px;
   --header-h: 48px;
-  --font: 'Inter', 'gg sans', 'Noto Sans', 'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif;
+  --user-panel-h: 52px;
+
+  /* ── Шрифты ── */
+  --font: 'gg sans', 'Noto Sans', 'Inter', 'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif;
+  --font-display: var(--font);
+  --font-code: Consolas, 'Andale Mono WT', 'Andale Mono', 'Lucida Console', 'Lucida Sans Typewriter',
+               'DejaVu Sans Mono', 'Bitstream Vera Sans Mono', 'Liberation Mono', 'Nimbus Mono L',
+               Monaco, 'Courier New', Courier, monospace;
+
+  /* ── Анимации ── */
   --ease: 0.17s ease;
   --ease-fast: 0.1s ease;
+  --ease-slow: 0.25s ease;
 
   --z-dropdown: 100;
   --z-toast: 500;
@@ -103,6 +149,8 @@ html, body {
   overscroll-behavior: none;
 }
 
+::selection { background: rgba(88,101,242,0.45); color: #fff; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
@@ -112,15 +160,18 @@ html, body {
   }
 }
 
+/* Фокус с клавиатуры — фирменное кольцо Discord */
 :is(button, [role="button"], [tabindex]:not([tabindex="-1"]), a[href],
     .friend-item, .s-item, .gm-item, .picker-item, .me-card):focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus);
 }
+:is(input, textarea, select):focus-visible { outline: none; }
 
 /* ── Скроллбары ── */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
 ::-webkit-scrollbar-thumb {
   background: #1a1b1e; border-radius: 4px;
   border: 2px solid transparent; background-clip: padding-box; min-height: 40px;
@@ -130,7 +181,7 @@ html, body {
   background: var(--bg1); border: 4px solid var(--bg2); border-radius: 8px;
 }
 .messages::-webkit-scrollbar-thumb, .group-messages::-webkit-scrollbar-thumb {
-  background: #1a1b1e; border: 4px solid transparent; background-clip: padding-box; border-radius: 8px;
+  background: #1a1b1e; border: 4px solid transparent; background-clip: padding-box; border-radius: 8px; min-height: 44px;
 }
 .sidebar-body, .messages, .group-messages, .search-drop, .modal-box,
 #group-members-list, .friends-picker, .group-members-list,
@@ -139,10 +190,14 @@ html, body {
   scrollbar-color: #1a1b1e transparent;
   overscroll-behavior: contain;
 }
-.sidebar-body { scrollbar-color: transparent transparent; }
-.sidebar-body:hover { scrollbar-color: #1a1b1e transparent; }
-.sidebar-body::-webkit-scrollbar-thumb { background: transparent; }
-.sidebar-body:hover::-webkit-scrollbar-thumb { background: #1a1b1e; background-clip: padding-box; }
+.messages, .group-messages { scrollbar-width: auto; scrollbar-color: #1a1b1e var(--bg1); }
+/* Auto-hide скроллбар в сайдбаре и панели участников (как в Discord) */
+.sidebar-body, #group-members-list { scrollbar-color: transparent transparent; }
+.sidebar-body:hover, #group-members-list:hover { scrollbar-color: #1a1b1e transparent; }
+.sidebar-body::-webkit-scrollbar-thumb, #group-members-list::-webkit-scrollbar-thumb { background: transparent; }
+.sidebar-body:hover::-webkit-scrollbar-thumb, #group-members-list:hover::-webkit-scrollbar-thumb {
+  background: #1a1b1e; background-clip: padding-box;
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Примитивы: аватары, кнопки, поля, бейджи
@@ -157,40 +212,49 @@ html, body {
   overflow: hidden;
   color: #fff; font-weight: 600;
   background: var(--neutral-avatar-gradient);
+  user-select: none;
   transition: filter var(--ease-fast);
 }
 :is(.me-avatar, .s-mini-av, .f-av, .chat-head-avatar, .modal-avatar, .edit-avatar,
-    .gm-av, .g-msg-av, .group-av-cell) img {
-  width: 100%; height: 100%; object-fit: cover;
+    .gm-av, .g-msg-av, .group-av-cell, .group-voice-member-avatar,
+    .call-tile-avatar, .call-incoming-avatar) img {
+  width: 100%; height: 100%; object-fit: cover; border-radius: inherit;
 }
 
 .me-avatar        { width: 32px; height: 32px; font-size: 13px; background: var(--accent); }
 .s-mini-av        { width: 32px; height: 32px; font-size: 13px; background: var(--accent); }
 .f-av             { width: 32px; height: 32px; font-size: 13px; }
-.chat-head-avatar { width: 32px; height: 32px; font-size: 13px; }
+.chat-head-avatar { width: 24px; height: 24px; font-size: 11px; }
 .modal-avatar, .edit-avatar { width: 80px; height: 80px; font-size: 30px; background: var(--accent); }
 .gm-av            { width: 32px; height: 32px; font-size: 12px; }
-.g-msg-av         { width: 40px; height: 40px; font-size: 15px; margin-top: 2px; }
+.g-msg-av         { width: 40px; height: 40px; font-size: 15px; margin-top: 2px; cursor: pointer; }
+.g-msg-av:hover   { filter: brightness(1.08); }
 
-/* Точка статуса */
+/* Точка статуса (маска через бордер цвета подложки) */
 .f-dot {
   position: absolute; bottom: -2px; right: -2px;
   box-sizing: content-box;
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--green);
   border: 3px solid var(--bg1);
+  pointer-events: none;
 }
-.chat-head-avatar .f-dot { border-color: var(--bg2); }
+.f-dot.idle    { background: var(--yellow); }
+.f-dot.dnd     { background: var(--red); }
+.f-dot.offline { background: var(--grey-status); box-shadow: inset 0 0 0 2px var(--bg1); }
+.chat-head-avatar .f-dot { width: 6px; height: 6px; border-width: 2px; border-color: var(--bg2); }
 .me-avatar-wrap .f-dot { border-color: var(--panel-user); }
-.modal-avatar .f-dot { width: 14px; height: 14px; bottom: 2px; right: 2px; border-width: 4px; border-color: var(--bg2); }
+.modal-avatar .f-dot { width: 16px; height: 16px; bottom: 2px; right: 2px; border-width: 5px; border-color: var(--bg2); }
 
-/* Кнопки */
-.btn-primary, .btn-secondary, .btn-ghost {
-  display: inline-flex; align-items: center; justify-content: center;
-  min-height: 38px; padding: 8px 16px;
-  border-radius: 3px;
+/* Кнопки (Discord: 38px, radius 3px, 14px/500) */
+.btn-primary, .btn-secondary, .btn-ghost, .btn-success, .btn-danger {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 38px; min-width: 96px; padding: 2px 16px;
+  border-radius: var(--radius-xs);
   font-size: 14px; font-weight: 500; line-height: 16px;
-  transition: background var(--ease), color var(--ease);
+  user-select: none; white-space: nowrap;
+  transition: background-color var(--ease), color var(--ease), opacity var(--ease);
 }
 .btn-primary { background: var(--accent); color: #fff; }
 .btn-primary:hover { background: var(--accent-h); }
@@ -199,111 +263,166 @@ html, body {
 
 .btn-secondary { background: var(--bg5); color: #fff; }
 .btn-secondary:hover { background: var(--bg6); }
-.btn-secondary:disabled { opacity: 0.5; }
+.btn-secondary:active { background: var(--bg7); }
+.btn-secondary:disabled { opacity: 0.5; background: var(--bg5); }
 .btn-secondary.btn-danger-outline { background: transparent; color: var(--red); box-shadow: inset 0 0 0 1px var(--red-border); }
 .btn-secondary.btn-danger-outline:hover { background: var(--red-h); color: #fff; box-shadow: none; }
+.btn-secondary.btn-danger-outline:active { background: var(--red-a); color: #fff; box-shadow: none; }
 
-.btn-ghost { background: transparent; color: var(--text); }
+.btn-success { background: var(--green-btn); color: #fff; }
+.btn-success:hover { background: var(--green-btn-h); }
+.btn-success:active { background: var(--green-btn-a); }
+.btn-success:disabled { opacity: 0.5; background: var(--green-btn); }
+
+.btn-danger { background: var(--red-h); color: #fff; }
+.btn-danger:hover { background: var(--red-a); }
+.btn-danger:active { background: var(--red-aa); }
+.btn-danger:disabled { opacity: 0.5; background: var(--red-h); }
+
+.btn-ghost { background: transparent; color: #fff; min-width: 0; }
 .btn-ghost:hover { text-decoration: underline; }
+.btn-ghost:disabled { opacity: 0.5; text-decoration: none; }
 
 .btn-block { width: 100%; }
+.btn-sm { min-height: 32px; min-width: 60px; padding: 2px 16px; }
 
 .btn-add, .btn-unblock {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 32px; padding: 2px 16px;
   background: var(--accent); color: #fff;
-  border-radius: 3px;
-  font-size: 12px; font-weight: 500;
-  padding: 6px 12px;
-  white-space: nowrap; flex-shrink: 0;
-  transition: background var(--ease);
+  border-radius: var(--radius-xs);
+  font-size: 14px; font-weight: 500; line-height: 16px;
+  white-space: nowrap; flex-shrink: 0; user-select: none;
+  transition: background-color var(--ease), opacity var(--ease);
 }
 .btn-unblock { background: var(--bg5); }
 .btn-add:hover { background: var(--accent-h); }
+.btn-add:active { background: var(--accent-a); }
 .btn-unblock:hover { background: var(--bg6); }
-.btn-add:disabled { opacity: 0.5; }
+.btn-unblock:active { background: var(--bg7); }
+.btn-add:disabled, .btn-unblock:disabled { opacity: 0.5; }
 
+/* Круглые действия в списке заявок (accept / decline) */
 .btn-ok, .btn-no {
   width: 36px; height: 36px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   font-size: 14px;
-  background: var(--bg); color: var(--text2);
-  transition: color var(--ease);
+  background: var(--bg1); color: var(--text2);
+  flex-shrink: 0;
+  transition: color var(--ease), background-color var(--ease);
 }
+:is(.friend-item, .req-item, .request-item):hover :is(.btn-ok, .btn-no) { background: var(--bg); }
 .btn-ok:hover { color: var(--green); }
 .btn-no:hover { color: var(--red); }
+.btn-ok:active, .btn-no:active { background: var(--bg); }
 
 .btn-danger-sm, .btn-ghost-sm {
-  border-radius: 3px; font-size: 13px; font-weight: 500;
-  padding: 6px 14px;
-  transition: background var(--ease), color var(--ease);
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 32px; padding: 2px 16px;
+  border-radius: var(--radius-xs);
+  font-size: 14px; font-weight: 500; line-height: 16px;
+  user-select: none;
+  transition: background-color var(--ease), color var(--ease);
 }
 .btn-danger-sm { background: var(--red-h); color: #fff; }
-.btn-danger-sm:hover { background: var(--dc-red-h); }
-.btn-ghost-sm { color: var(--text); }
+.btn-danger-sm:hover { background: var(--red-a); }
+.btn-danger-sm:active { background: var(--red-aa); }
+.btn-ghost-sm { color: #fff; }
 .btn-ghost-sm:hover { text-decoration: underline; }
 
+/* Иконки в тулбарах: как в Discord — меняется только цвет, без фона */
 .icon-btn {
   width: 32px; height: 32px;
   display: flex; align-items: center; justify-content: center;
   color: var(--text2);
   border-radius: var(--radius-sm);
   flex-shrink: 0;
-  transition: color var(--ease), background var(--ease);
+  transition: color var(--ease), background-color var(--ease);
 }
-.icon-btn:hover { color: var(--text); background: var(--hover); }
-.icon-btn:disabled { opacity: 0.4; }
+.icon-btn:hover { color: var(--text); }
+.icon-btn:active { color: var(--text-active); }
+.icon-btn:disabled { opacity: 0.4; color: var(--text2); }
+.icon-btn.active, .icon-btn[aria-pressed="true"] { color: var(--text-active); }
+.icon-btn svg { width: 24px; height: 24px; }
 .logout-btn:hover { color: var(--red) !important; }
 
 .btn-link-row {
   display: flex; align-items: center; gap: 8px;
-  width: 100%;
+  width: 100%; min-height: 40px;
   color: var(--text); font-size: 14px; font-weight: 500;
   padding: 10px 12px;
   background: var(--bg1);
   border-radius: var(--radius-sm);
-  transition: background var(--ease-fast);
+  transition: background-color var(--ease-fast), color var(--ease-fast);
 }
-.btn-link-row .chev { margin-left: auto; color: var(--text3); }
-.btn-link-row:hover { background: var(--bg4); }
+.btn-link-row .chev { margin-left: auto; color: var(--text3); transition: color var(--ease-fast); }
+.btn-link-row:hover { background: var(--bg4); color: var(--text-h); }
+.btn-link-row:hover .chev { color: var(--text); }
+.btn-link-row:active { background: var(--bg5); }
 
-/* Поля */
+/* Поля (Discord: label 12/700 uppercase, input 40px bg-tertiary) */
 .field { display: flex; flex-direction: column; gap: 8px; }
 .field label {
   font-size: 12px; font-weight: 700; color: var(--text2);
-  text-transform: uppercase; letter-spacing: 0.02em;
+  text-transform: uppercase; letter-spacing: 0.02em; line-height: 16px;
+  transition: color var(--ease);
 }
-.field .req { color: var(--red); }
+.field:focus-within label { color: var(--text-h); }
+.field.error label { color: var(--text-danger); }
+.field .req { color: var(--red); padding-left: 4px; }
 .hint { font-weight: 400; font-size: 11px; color: var(--text4); margin-left: 4px; text-transform: none; letter-spacing: 0; }
+.field .error-inline { font-weight: 500; font-style: italic; text-transform: none; letter-spacing: 0; color: var(--text-danger); }
+.field .error-inline::before { content: ' — '; }
 .form-stack { display: flex; flex-direction: column; gap: 20px; }
 
 .field input, .field textarea, #search-input, #msg-input, #group-msg-input, .msg-input {
   width: 100%; min-width: 0;
   background: var(--bg);
-  border: 0; border-radius: 3px;
+  border: 1px solid transparent; border-radius: var(--radius-xs);
   color: var(--text);
   padding: 10px;
-  font-size: 15px;
+  font-size: 15px; line-height: 20px;
   outline: none;
-  transition: box-shadow var(--ease);
+  caret-color: var(--text);
+  transition: border-color var(--ease), background-color var(--ease);
 }
-.field input:focus, .field textarea:focus, #search-input:focus { box-shadow: 0 0 0 1px var(--accent); }
+.field input { height: 40px; }
+.field input:hover, .field textarea:hover { border-color: var(--border-subtle); }
+.field input:focus, .field textarea:focus, #search-input:focus { border-color: var(--focus); }
+.field.error input, .field.error textarea, .field input:user-invalid { border-color: var(--red); }
+.field input:disabled, .field textarea:disabled { opacity: 0.5; cursor: not-allowed; }
 .field input::placeholder, .field textarea::placeholder,
 #search-input::placeholder, #msg-input::placeholder, #group-msg-input::placeholder,
-.msg-input::placeholder { color: var(--text4); }
-.field textarea { resize: vertical; min-height: 80px; }
+.msg-input::placeholder { color: var(--text4); opacity: 1; }
+.field textarea { resize: vertical; min-height: 80px; line-height: 1.375; }
+.field input:-webkit-autofill,
+.field input:-webkit-autofill:hover,
+.field input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text);
+  -webkit-box-shadow: 0 0 0 1000px var(--bg) inset;
+  caret-color: var(--text);
+  transition: background-color 9999s ease-out;
+}
 
 .pw-wrap { position: relative; }
 .pw-wrap input { padding-right: 40px; }
 .pw-toggle {
-  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
-  color: var(--text3); padding: 2px; display: flex;
-  border-radius: 3px; transition: color var(--ease);
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text3);
+  border-radius: var(--radius-xs);
+  transition: color var(--ease);
 }
 .pw-toggle:hover { color: var(--text); }
+.pw-toggle:active { color: var(--text-active); }
+.pw-toggle svg { width: 20px; height: 20px; }
 
 .error-msg {
-  color: var(--red); font-size: 12px; font-weight: 500;
-  text-align: center; min-height: 18px; margin-top: 12px;
+  color: var(--text-danger); font-size: 12px; font-weight: 500; font-style: italic;
+  text-align: center; min-height: 18px; margin-top: 12px; line-height: 16px;
 }
+.error-msg:empty { margin-top: 0; }
 
 .visually-hidden-input {
   position: absolute; width: 1px; height: 1px;
@@ -311,17 +430,42 @@ html, body {
   clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 
-/* Бейджи непрочитанного — красные */
+/* Бейджи непрочитанного — красные, как в Discord */
 .badge, .f-unread {
-  background: var(--red); color: #fff; font-weight: 700; line-height: 1;
+  background: var(--red); color: #fff;
+  font-size: 12px; font-weight: 700; line-height: 16px;
+  min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 8px;
   display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
 }
-.badge { font-size: 11px; min-width: 16px; height: 16px; border-radius: 8px; padding: 0 4px; }
-.badge:empty { display: none; }
-.f-unread { font-size: 12px; min-width: 16px; height: 16px; border-radius: 8px; padding: 0 5px; }
+.badge:empty, .f-unread:empty { display: none; }
+.badge.big, .f-unread.big { min-width: 22px; padding: 0 6px; }
+
+/* Пилюли-счётчики секций (например «ОЖИДАЮТ — 3») */
+.count-pill {
+  background: var(--bg5); color: var(--text-h);
+  font-size: 12px; font-weight: 700; line-height: 16px;
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+/* Тултип-подсказки (title-like), если используются */
+.tooltip {
+  position: absolute; z-index: var(--z-popup);
+  background: var(--bg-floating); color: var(--text);
+  font-size: 14px; font-weight: 500; line-height: 18px;
+  padding: 8px 12px; border-radius: 5px;
+  box-shadow: var(--shadow);
+  pointer-events: none; white-space: nowrap;
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Экраны
    ═══════════════════════════════════════════════════════════════════════════ */
 .screen { display: none; width: 100%; height: 100vh; height: 100dvh; }
 .screen.active { display: flex; }
+
+/* ─── Auth ─────────────────────────────────────────────────────────────── */
+/* (секция не была прислана — вставь сюда свою, либо пришли её, доведу в том же стиле) */

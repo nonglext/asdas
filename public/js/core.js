@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 /* ============================================================================
  * CONFIG
@@ -10,7 +10,12 @@ const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gi
 const MSG_GROUP_WINDOW_MS = 5 * 60 * 1000; // группировка сообщений (5 минут)
 const CALL_RING_TIMEOUT_MS = 45 * 1000;    // таймаут ожидания ответа
 const SEARCH_DEBOUNCE_MS = 280;
-const SOUNDS_ENABLED = localStorage.getItem('chatapp_sounds') !== 'off'; // localStorage.setItem('chatapp_sounds','off') — выключить
+const FETCH_TIMEOUT_MS = 60 * 1000;        // таймаут HTTP-запросов (0 — без таймаута)
+const SOUNDS_STORAGE_KEY = 'chatapp_sounds';
+
+// Обратная совместимость: в остальном коде может использоваться SOUNDS_ENABLED.
+// Актуальное значение — sfx.enabled().
+const SOUNDS_ENABLED = localStorage.getItem(SOUNDS_STORAGE_KEY) !== 'off';
 
 // Отключаем браузерную обработку микрофона — в звонок идёт «сырой» поток.
 const RAW_AUDIO_CONSTRAINTS = {
@@ -36,12 +41,31 @@ const EMPTY_ICON_SVG = '<svg width="40" height="40" viewBox="0 0 24 24" fill="no
  * ==========================================================================*/
 const $ = id => document.getElementById(id);
 
-/** Безопасная подписка: отсутствие элемента в HTML не роняет весь скрипт. */
-function on(id, event, handler) {
+/** Выполнить после готовности DOM (или сразу, если он уже готов). */
+function whenDomReady(fn) {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', fn, { once: true });
+  } else {
+    fn();
+  }
+}
+
+/**
+ * Безопасная подписка: отсутствие элемента в HTML не роняет весь скрипт.
+ * Если DOM ещё не загружен — подписка откладывается.
+ */
+function on(id, event, handler, options) {
   const el = $(id);
-  if (el) el.addEventListener(event, handler);
-  else console.warn(`[ui] element #${id} not found`);
-  return el;
+  if (el) {
+    el.addEventListener(event, handler, options);
+    return el;
+  }
+  if (document.readyState === 'loading') {
+    whenDomReady(() => on(id, event, handler, options));
+    return null;
+  }
+  console.warn(`[ui] element #${id} not found`);
+  return null;
 }
 
 function setText(id, text) {
@@ -61,7 +85,9 @@ function isAnyModalOpen() {
 /* ============================================================================
  * STATE
  * ==========================================================================*/
-class AuthError extends Error {}
+class AuthError extends Error {
+  constructor(message) { super(message); this.name = 'AuthError'; }
+}
 
 const state = {
   me: null,
@@ -104,7 +130,13 @@ let selectedGroupMembers = new Set();
 let selectedAddMembers = new Set();
 const BASE_TITLE = document.title || 'Chat';
 
+/** Инвалидирует все «летящие» async-ответы (поиск, загрузка чата и т.д.). */
+function bumpAllSeq() {
+  for (const k of Object.keys(state.seq)) state.seq[k]++;
+}
+
 function resetState() {
+  bumpAllSeq();
   state.me = null;
   state.activeFriend = null;
   state.activeGroup = null;
@@ -121,17 +153,65 @@ function resetState() {
   selectedAddMembers = new Set();
 }
 
+/** Остановить анализатор громкости (используется при выходе/завершении звонка). */
+function stopSpeakingMonitor(id) {
+  const m = speakingMonitors[id];
+  if (!m) return;
+  try { cancelAnimationFrame(m.raf); } catch (e) {}
+  try { m.source?.disconnect(); } catch (e) {}
+  try { m.analyser?.disconnect(); } catch (e) {}
+  delete speakingMonitors[id];
+}
+
+/**
+ * Жёсткий сброс состояния звонка без сетевых сообщений: таймеры, треки,
+ * peer-соединения, мониторы речи. Не трогает UI — для этого closeCallOverlay().
+ */
+function resetCallState() {
+  clearTimeout(callState.ringTimer);
+  clearTimeout(callState.incomingTimer);
+  callState.ringTimer = null;
+  callState.incomingTimer = null;
+
+  for (const id of Object.keys(speakingMonitors)) stopSpeakingMonitor(id);
+
+  for (const [peerId, peer] of Object.entries(callState.peers)) {
+    try { peer.pc?.close(); } catch (e) {}
+    try { peer.stream?.getTracks().forEach(t => t.stop()); } catch (e) {}
+    delete callState.peers[peerId];
+  }
+
+  try { callState.localStream?.getTracks().forEach(t => t.stop()); } catch (e) {}
+
+  callState.active = false;
+  callState.callId = null;
+  callState.chatKey = null;
+  callState.isGroup = false;
+  callState.groupId = null;
+  callState.peerFriendId = null;
+  callState.peerFriendName = null;
+  callState.video = false;
+  callState.localStream = null;
+  callState.micOn = true;
+  callState.camOn = true;
+  callState.pendingIncoming = null;
+}
+
 /* ============================================================================
  * SOUNDS (Web Audio, без внешних файлов — как «блипы» Discord)
  * ==========================================================================*/
 const sfx = (() => {
   let ctx = null;
   let ringTimer = null;
+  let enabled = SOUNDS_ENABLED;
 
   function getCtx() {
-    if (!SOUNDS_ENABLED) return null;
+    if (!enabled) return null;
     if (!ctx || ctx.state === 'closed') {
-      try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { ctx = null; }
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        ctx = AC ? new AC() : null;
+      } catch (e) { ctx = null; }
     }
     if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
     return ctx;
@@ -152,24 +232,53 @@ const sfx = (() => {
       osc.connect(g).connect(c.destination);
       osc.start(t0);
       osc.stop(t0 + dur + 0.05);
+      osc.onended = () => { try { osc.disconnect(); g.disconnect(); } catch (e) {} };
     } catch (e) {}
   }
 
+  function stopRing() {
+    clearInterval(ringTimer);
+    ringTimer = null;
+  }
+
+  function startRing(outgoing) {
+    stopRing();
+    const play = () => {
+      if (!enabled) return;
+      if (outgoing) {
+        tone(440, 0, 1.0, 0.025);
+      } else {
+        tone(659, 0, 0.15, 0.07);
+        tone(659, 0.2, 0.15, 0.07);
+        tone(784, 0.4, 0.28, 0.07);
+        tone(659, 0.75, 0.15, 0.06);
+      }
+    };
+    play();
+    ringTimer = setInterval(play, outgoing ? 3000 : 2200);
+  }
+
+  // Браузеры блокируют звук до первого жеста пользователя — «разблокируем» контекст заранее,
+  // чтобы входящий рингтон сработал даже если пользователь давно не кликал.
+  const unlock = () => { getCtx(); };
+  ['pointerdown', 'keydown', 'touchstart'].forEach(ev =>
+    document.addEventListener(ev, unlock, { once: true, passive: true })
+  );
+
   return {
+    enabled: () => enabled,
+    setEnabled(v) {
+      enabled = !!v;
+      localStorage.setItem(SOUNDS_STORAGE_KEY, enabled ? 'on' : 'off');
+      if (!enabled) stopRing();
+    },
+    toggle() { this.setEnabled(!enabled); return enabled; },
     message() { tone(880, 0, 0.12, 0.05); tone(1175, 0.08, 0.18, 0.045); },
     friend()  { tone(659, 0, 0.12, 0.05); tone(880, 0.1, 0.2, 0.05); },
     join()    { tone(523, 0, 0.1, 0.06); tone(784, 0.1, 0.16, 0.06); },
     leave()   { tone(784, 0, 0.1, 0.06); tone(523, 0.1, 0.16, 0.06); },
-    startRing(outgoing) {
-      this.stopRing();
-      const play = () => {
-        if (outgoing) { tone(440, 0, 1.0, 0.025); }
-        else { tone(659, 0, 0.15, 0.07); tone(659, 0.2, 0.15, 0.07); tone(784, 0.4, 0.28, 0.07); tone(659, 0.75, 0.15, 0.06); }
-      };
-      play();
-      ringTimer = setInterval(play, outgoing ? 3000 : 2200);
-    },
-    stopRing() { clearInterval(ringTimer); ringTimer = null; },
+    startRing,
+    stopRing,
   };
 })();
 
@@ -179,12 +288,17 @@ const sfx = (() => {
 const socket = io(BACKEND_URL, {
   autoConnect: false,
   transports: ['websocket', 'polling'],
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 10000,
 });
+
+// Токен читается при КАЖДОМ (ре)коннекте — после перелогина не уйдёт устаревший.
+socket.auth = cb => cb({ token: localStorage.getItem('chatapp_token') || '' });
 
 function connectSocket() {
   const token = localStorage.getItem('chatapp_token');
   if (!token) return;
-  socket.auth = { token };
   if (socket.connected) socket.disconnect();
   socket.connect();
 }
@@ -192,9 +306,11 @@ function connectSocket() {
 /* ============================================================================
  * GENERIC HELPERS
  * ==========================================================================*/
+/** Первая «буква» ника с учётом эмодзи и суррогатных пар. */
 function av(nick) {
   if (!nick) return '?';
-  return String(nick).trim().charAt(0).toUpperCase() || '?';
+  const first = Array.from(String(nick).trim())[0];
+  return first ? first.toUpperCase() : '?';
 }
 
 function esc(s) {
@@ -244,7 +360,7 @@ function fmtMsgTime(ms) {
 }
 
 function msgTimeRaw(msg) {
-  return msg.time || msg.timestamp || msg.createdAt || null;
+  return msg?.time || msg?.timestamp || msg?.createdAt || null;
 }
 
 function getMsgTimeMs(msg) {
@@ -253,7 +369,8 @@ function getMsgTimeMs(msg) {
 }
 
 function plural(n, one, few, many) {
-  const m10 = n % 10, m100 = n % 100;
+  const a = Math.abs(Math.trunc(Number(n) || 0));
+  const m10 = a % 10, m100 = a % 100;
   if (m10 === 1 && m100 !== 11) return `${n} ${one}`;
   if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return `${n} ${few}`;
   return `${n} ${many}`;
@@ -273,6 +390,7 @@ function scrollMsgs(containerId) {
 }
 
 function isNearBottom(container) {
+  if (!container) return true;
   return container.scrollHeight - container.scrollTop - container.clientHeight < 120;
 }
 
@@ -281,6 +399,7 @@ function placeholderHTML(text, isError = false) {
 }
 
 function clearMsgsPlaceholder(container) {
+  if (!container) return;
   container.querySelectorAll('.msgs-placeholder').forEach(el => el.remove());
 }
 
@@ -302,6 +421,8 @@ function showTransientNotice(text) {
     el = document.createElement('div');
     el.id = 'transient-notice';
     el.className = 'transient-notice';
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-live', 'polite');
     document.body.appendChild(el);
   }
   el.textContent = text;
@@ -317,6 +438,7 @@ function setConnBanner(show, text) {
     el = document.createElement('div');
     el.id = 'conn-banner';
     el.className = 'conn-banner';
+    el.setAttribute('role', 'status');
     document.body.appendChild(el);
   }
   el.textContent = text || '';
@@ -324,9 +446,8 @@ function setConnBanner(show, text) {
 }
 
 function updateTitleBadge() {
-  const total =
-    Object.values(state.unread).reduce((a, b) => a + (b || 0), 0) +
-    Object.values(state.groupUnread).reduce((a, b) => a + (b || 0), 0);
+  const sum = obj => Object.values(obj).reduce((a, b) => a + (Number(b) || 0), 0);
+  const total = sum(state.unread) + sum(state.groupUnread);
   document.title = total ? `(${total}) ${BASE_TITLE}` : BASE_TITLE;
 }
 
@@ -334,25 +455,62 @@ function updateTitleBadge() {
  * TEXT FORMATTING (упрощённый Discord‑markdown поверх экранированного текста)
  *   **bold** *italic* __underline__ ~~strike~~ `code` ```block``` ||spoiler|| ссылки
  * ==========================================================================*/
-const URL_RE = /(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])/g;
-const EMOJI_ONLY_RE = /^(?:\p{Extended_Pictographic}|\p{Emoji_Modifier}|\uFE0F|\u200D|\s)+$/u;
+const URL_RE = /https?:\/\/[^\s<]+/g;
+const EMOJI_ONLY_RE = /^(?:\p{Extended_Pictographic}|\p{Emoji_Modifier}|\uFE0F|\u200D|\u20E3|\s)+$/u;
+// Плейсхолдер из Private Use Area: не встречается в пользовательском тексте.
+const STASH_OPEN = '\uE000', STASH_CLOSE = '\uE001';
+const STASH_RE = /\uE000(\d+)\uE001/g;
+
+/**
+ * Отделяет от URL «хвост» (пунктуацию, экранированные кавычки, несбалансированные скобки),
+ * который на самом деле не относится к ссылке.
+ */
+function splitUrlTail(u) {
+  let tail = '';
+  for (;;) {
+    let m;
+    if ((m = u.match(/(?:&(?:gt|quot|#39|amp);)+$/))) {         // &gt; &quot; &#39; &amp;
+      u = u.slice(0, -m[0].length); tail = m[0] + tail; continue;
+    }
+    if ((m = u.match(/[.,;:!?'"]+$/))) {                          // обычная пунктуация
+      u = u.slice(0, -m[0].length); tail = m[0] + tail; continue;
+    }
+    if (u.endsWith(')') || u.endsWith(']')) {                     // несбалансированная скобка
+      const open = u.endsWith(')') ? '(' : '[';
+      const close = u.slice(-1);
+      const opens = u.split(open).length - 1;
+      const closes = u.split(close).length - 1;
+      if (closes > opens) { u = u.slice(0, -1); tail = close + tail; continue; }
+    }
+    break;
+  }
+  return [u, tail];
+}
 
 function formatMsgText(raw) {
   let s = esc(raw);
   const stash = [];
-  const keep = html => { stash.push(html); return `\u0000${stash.length - 1}\u0000`; };
+  const keep = html => { stash.push(html); return `${STASH_OPEN}${stash.length - 1}${STASH_CLOSE}`; };
 
-  s = s.replace(/```(?:[a-z0-9]*\n)?([\s\S]+?)```/gi, (_, c) => keep(`<pre class="md-pre"><code>${c.replace(/^\n+|\n+$/g, '')}</code></pre>`));
+  s = s.replace(/```(?:[a-z0-9]*\n)?([\s\S]+?)```/gi, (_, c) =>
+    keep(`<pre class="md-pre"><code>${c.replace(/^\n+|\n+$/g, '')}</code></pre>`));
   s = s.replace(/`([^`\n]+)`/g, (_, c) => keep(`<code class="md-code">${c}</code>`));
-  s = s.replace(URL_RE, (_, u) => keep(`<a href="${u}" target="_blank" rel="noopener noreferrer" class="md-link">${u}</a>`));
+  s = s.replace(URL_RE, m => {
+    const [u, tail] = splitUrlTail(m);
+    if (!/^https?:\/\/[^/]+/i.test(u)) return m;
+    return keep(`<a href="${u}" target="_blank" rel="noopener noreferrer nofollow" class="md-link">${u}</a>`) + tail;
+  });
 
   s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
   s = s.replace(/__([^_\n]+)__/g, '<u>$1</u>');
   s = s.replace(/~~([^~\n]+)~~/g, '<s>$1</s>');
-  s = s.replace(/\|\|([^|\n]+)\|\|/g, '<span class="md-spoiler" tabindex="0" title="Показать спойлер">$1</span>');
+  s = s.replace(/\|\|([^|\n]+)\|\|/g, '<span class="md-spoiler" tabindex="0" role="button" title="Показать спойлер">$1</span>');
 
-  s = s.replace(/\u0000(\d+)\u0000/g, (_, i) => stash[+i]);
+  // Переносы строк вне <pre> (внутри <pre> текст уже в stash и не затронется)
+  s = s.replace(/\n/g, '<br>');
+
+  s = s.replace(STASH_RE, (_, i) => stash[+i]);
   return s;
 }
 
@@ -361,11 +519,18 @@ function isJumboEmoji(text) {
   try { return EMOJI_ONLY_RE.test(text); } catch (e) { return false; }
 }
 
-// Раскрытие спойлеров кликом (делегирование)
-['messages', 'group-messages'].forEach(id => on(id, 'click', e => {
-  const sp = e.target.closest('.md-spoiler');
-  if (sp) sp.classList.add('revealed');
-}));
+// Раскрытие спойлеров кликом и с клавиатуры (делегирование)
+['messages', 'group-messages'].forEach(id => {
+  on(id, 'click', e => {
+    const sp = e.target.closest('.md-spoiler');
+    if (sp) sp.classList.add('revealed');
+  });
+  on(id, 'keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const sp = e.target.closest('.md-spoiler');
+    if (sp) { e.preventDefault(); sp.classList.add('revealed'); }
+  });
+});
 
 /* ============================================================================
  * AUTH / SESSION
@@ -375,10 +540,13 @@ function forceLogoutToLogin(message) {
   state.loggingOut = true;
   try {
     if (callState.active || callState.pendingIncoming) {
-      if (callState.callId) socket.emit('callLeave', { callId: callState.callId });
-      closeCallOverlay();
+      if (callState.callId && socket.connected) {
+        try { socket.emit('callLeave', { callId: callState.callId }); } catch (e) {}
+      }
+      try { closeCallOverlay(); } catch (e) { console.warn('[call] closeCallOverlay failed', e); }
     }
     sfx.stopRing();
+    resetCallState();
     resetState();
     if (socket.connected) socket.disconnect();
     localStorage.removeItem('chatapp_id');
@@ -389,7 +557,7 @@ function forceLogoutToLogin(message) {
     setConnBanner(false);
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
     $('auth-screen')?.classList.add('active');
-    if (message) setErr(message);
+    setErr(message || '');
 
     const fl = $('friends-list');
     if (fl) fl.innerHTML = emptyFriendsHTML();
@@ -398,7 +566,7 @@ function forceLogoutToLogin(message) {
     setDisplay('requests-section', 'none');
     const gl = $('groups-list');
     if (gl) gl.innerHTML = emptyGroupsHTML();
-    closeActiveChat();
+    try { closeActiveChat(); } catch (e) { console.warn('[chat] closeActiveChat failed', e); }
     document.title = BASE_TITLE;
   } finally {
     state.loggingOut = false;
@@ -406,41 +574,71 @@ function forceLogoutToLogin(message) {
 }
 
 /**
- * fetch() с bearer-токеном. На 401 при активной сессии выбрасывает AuthError,
+ * fetch() с bearer-токеном и таймаутом. На 401 при активной сессии выбрасывает AuthError,
  * чтобы вызывающий код не продолжил обрабатывать данные разлогиненной сессии.
+ * options.timeoutMs — переопределить таймаут (0 — отключить). Если передан options.signal,
+ * собственный таймаут не ставится.
  */
 async function authFetch(url, options = {}) {
+  const { timeoutMs = FETCH_TIMEOUT_MS, ...fetchOptions } = options;
   const token = localStorage.getItem('chatapp_token');
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      ...(options.headers || {}),
-      ...(token ? { Authorization: 'Bearer ' + token } : {}),
-    },
-  });
-  if (res.status === 401 && state.me) {
-    forceLogoutToLogin('Сессия истекла, войдите снова');
-    throw new AuthError('Session expired');
+
+  let controller = null, timer = null;
+  if (!fetchOptions.signal && timeoutMs > 0 && typeof AbortController !== 'undefined') {
+    controller = new AbortController();
+    fetchOptions.signal = controller.signal;
+    timer = setTimeout(() => controller.abort(), timeoutMs);
   }
-  return res;
+
+  try {
+    const res = await fetch(url, {
+      ...fetchOptions,
+      headers: {
+        ...(fetchOptions.headers || {}),
+        ...(token ? { Authorization: 'Bearer ' + token } : {}),
+      },
+    });
+    if (res.status === 401 && state.me) {
+      forceLogoutToLogin('Сессия истекла, войдите снова');
+      throw new AuthError('Session expired');
+    }
+    return res;
+  } catch (e) {
+    if (e?.name === 'AbortError' && controller) {
+      const err = new Error('Превышено время ожидания ответа сервера');
+      err.name = 'TimeoutError';
+      throw err;
+    }
+    throw e;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function saveAndLogin(user, userId, token) {
-  if (!user) return setErr('Некорректный ответ сервера');
+  if (!user || typeof user !== 'object') return setErr('Некорректный ответ сервера');
+  const id = userId ?? user.id;
+  if (!id) return setErr('Некорректный ответ сервера: нет идентификатора пользователя');
+  const finalToken = token || localStorage.getItem('chatapp_token');
+  if (!finalToken) return setErr('Некорректный ответ сервера: нет токена');
+
   state.me = user;
-  localStorage.setItem('chatapp_id', userId);
-  if (token) localStorage.setItem('chatapp_token', token);
+  localStorage.setItem('chatapp_id', String(id));
+  localStorage.setItem('chatapp_token', finalToken);
   localStorage.setItem('chatapp_profile', JSON.stringify(user));
+  setErr('');
   enterApp(user);
 }
 
 function enterApp(user) {
+  state.loggingOut = false;
   renderAv($('my-avatar'), user.nickname, user.avatar);
-  setText('my-nick', user.nickname);
-  setText('my-id', '@' + user.id);
+  setText('my-nick', user.nickname || '');
+  setText('my-id', user.id ? '@' + user.id : '');
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   $('app-screen')?.classList.add('active');
   document.documentElement.classList.add('has-session');
+  updateTitleBadge();
   connectSocket();
   loadGroups();
 }
@@ -448,14 +646,25 @@ function enterApp(user) {
 /* ============================================================================
  * AVATAR RENDERING
  * ==========================================================================*/
+/** Относительные пути вида «/uploads/x.png» отдаются с бэкенда, а не с текущего origin. */
+function avatarSrc(url) {
+  if (!url) return '';
+  const u = String(url);
+  if (/^(?:https?:)?\/\//i.test(u) || /^(?:data|blob):/i.test(u)) return u;
+  if (u.startsWith('/')) return BACKEND_URL.replace(/\/+$/, '') + u;
+  return u;
+}
+
 function renderAv(el, nickname, avatarUrl) {
   if (!el) return;
   el.textContent = '';
   if (avatarUrl) {
     const img = document.createElement('img');
-    img.src = avatarUrl;
+    img.src = avatarSrc(avatarUrl);
     img.alt = '';
     img.loading = 'lazy';
+    img.decoding = 'async';
+    img.draggable = false;
     img.onerror = () => { el.textContent = av(nickname); };
     el.appendChild(img);
   } else {
@@ -467,11 +676,12 @@ function renderAv(el, nickname, avatarUrl) {
 function renderAvWithDot(el, nickname, avatarUrl, online) {
   renderAv(el, nickname, avatarUrl);
   if (!el) return;
-  el.style.position = 'relative';
-  el.style.overflow = 'visible';
+  if (el.style.position !== 'relative') el.style.position = 'relative';
+  if (el.style.overflow !== 'visible') el.style.overflow = 'visible';
   if (online) {
     const dot = document.createElement('div');
     dot.className = 'f-dot';
+    dot.title = 'В сети';
     el.appendChild(dot);
   }
 }
@@ -481,14 +691,15 @@ function renderGroupAv(el, group) {
   if (!el) return;
   el.textContent = '';
   el.classList.add('group-av');
-  const members = (group?.members || []).slice(0, 4);
+  el.classList.remove('g1', 'g2', 'g3', 'g4');
+  const members = (Array.isArray(group?.members) ? group.members : []).slice(0, 4);
   if (!members.length) { el.textContent = '#'; return; }
   const grid = document.createElement('div');
   grid.className = 'group-av-grid g' + members.length;
   members.forEach(m => {
     const cell = document.createElement('div');
     cell.className = 'group-av-cell';
-    renderAv(cell, m.nickname, m.avatar);
+    renderAv(cell, m?.nickname, m?.avatar);
     grid.appendChild(cell);
   });
   el.appendChild(grid);
@@ -497,8 +708,8 @@ function renderGroupAv(el, group) {
 /** Единственный источник истины «является ли участник владельцем группы». */
 function isGroupOwner(group, userId) {
   if (!group || !userId) return false;
-  if (group.ownerId) return group.ownerId === userId;
-  const member = (group.members || []).find(m => m.id === userId);
+  if (group.ownerId != null) return String(group.ownerId) === String(userId);
+  const member = (group.members || []).find(m => String(m?.id) === String(userId));
   return member ? member.role === 'owner' : false;
 }
 
@@ -517,4 +728,3 @@ function emptyGroupsHTML() {
     <div class="empty-sub">Создай группу кнопкой +</div>
   </div>`;
 }
-
