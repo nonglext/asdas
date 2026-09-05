@@ -1072,6 +1072,79 @@ function createPeerConnection(peerId) {
   return pc;
 }
 
+
+/** Максимизация качества аудио в SDP (Opus: битрейт до 510 кбит/с, стерео, 48kHz, отключен DTX). */
+function maximizeAudioQualitySDP(sdp) {
+  if (!sdp) return sdp;
+  let lines = sdp.split('\r\n');
+  let opusPayloadType = null;
+
+  for (const line of lines) {
+    const match = line.match(/^a=rtpmap:(\d+)\s+opus\/48000/i);
+    if (match) {
+      opusPayloadType = match[1];
+      break;
+    }
+  }
+
+  if (opusPayloadType) {
+    const fmtpPrefix = `a=fmtp:${opusPayloadType} `;
+    let fmtpFound = false;
+    lines = lines.map(line => {
+      if (line.startsWith(fmtpPrefix)) {
+        fmtpFound = true;
+        let params = line.slice(fmtpPrefix.length).split(';');
+        let pMap = new Map();
+        for (const p of params) {
+          const [k, v] = p.trim().split('=');
+          if (k) pMap.set(k.toLowerCase(), v || '1');
+        }
+        pMap.set('maxaveragebitrate', '510000');
+        pMap.set('stereo', '1');
+        pMap.set('sprop-stereo', '1');
+        pMap.set('maxplaybackrate', '48000');
+        pMap.set('cbr', '1');
+        pMap.set('useinbandfec', '0');
+        pMap.set('usedtx', '0');
+        return fmtpPrefix + Array.from(pMap.entries()).map(([k, v]) => `${k}=${v}`).join(';');
+      }
+      return line;
+    });
+
+    if (!fmtpFound) {
+      const idx = lines.findIndex(l => l.startsWith(`a=rtpmap:${opusPayloadType}`));
+      if (idx !== -1) {
+        lines.splice(idx + 1, 0, `${fmtpPrefix}maxaveragebitrate=510000;stereo=1;sprop-stereo=1;maxplaybackrate=48000;cbr=1;useinbandfec=0;usedtx=0`);
+      }
+    }
+  }
+
+  return lines.join('\r\n');
+}
+
+/** Применение максимального битрейта (510 kbps) ко всем аудио-сендерам PeerConnection */
+async function applyMaxAudioBitrate(pc) {
+  if (!pc || typeof pc.getSenders !== 'function') return;
+  for (const sender of pc.getSenders()) {
+    if (sender.track && sender.track.kind === 'audio') {
+      try {
+        const params = sender.getParameters();
+        if (!params.encodings || !params.encodings.length) {
+          params.encodings = [{}];
+        }
+        for (const enc of params.encodings) {
+          enc.maxBitrate = 510000; // 510 kbps (максимум для Opus)
+          enc.priority = 'high';
+          enc.networkPriority = 'high';
+        }
+        await sender.setParameters(params);
+      } catch (err) {
+        // Некоторые браузеры могут ограничивать setParameters до завершения negotiation
+      }
+    }
+  }
+}
+
 async function sendOffer(peerId, pc, options = {}) {
   const peer = callState.peers[peerId];
   if (!peer || peer.pc !== pc) return;
@@ -1080,7 +1153,12 @@ async function sendOffer(peerId, pc, options = {}) {
   try {
     const offer = await pc.createOffer(options);
     if (!isCurrentPc(peerId, pc)) return;
-    await pc.setLocalDescription(offer);
+    const modifiedOffer = new RTCSessionDescription({
+      type: offer.type,
+      sdp: maximizeAudioQualitySDP(offer.sdp)
+    });
+    await pc.setLocalDescription(modifiedOffer);
+    await applyMaxAudioBitrate(pc);
     const ld = pc.localDescription;
     socket.emit('callSignal', {
       callId: callState.callId,
@@ -1376,7 +1454,12 @@ async function handleCallSignal({ callId, from, data } = {}) {
       await flushPendingCandidates(from);
 
       const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
+      const modifiedAnswer = new RTCSessionDescription({
+        type: answer.type,
+        sdp: maximizeAudioQualitySDP(answer.sdp)
+      });
+      await pc.setLocalDescription(modifiedAnswer);
+      await applyMaxAudioBitrate(pc);
       const ld = pc.localDescription;
       socket.emit('callSignal', {
         callId,
@@ -1389,6 +1472,7 @@ async function handleCallSignal({ callId, from, data } = {}) {
       if (pc.signalingState !== 'have-local-offer') return;
       await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
       await flushPendingCandidates(from);
+      await applyMaxAudioBitrate(pc);
 
     } else if (data.type === 'ice') {
       if (!data.candidate || typeof data.candidate !== 'object') return;

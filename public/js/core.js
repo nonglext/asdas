@@ -23,11 +23,14 @@ const SOUNDS_STORAGE_KEY = 'chatapp_sounds';
 // Актуальное значение — sfx.enabled().
 const SOUNDS_ENABLED = storage.getItem(SOUNDS_STORAGE_KEY) !== 'off';
 
-// Обработка микрофона снижает эхо и фоновый шум при разговоре.
+// Шумоподавление отключено, передаётся чистый звук без фильтров и искажений
 const RAW_AUDIO_CONSTRAINTS = {
-  echoCancellation: true,
-  noiseSuppression: true,
-  autoGainControl: true
+  echoCancellation: false,
+  noiseSuppression: false,
+  autoGainControl: false,
+  channelCount: 2,
+  sampleRate: 48000,
+  sampleSize: 16
 };
 
 const RTC_CONFIG = {
