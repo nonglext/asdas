@@ -1081,12 +1081,24 @@ io.use(async (socket, next) => {
 });
 
 // ─── Calls registry ───────────────────────────────────────────────────────────
+// Протокол событий сервер → клиент (совпадает с фронтендом):
+//   callIncoming      — входящее приглашение
+//   callStarted       — подтверждение инициатору ({ callId, chatKey, video, participants })
+//   callJoined        — подтверждение присоединившемуся ({ callId, chatKey, video, participants })
+//   callPeerJoined    — в звонок вошёл пир ({ callId, peerId })
+//   callPeerLeft      — пир вышел ({ callId, peerId, reason })
+//   callRejected      — звонок отклонён ({ callId, peerId, reason })
+//   callEnded         — звонок завершён ({ callId, chatKey, reason })
+//   callSignal        — WebRTC-сигналинг ({ callId, from, data })
+//   groupVoiceState   — состояние голосового канала группы
+//   callError         — ошибка ({ reason, callId? })
 const activeCalls = new Map(); // chatKey -> call
 const callsById = new Map();   // callId  -> call
 const pendingCalls = new Map(); // userId -> [invitation]
 const PENDING_CALL_TTL = 5 * 60 * 1000;
 const EMPTY_CALL_TTL = 60 * 1000;
 const DM_RING_TIMEOUT = 90 * 1000;
+const REJECT_REASONS = new Set(['rejected', 'busy', 'timeout']);
 
 function dmChatKey(a, b) { return `dm:${[a, b].sort().join(':')}`; }
 function groupChatKey(groupId) { return `group:${groupId}`; }
@@ -1145,7 +1157,8 @@ function leaveCall(userId, callId, reason = 'left') {
     s.leave(room);
     s.activeCallKeys?.delete(call.chatKey);
   }
-  io.to(room).emit('peerLeft', { callId: call.callId, peerId: userId, reason });
+  // FIX(protocol): peerLeft -> callPeerLeft
+  io.to(room).emit('callPeerLeft', { callId: call.callId, peerId: userId, reason });
 
   if (call.participants.size === 0 || (call.type === 'dm' && call.answered)) {
     // DM после ответа — уход любого из двух завершает звонок
@@ -1225,7 +1238,8 @@ io.on('connection', (socket) => {
       pendingCalls.delete(currentUserId);
       for (const pending of pendingForUser) {
         if (Date.now() - pending.createdAt < PENDING_CALL_TTL && findCallById(pending.callId)) {
-          socket.emit('incomingCall', pending);
+          // FIX(protocol): incomingCall -> callIncoming
+          socket.emit('callIncoming', pending);
         }
       }
       logger.info(`[online] ${currentUserId}`);
@@ -1619,12 +1633,18 @@ io.on('connection', (socket) => {
         socket.join(`call:${call.callId}`);
         socket.activeCallKeys.add(chatKey);
 
-        socket.emit('callStarted', { callId: call.callId, chatKey });
+        // FIX(protocol): callStarted теперь содержит participants (пиры, к
+        // которым нужно подключаться; в новом DM их ещё нет)
+        socket.emit('callStarted', {
+          callId: call.callId, chatKey, video: call.video, isGroup: false,
+          participants: [...call.participants].filter(id => id !== currentUserId)
+        });
         const invitation = {
           callId: call.callId, chatKey, isGroup: false, video: !!video,
           from: currentUserId, fromNick: me.nickname, fromAvatar: me.avatar, createdAt: Date.now()
         };
-        if (isOnline(toId)) io.to(toId).emit('incomingCall', invitation);
+        // FIX(protocol): incomingCall -> callIncoming
+        if (isOnline(toId)) io.to(toId).emit('callIncoming', invitation);
         else {
           const queued = pendingCalls.get(toId) || [];
           queued.push(invitation);
@@ -1637,19 +1657,39 @@ io.on('connection', (socket) => {
         if (!me) return;
 
         let call = activeCalls.get(chatKey);
-        if (!call) {
+        const isNewCall = !call;
+        if (isNewCall) {
           call = {
             callId: crypto.randomUUID(), type: 'group', chatKey, groupId, video: !!video,
             initiator: currentUserId, participants: new Set(), createdAt: Date.now()
           };
           registerCall(call);
-          io.to(`group:${groupId}`).except(socket.id).emit('incomingCall', {
+        }
+
+        // FIX(protocol): инициатор группового звонка сразу становится участником:
+        // попадает в participants и в комнату call:<id>, чтобы остальные могли
+        // строить к нему peer-соединения и он получал callPeerJoined/callPeerLeft.
+        const existingPeers = [...call.participants].filter(id => id !== currentUserId);
+        const alreadyIn = call.participants.has(currentUserId);
+        call.participants.add(currentUserId);
+        socket.join(`call:${call.callId}`);
+        socket.activeCallKeys.add(chatKey);
+        if (!alreadyIn) {
+          socket.to(`call:${call.callId}`).emit('callPeerJoined', { callId: call.callId, peerId: currentUserId });
+        }
+
+        if (isNewCall) {
+          io.to(`group:${groupId}`).except(socket.id).emit('callIncoming', {
             callId: call.callId, chatKey, isGroup: true, groupId, video: !!video,
             from: currentUserId, fromNick: me.nickname, fromAvatar: me.avatar, createdAt: Date.now()
           });
-          emitGroupVoiceState(groupId);
         }
-        socket.emit('callStarted', { callId: call.callId, chatKey });
+        emitGroupVoiceState(groupId);
+
+        socket.emit('callStarted', {
+          callId: call.callId, chatKey, video: call.video, isGroup: true, groupId,
+          participants: existingPeers
+        });
       } else {
         socket.emit('callError', { reason: 'bad_request' });
       }
@@ -1677,12 +1717,20 @@ io.on('connection', (socket) => {
       }
 
       const existingPeers = [...call.participants].filter(id => id !== currentUserId);
+      const alreadyIn = call.participants.has(currentUserId);
       call.participants.add(currentUserId);
       socket.join(`call:${call.callId}`);
       socket.activeCallKeys.add(call.chatKey);
 
-      socket.emit('callParticipants', { callId: call.callId, chatKey: call.chatKey, video: call.video, participants: existingPeers });
-      socket.to(`call:${call.callId}`).emit('peerJoined', { callId: call.callId, peerId: currentUserId });
+      // FIX(protocol): callParticipants -> callJoined, peerJoined -> callPeerJoined
+      socket.emit('callJoined', {
+        callId: call.callId, chatKey: call.chatKey, video: call.video,
+        isGroup: call.type === 'group', groupId: call.groupId || null,
+        participants: existingPeers
+      });
+      if (!alreadyIn) {
+        socket.to(`call:${call.callId}`).emit('callPeerJoined', { callId: call.callId, peerId: currentUserId });
+      }
       if (call.type === 'group') emitGroupVoiceState(call.groupId);
     } catch (err) {
       logger.error('callJoin error', { error: err.message, stack: err.stack });
@@ -1690,18 +1738,20 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('callReject', async ({ callId } = {}) => {
+  socket.on('callReject', async ({ callId, reason } = {}) => {
     try {
       const call = findCallById(callId);
       if (!call) return;
+      // FIX(protocol): в callRejected передаём reason (rejected | busy | timeout)
+      const rejectReason = (typeof reason === 'string' && REJECT_REASONS.has(reason)) ? reason : 'rejected';
       if (call.type === 'dm') {
         // FIX: отклонить может только адресат
         if (currentUserId !== call.targetId) return;
-        io.to(call.initiator).emit('callRejected', { callId: call.callId, peerId: currentUserId });
-        endCall(call, 'rejected');
+        io.to(call.initiator).emit('callRejected', { callId: call.callId, peerId: currentUserId, reason: rejectReason });
+        endCall(call, rejectReason);
       } else {
         if (!(await isGroupMember(currentUserId, call.groupId))) return;
-        socket.to(`call:${call.callId}`).emit('callRejected', { callId: call.callId, peerId: currentUserId });
+        socket.to(`call:${call.callId}`).emit('callRejected', { callId: call.callId, peerId: currentUserId, reason: rejectReason });
       }
     } catch (err) { logger.error('callReject error', { error: err.message }); }
   });
