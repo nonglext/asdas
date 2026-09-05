@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 /**
  * Загрузчик слоёв приложения.
@@ -6,7 +6,7 @@
  * При ошибке показывает понятное сообщение вместо пустого экрана.
  */
 (function bootstrap() {
-  const VERSION = '1'; // поменяй при деплое, чтобы сбросить кэш браузера
+  const VERSION = '2'; // поменяй при деплое, чтобы сбросить кэш браузера
   const SCRIPTS = ['/js/core.js', '/js/auth-ui.js', '/js/chat-ui.js', '/js/calls.js'];
 
   if (window.__chatappBooted) return; // защита от двойного подключения app.js

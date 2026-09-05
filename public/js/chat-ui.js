@@ -175,6 +175,8 @@ function appendSystemMsg(containerId, text) {
  * ==========================================================================*/
 async function openChat(id) {
   if (!state.me || !id) return;
+  saveComposerDraft();
+  state.seq.groupChat++;
   const prevGroup = state.activeGroup;
   const unreadBefore = state.unread[id] || 0;
   state.activeFriend = id;
@@ -197,7 +199,7 @@ async function openChat(id) {
     st.className = 'chat-head-status' + (f.online ? ' on' : '');
   }
   const input = $('msg-input');
-  if (input) input.placeholder = `Написать @${f.nickname}`;
+  if (input) { input.placeholder = `Написать @${f.nickname}`; input.value = composerDrafts.get('dm:' + id) || ''; }
 
   setDisplay('chat-placeholder', 'none');
   setDisplay('group-chat-window', 'none');
@@ -213,33 +215,9 @@ async function openChat(id) {
   box.innerHTML = placeholderHTML('Загрузка…');
 
   const requestSeq = ++state.seq.chat;
-  try {
-    const res = await authFetch(`${BACKEND_URL}/api/messages/${encodeURIComponent(state.me.id)}/${encodeURIComponent(id)}`);
-    if (requestSeq !== state.seq.chat) return;
-    if (!res.ok) throw new Error('history failed');
-    const history = await res.json();
-    if (requestSeq !== state.seq.chat) return;
-    resetMsgContainer(box);
-    renderChatWelcome(box, {
-      nick: f.nickname, avatar: f.avatar,
-      sub: `Это начало вашей истории личных сообщений с <b>@${esc(f.id)}</b>.`,
-    });
-    if (Array.isArray(history) && history.length) {
-      const firstNewIdx = unreadBefore > 0 ? Math.max(0, history.length - unreadBefore) : -1;
-      history.forEach((m, i) => {
-        if (i === firstNewIdx && m.from !== state.me.id) appendNewMessagesDivider(box);
-        appendMsg(m, 'messages', false);
-      });
-      const last = history[history.length - 1];
-      if (last) state.lastActivity[id] = Math.max(state.lastActivity[id] || 0, getMsgTimeMs(last));
-    }
-    scrollMsgs('messages');
-  } catch (e) {
-    if (requestSeq !== state.seq.chat) return;
-    if (e instanceof AuthError) return;
-    box.innerHTML = placeholderHTML('Ошибка загрузки', true);
-  }
-  socket.emit('markRead', id);
+  const loaded = await loadConversationHistory(box, `${BACKEND_URL}/api/messages/${encodeURIComponent(state.me.id)}/${encodeURIComponent(id)}`, { nick: f.nickname, avatar: f.avatar, sub: `Личная переписка с <b>@${esc(f.id)}</b>.` }, m => appendMsg(m, 'messages', false), 'chat', requestSeq, unreadBefore);
+  if (requestSeq !== state.seq.chat) return;
+  if (loaded && socket.connected && document.visibilityState === 'visible') socket.emit('markRead', id);
   if (window.innerWidth > 640) input?.focus();
 }
 
@@ -265,6 +243,7 @@ function appendChatMsg(msg, containerId, ctx, doScroll = true) {
   if (!container) return;
 
   const msgId = msg._id || msg.id || '';
+  if (container._loadingHistory && msgId) container._liveMessages.set(msgId, msg);
   // Дедупликация (история + realtime могут пересечься)
   if (msgId && container.querySelector(`[data-msgid="${CSS.escape(msgId)}"]`)) return;
 
@@ -329,6 +308,13 @@ function appendChatMsg(msg, containerId, ctx, doScroll = true) {
     if (isJumboEmoji(raw)) text.classList.add('jumbo');
   }
   body.appendChild(text);
+  if (!isDeleted && msg.image && /^\/uploads\/[a-f0-9-]+\.(jpg|png|webp|gif)$/i.test(msg.image)) {
+    const image = document.createElement('img');
+    image.className = 'message-image'; image.src = avatarSrc(msg.image);
+    image.alt = 'Изображение в сообщении'; image.loading = 'lazy'; image.decoding = 'async';
+    image.addEventListener('error', () => { image.replaceWith(document.createTextNode('Изображение недоступно')); });
+    body.appendChild(image);
+  }
   wrap.appendChild(body);
 
   if (isMine && !isDeleted && msgId) {
@@ -341,8 +327,7 @@ function appendChatMsg(msg, containerId, ctx, doScroll = true) {
     delBtn.addEventListener('click', e => {
       e.stopPropagation();
       // Shift+клик — мгновенное удаление без подтверждения (как в Discord)
-      if (e.shiftKey) deleteMessage(msgId);
-      else openDeleteConfirm(msgId);
+      openDeleteConfirm(msgId);
     });
     wrap.appendChild(delBtn);
   }
@@ -379,6 +364,8 @@ function appendGroupMsg(msg, doScroll = true) {
  * ==========================================================================*/
 async function openGroupChat(groupId) {
   if (!state.me || !groupId || !state.groups[groupId]) return;
+  saveComposerDraft();
+  state.seq.chat++;
   const prevFriend = state.activeFriend;
   const unreadBefore = state.groupUnread[groupId] || 0;
   state.activeGroup = groupId;
@@ -396,7 +383,7 @@ async function openGroupChat(groupId) {
   updateGroupChatHeader(g);
   renderGroupMembersPanel(g);
   const input = $('group-msg-input');
-  if (input) input.placeholder = 'Написать в ' + g.name;
+  if (input) { input.placeholder = 'Написать в ' + g.name; input.value = composerDrafts.get('group:' + groupId) || ''; }
 
   setDisplay('chat-placeholder', 'none');
   setDisplay('chat-window', 'none');
@@ -413,33 +400,9 @@ async function openGroupChat(groupId) {
   box.innerHTML = placeholderHTML('Загрузка…');
 
   const requestSeq = ++state.seq.groupChat;
-  try {
-    const res = await authFetch(`${BACKEND_URL}/api/groups/${encodeURIComponent(groupId)}/messages`);
-    if (requestSeq !== state.seq.groupChat) return;
-    if (!res.ok) throw new Error('history failed');
-    const history = await res.json();
-    if (requestSeq !== state.seq.groupChat) return;
-    resetMsgContainer(box);
-    renderChatWelcome(box, {
-      nick: g.name, group: g,
-      sub: `Добро пожаловать в начало группы <b>${esc(g.name)}</b>.`,
-    });
-    if (Array.isArray(history) && history.length) {
-      const firstNewIdx = unreadBefore > 0 ? Math.max(0, history.length - unreadBefore) : -1;
-      history.forEach((m, i) => {
-        if (i === firstNewIdx && m.from !== state.me.id) appendNewMessagesDivider(box);
-        appendGroupMsg(m, false);
-      });
-      const last = history[history.length - 1];
-      if (last) state.groupLastActivity[groupId] = Math.max(state.groupLastActivity[groupId] || 0, getMsgTimeMs(last));
-    }
-    scrollMsgs('group-messages');
-  } catch (e) {
-    if (requestSeq !== state.seq.groupChat) return;
-    if (e instanceof AuthError) return;
-    box.innerHTML = placeholderHTML('Ошибка загрузки', true);
-  }
-  socket.emit('markGroupRead', groupId);
+  const loaded = await loadConversationHistory(box, `${BACKEND_URL}/api/groups/${encodeURIComponent(groupId)}/messages`, { nick: g.name, group: g, sub: 'Общий разговор с участниками группы.' }, m => appendGroupMsg(m, false), 'groupChat', requestSeq, unreadBefore);
+  if (requestSeq !== state.seq.groupChat) return;
+  if (loaded && socket.connected && document.visibilityState === 'visible') socket.emit('markGroupRead', groupId);
   if (window.innerWidth > 640) input?.focus();
 }
 
@@ -503,43 +466,17 @@ on('btn-group-info', 'click', () => {
  * ==========================================================================*/
 on('btn-send', 'click', sendMsg);
 on('msg-input', 'keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMsg(); }
 });
 
-function sendMsg() {
-  const input = $('msg-input');
-  if (!input) return;
-  const text = input.value.trim();
-  if (!text || !state.activeFriend) return;
-  if (text.length > MAX_MESSAGE_LENGTH) {
-    showTransientNotice(`Сообщение слишком длинное (максимум ${MAX_MESSAGE_LENGTH} символов)`);
-    return;
-  }
-  socket.emit('sendMessage', { toId: state.activeFriend, text });
-  state.lastActivity[state.activeFriend] = Date.now();
-  input.value = '';
-  input.focus();
-}
+function sendMsg() { return sendComposer(false); }
 
 on('btn-group-send', 'click', sendGroupMsg);
 on('group-msg-input', 'keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendGroupMsg(); }
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendGroupMsg(); }
 });
 
-function sendGroupMsg() {
-  const input = $('group-msg-input');
-  if (!input) return;
-  const text = input.value.trim();
-  if (!text || !state.activeGroup) return;
-  if (text.length > MAX_MESSAGE_LENGTH) {
-    showTransientNotice(`Сообщение слишком длинное (максимум ${MAX_MESSAGE_LENGTH} символов)`);
-    return;
-  }
-  socket.emit('groupMessage', { groupId: state.activeGroup, text });
-  state.groupLastActivity[state.activeGroup] = Date.now();
-  input.value = '';
-  input.focus();
-}
+function sendGroupMsg() { return sendComposer(true); }
 
 // Как в Discord: начал печатать где угодно — фокус уходит в поле ввода
 document.addEventListener('keydown', e => {
@@ -645,9 +582,7 @@ async function showUserProfile(userId) {
       addBtn.onclick = isFriend
         ? () => { closeProfileModal(); openChat(userId); }
         : () => {
-            socket.emit('sendFriendRequest', userId);
-            addBtn.textContent = 'Запрос отправлен';
-            addBtn.disabled = true;
+            requestFriend(userId, addBtn);
           };
     }
 
@@ -751,7 +686,7 @@ on('avatar-input', 'change', async e => {
     }
     const data = await res.json();
     state.me.avatar = data.avatar;
-    localStorage.setItem('chatapp_profile', JSON.stringify(state.me));
+    storage.setItem('chatapp_profile', JSON.stringify(state.me));
     renderAv($('edit-avatar'), state.me.nickname, state.me.avatar);
     renderAv($('my-avatar'), state.me.nickname, state.me.avatar);
     showTransientNotice('Аватар обновлён');
@@ -782,7 +717,7 @@ on('btn-save-profile', 'click', async () => {
       state.me.nickname = u.nickname ?? nickname;
       state.me.status = u.status ?? status;
       state.me.bio = u.bio ?? bio;
-      localStorage.setItem('chatapp_profile', JSON.stringify(state.me));
+      storage.setItem('chatapp_profile', JSON.stringify(state.me));
       setText('my-nick', state.me.nickname);
       renderAv($('my-avatar'), state.me.nickname, state.me.avatar);
       closeEditProfileModal();
@@ -1185,7 +1120,11 @@ on('btn-back', 'click', goBackMobile);
 on('btn-back-group', 'click', goBackMobile);
 
 function goBackMobile() {
+  saveComposerDraft();
+  state.seq.chat++;
   const prevFriend = state.activeFriend;
+  saveComposerDraft();
+  state.seq.groupChat++;
   const prevGroup = state.activeGroup;
   closeActiveChat();
   document.querySelector('.sidebar')?.classList.remove('hidden');
@@ -1230,23 +1169,7 @@ document.addEventListener('visibilitychange', () => {
 /* ============================================================================
  * AUTO-LOGIN
  * ==========================================================================*/
-(() => {
-  const token = localStorage.getItem('chatapp_token');
-  const cached = localStorage.getItem('chatapp_profile');
-  if (token && cached) {
-    try {
-      const me = JSON.parse(cached);
-      if (!me || !me.id) throw new Error('bad cache');
-      state.me = me;
-      enterApp(me);
-      return;
-    } catch (e) {
-      localStorage.removeItem('chatapp_profile');
-    }
-  }
-  document.documentElement.classList.remove('has-session');
-  $('login-id')?.focus();
-})();
+// Session restoration is owned by auth-ui.js, once all layers have loaded.
 
 /* ============================================================================
  * SOCKET CONNECTION ERROR HANDLING
@@ -1275,9 +1198,131 @@ socket.on('disconnect', reason => {
   if (reason === 'io client disconnect') return;
   setConnBanner(true, 'Соединение потеряно — переподключение…');
   // Сигнальный канал потерян — сервер удалит нас из звонка; завершаем локально.
-  if (callState.active || callState.pendingIncoming) closeCallOverlay();
+  // calls.js owns call reconnection and its grace timer.
 });
 
 window.addEventListener('beforeunload', () => {
  if (callState.callId) socket.emit('callLeave', { callId: callState.callId });
 });
+
+
+const composerDrafts = new Map();
+const retryMessages = new Map();
+function saveComposerDraft() {
+  if (state.activeFriend) composerDrafts.set('dm:' + state.activeFriend, $('msg-input')?.value || '');
+  if (state.activeGroup) composerDrafts.set('group:' + state.activeGroup, $('group-msg-input')?.value || '');
+}
+async function sendComposer(group) {
+  const input = $(group ? 'group-msg-input' : 'msg-input');
+  const button = $(group ? 'btn-group-send' : 'btn-send');
+  const target = group ? state.activeGroup : state.activeFriend;
+  if (!input || input.dataset.sending || !target || !state.me) return;
+  const text = input.value.trim(), raw = input.value, userId = state.me.id;
+  if (!text) return;
+  if (text.length > MAX_MESSAGE_LENGTH) return showTransientNotice('Сообщение не должно превышать 4000 символов');
+  if (!socket.connected) return showTransientNotice('Нет соединения. Текст сохранён в поле ввода.');
+  const key = (group ? 'group:' : 'dm:') + target;
+  let attempt = retryMessages.get(key);
+  if (!attempt || attempt.text !== text) {
+    attempt = { text, clientId: crypto.randomUUID() };
+    retryMessages.set(key, attempt);
+  }
+  composerDrafts.set(key, raw);
+  input.dataset.sending = 'true';
+  if (button) { button.disabled = true; button.setAttribute('aria-busy', 'true'); }
+  try {
+    await socketRequest(group ? 'groupMessage' : 'sendMessage', {
+      ...(group ? { groupId: target } : { toId: target }), ...attempt,
+    });
+    if (state.me?.id !== userId) return;
+    retryMessages.delete(key);
+    if (composerDrafts.get(key) === raw) composerDrafts.delete(key);
+    const current = group ? state.activeGroup : state.activeFriend;
+    if (current === target && input.value === raw) input.value = '';
+  } catch (e) {
+    if (state.me?.id === userId) showTransientNotice(SEND_MESSAGE_ERRORS[e.reason] || e.message);
+  } finally {
+    delete input.dataset.sending;
+    if (button) { button.disabled = false; button.removeAttribute('aria-busy'); }
+  }
+}
+
+
+async function loadConversationHistory(box, url, welcome, render, seqKey, seq, unread) {
+  const stale = () => state.seq[seqKey] !== seq || !state.me;
+  box._loadingHistory = true;
+  box._liveMessages = new Map();
+  const retry = () => {
+    if (stale()) return;
+    resetMsgContainer(box);
+    box.innerHTML = placeholderHTML('Загрузка сообщений…');
+    loadConversationHistory(box, url, welcome, render, seqKey, seq, unread);
+  };
+  try {
+    const res = await authFetch(url + '?limit=50');
+    if (!res.ok) throw new Error('Не удалось загрузить историю');
+    const page = await res.json();
+    if (stale()) return false;
+    if (!Array.isArray(page)) throw new Error('Неверный формат истории');
+    const merged = new Map(page.map(m => [m._id || m.id, m]));
+    for (const [id, msg] of box._liveMessages) merged.set(id, msg);
+    const rows = [...merged.values()].sort((a, b) => getMsgTimeMs(a) - getMsgTimeMs(b) || String(a._id || a.id).localeCompare(String(b._id || b.id)));
+    box._loadingHistory = false;
+    box._liveMessages.clear();
+    resetMsgContainer(box);
+    renderChatWelcome(box, welcome);
+    const firstUnread = unread > 0 ? Math.max(0, rows.length - unread) : -1;
+    rows.forEach((msg, i) => {
+      if (i === firstUnread && msg.from !== state.me.id) appendNewMessagesDivider(box);
+      render(msg);
+    });
+    if (page.length === 50) addHistoryPager(box, url, page[0], render, stale);
+    scrollMsgs(box.id);
+    return true;
+  } catch (e) {
+    if (stale() || e instanceof AuthError) return false;
+    box._loadingHistory = false;
+    clearMsgsPlaceholder(box);
+    const button = document.createElement('button');
+    button.className = 'history-more history-error';
+    button.type = 'button'; button.textContent = 'История не загрузилась. Попробовать снова';
+    button.addEventListener('click', retry);
+    box.prepend(button);
+    return false;
+  }
+}
+function addHistoryPager(box, url, first, render, stale) {
+  let cursor = first;
+  const button = document.createElement('button');
+  button.className = 'history-more'; button.type = 'button';
+  button.textContent = 'Показать предыдущие сообщения';
+  box.prepend(button);
+  button.addEventListener('click', async () => {
+    if (button.disabled || stale()) return;
+    button.disabled = true; button.textContent = 'Загружаем…';
+    try {
+      const query = new URLSearchParams({ limit: '50', before: msgTimeRaw(cursor), beforeId: cursor._id || cursor.id });
+      const res = await authFetch(url + '?' + query);
+      if (!res.ok) throw new Error('history');
+      const page = await res.json();
+      if (stale()) return;
+      if (!Array.isArray(page)) throw new Error('history');
+      const oldHeight = box.scrollHeight, oldTop = box.scrollTop, lastDay = box.dataset.lastDay;
+      const existing = new Set([...box.querySelectorAll('[data-msgid]')].map(el => el.dataset.msgid));
+      const tail = document.createDocumentFragment();
+      button.remove();
+      while (box.firstChild) tail.appendChild(box.firstChild);
+      delete box.dataset.lastDay;
+      page.filter(m => !existing.has(m._id || m.id)).forEach(render);
+      // The welcome belongs before the actual beginning, never between pages.
+      tail.querySelector('.chat-welcome')?.remove();
+      box.appendChild(tail);
+      if (lastDay) box.dataset.lastDay = lastDay;
+      if (page.length === 50) { cursor = page[0]; box.prepend(button); }
+      box.scrollTop = oldTop + box.scrollHeight - oldHeight;
+      button.textContent = 'Показать предыдущие сообщения';
+    } catch (e) {
+      if (!stale() && !(e instanceof AuthError)) button.textContent = 'Не загрузилось. Повторить';
+    } finally { button.disabled = false; }
+  });
+}

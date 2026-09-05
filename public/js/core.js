@@ -3,7 +3,13 @@
 /* ============================================================================
  * CONFIG
  * ==========================================================================*/
-const BACKEND_URL = "https://asdas-p7ht.onrender.com";
+const BACKEND_URL = window.location.origin;
+const storage = {
+  memory: new Map(),
+  getItem(key) { try { return window.localStorage.getItem(key); } catch { return this.memory.get(key) ?? null; } },
+  setItem(key, value) { this.memory.set(key, String(value)); try { window.localStorage.setItem(key, String(value)); } catch {} },
+  removeItem(key) { this.memory.delete(key); try { window.localStorage.removeItem(key); } catch {} },
+};
 const MAX_MESSAGE_LENGTH = 4000;
 const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
 const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -15,13 +21,13 @@ const SOUNDS_STORAGE_KEY = 'chatapp_sounds';
 
 // Обратная совместимость: в остальном коде может использоваться SOUNDS_ENABLED.
 // Актуальное значение — sfx.enabled().
-const SOUNDS_ENABLED = localStorage.getItem(SOUNDS_STORAGE_KEY) !== 'off';
+const SOUNDS_ENABLED = storage.getItem(SOUNDS_STORAGE_KEY) !== 'off';
 
-// Отключаем браузерную обработку микрофона — в звонок идёт «сырой» поток.
+// Обработка микрофона снижает эхо и фоновый шум при разговоре.
 const RAW_AUDIO_CONSTRAINTS = {
-  echoCancellation: false,
-  noiseSuppression: false,
-  autoGainControl: false
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true
 };
 
 const RTC_CONFIG = {
@@ -138,6 +144,8 @@ function bumpAllSeq() {
 function resetState() {
   bumpAllSeq();
   state.me = null;
+  composerDrafts.clear();
+  retryMessages.clear();
   state.activeFriend = null;
   state.activeGroup = null;
   state.infoGroupId = null;
@@ -269,7 +277,7 @@ const sfx = (() => {
     enabled: () => enabled,
     setEnabled(v) {
       enabled = !!v;
-      localStorage.setItem(SOUNDS_STORAGE_KEY, enabled ? 'on' : 'off');
+      storage.setItem(SOUNDS_STORAGE_KEY, enabled ? 'on' : 'off');
       if (!enabled) stopRing();
     },
     toggle() { this.setEnabled(!enabled); return enabled; },
@@ -294,10 +302,10 @@ const socket = io(BACKEND_URL, {
 });
 
 // Токен читается при КАЖДОМ (ре)коннекте — после перелогина не уйдёт устаревший.
-socket.auth = cb => cb({ token: localStorage.getItem('chatapp_token') || '' });
+socket.auth = cb => cb({ token: storage.getItem('chatapp_token') || '' });
 
 function connectSocket() {
-  const token = localStorage.getItem('chatapp_token');
+  const token = storage.getItem('chatapp_token');
   if (!token) return;
   if (socket.connected) socket.disconnect();
   socket.connect();
@@ -488,7 +496,7 @@ function splitUrlTail(u) {
 }
 
 function formatMsgText(raw) {
-  let s = esc(raw);
+  let s = esc(raw).replace(/[\uE000\uE001]/g, '');
   const stash = [];
   const keep = html => { stash.push(html); return `${STASH_OPEN}${stash.length - 1}${STASH_CLOSE}`; };
 
@@ -548,10 +556,11 @@ function forceLogoutToLogin(message) {
     sfx.stopRing();
     resetCallState();
     resetState();
-    if (socket.connected) socket.disconnect();
-    localStorage.removeItem('chatapp_id');
-    localStorage.removeItem('chatapp_token');
-    localStorage.removeItem('chatapp_profile');
+    socket.disconnect();
+    clearTimeout(mediaSessionTimer);
+    storage.removeItem('chatapp_id');
+    storage.removeItem('chatapp_token');
+    storage.removeItem('chatapp_profile');
     document.documentElement.classList.remove('has-session');
     closeAllModals();
     setConnBanner(false);
@@ -581,7 +590,7 @@ function forceLogoutToLogin(message) {
  */
 async function authFetch(url, options = {}) {
   const { timeoutMs = FETCH_TIMEOUT_MS, ...fetchOptions } = options;
-  const token = localStorage.getItem('chatapp_token');
+  const token = storage.getItem('chatapp_token');
 
   let controller = null, timer = null;
   if (!fetchOptions.signal && timeoutMs > 0 && typeof AbortController !== 'undefined') {
@@ -592,13 +601,14 @@ async function authFetch(url, options = {}) {
 
   try {
     const res = await fetch(url, {
+      credentials: 'same-origin',
       ...fetchOptions,
       headers: {
         ...(fetchOptions.headers || {}),
         ...(token ? { Authorization: 'Bearer ' + token } : {}),
       },
     });
-    if (res.status === 401 && state.me) {
+    if (res.status === 401 && state.me && token === storage.getItem('chatapp_token')) {
       forceLogoutToLogin('Сессия истекла, войдите снова');
       throw new AuthError('Session expired');
     }
@@ -619,13 +629,13 @@ function saveAndLogin(user, userId, token) {
   if (!user || typeof user !== 'object') return setErr('Некорректный ответ сервера');
   const id = userId ?? user.id;
   if (!id) return setErr('Некорректный ответ сервера: нет идентификатора пользователя');
-  const finalToken = token || localStorage.getItem('chatapp_token');
+  const finalToken = token || storage.getItem('chatapp_token');
   if (!finalToken) return setErr('Некорректный ответ сервера: нет токена');
 
   state.me = user;
-  localStorage.setItem('chatapp_id', String(id));
-  localStorage.setItem('chatapp_token', finalToken);
-  localStorage.setItem('chatapp_profile', JSON.stringify(user));
+  storage.setItem('chatapp_id', String(id));
+  storage.setItem('chatapp_token', finalToken);
+  storage.setItem('chatapp_profile', JSON.stringify(user));
   setErr('');
   enterApp(user);
 }
@@ -641,6 +651,7 @@ function enterApp(user) {
   updateTitleBadge();
   connectSocket();
   loadGroups();
+  refreshMediaSession();
 }
 
 /* ============================================================================
@@ -727,4 +738,51 @@ function emptyGroupsHTML() {
     <div class="empty-title">Нет групп</div>
     <div class="empty-sub">Создай группу кнопкой +</div>
   </div>`;
+}
+
+// Renew the HttpOnly media cookie on restoration and during long sessions.
+let mediaSessionTimer;
+async function refreshMediaSession() {
+  clearTimeout(mediaSessionTimer);
+  const token = storage.getItem('chatapp_token');
+  if (!state.me || !token) return;
+  try { await authFetch(BACKEND_URL + '/api/me'); } catch (e) {
+    if (e instanceof AuthError) return;
+  }
+  if (state.me && token === storage.getItem('chatapp_token'))
+    mediaSessionTimer = setTimeout(refreshMediaSession, 40 * 60 * 1000);
+}
+function socketRequest(event, payload, timeout = 15000) {
+  if (!socket.connected) return Promise.reject(new Error('Нет соединения с сервером. Попробуйте после переподключения.'));
+  return new Promise((resolve, reject) => {
+    socket.timeout(timeout).emit(event, payload, (err, result) => {
+      if (err) return reject(new Error('Нет подтверждения от сервера. Повторите попытку.'));
+      if (!result?.ok) {
+        const error = new Error(result?.error || 'Ошибка сервера');
+        error.reason = result?.reason;
+        return reject(error);
+      }
+      resolve(result);
+    });
+  });
+}
+
+
+let rtcConfigPromise = null, rtcConfigAt = 0;
+function configureRTC() {
+  if (rtcConfigPromise && Date.now() - rtcConfigAt < 30 * 60 * 1000) return rtcConfigPromise;
+  rtcConfigAt = Date.now();
+  rtcConfigPromise = (async () => {
+    try {
+      const res = await authFetch(BACKEND_URL + '/api/rtc-config', { timeoutMs: 8000 });
+      if (!res.ok) throw new Error('ICE config unavailable');
+      const config = await res.json();
+      if (Array.isArray(config.iceServers) && config.iceServers.length) RTC_CONFIG.iceServers = config.iceServers;
+    } catch (e) {
+      rtcConfigAt = 0;
+      if (e instanceof AuthError) throw e;
+      // STUN fallback remains available; no claim that it works through every NAT.
+    }
+  })();
+  return rtcConfigPromise;
 }

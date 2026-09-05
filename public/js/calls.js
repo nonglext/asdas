@@ -18,7 +18,7 @@
 'use strict';
 
 /* ── Константы ─────────────────────────────────────────────────────────── */
-const CALL_RING_TIMEOUT_MS   = 45_000;
+// CALL_RING_TIMEOUT_MS is shared from core.js.
 const ICE_RESTART_TIMEOUT_MS = 12_000;
 const IDLE_HIDE_MS           = 3_000;
 
@@ -70,10 +70,7 @@ function hasLocalVideo() {
 }
 
 /* ── Состояние ─────────────────────────────────────────────────────────── */
-// speakingMonitors объявляем здесь (ранее объект мог быть undefined в этом модуле)
-if (typeof speakingMonitors === 'undefined') {
-  var speakingMonitors = Object.create(null); // eslint-disable-line no-var
-}
+// speakingMonitors is shared from core.js; do not redeclare with var.
 
 let callStarting      = false; // идёт getUserMedia для исходящего/принимаемого звонка
 let leaveWhenStarted  = false; // трубку положили раньше, чем сервер прислал callStarted
@@ -133,6 +130,7 @@ function mediaErrorMessage(e) {
  * @returns {Promise<MediaStream>}
  */
 async function acquireLocalStream(video) {
+  await configureRTC();
   if (!navigator.mediaDevices?.getUserMedia) {
     const err = Object.assign(new Error('getUserMedia is not available'), { name: 'NotSupportedError' });
     throw err;
@@ -1576,7 +1574,9 @@ socket.on('callEnded', ({ callId, reason } = {}) => {
   }
 });
 
-socket.on('callError', ({ reason } = {}) => {
+socket.on('callError', ({ reason, callId, event } = {}) => {
+  if (event === 'watchGroupVoice') return;
+  if (callId && callState.callId && callId !== callState.callId) return;
   const messages = {
     busy:          'Собеседник уже в звонке',
     offline:       'Пользователь не в сети',
@@ -1595,12 +1595,18 @@ socket.on('callError', ({ reason } = {}) => {
 });
 
 /* ── Реконнект сокета ───────────────────────────────────────────────────── */
+let callReconnectTimer = null;
 socket.on('disconnect', () => {
+  clearTimeout(callReconnectTimer);
+  if (callState.active) callReconnectTimer = setTimeout(() => {
+    if (callState.active && !socket.connected) { showTransientNotice('Звонок завершён: соединение не восстановилось'); closeCallOverlay(); }
+  }, 16000);
   if (callState.pendingIncoming) dismissIncomingCall();
   if (callState.active) setText('call-overlay-status', 'переподключение…');
 });
 
 socket.on('connect', () => {
+  clearTimeout(callReconnectTimer);
   if (!callState.active || !callState.callId) return;
   // Пересобираем mesh: старые соединения могли пережить разрыв, но сигналинг для них потерян
   Object.keys(callState.peers).forEach(id => teardownPeer(id, { render: false }));

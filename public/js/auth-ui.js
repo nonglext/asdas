@@ -3,7 +3,7 @@
 /* ============================================================================
  * CONSTANTS
  * ==========================================================================*/
-const ID_RE = /^[a-z0-9_]+$/;
+const ID_RE = /^[a-z0-9_]{3,30}$/;
 const ID_MIN_LEN = 3;
 const PW_MIN_LEN = 8;
 const SLOW_SERVER_HINT_MS = 6000;   // после этого показываем «Сервер запускается…»
@@ -31,7 +31,12 @@ const FRIEND_REQUEST_ERRORS = {
   blocked: 'Невозможно отправить заявку',
   limit_reached: 'Достигнут лимит заявок/друзей',
   target_limit_reached: 'У пользователя переполнен список заявок',
-  server_error: 'Ошибка сервера',
+  server_error: 'Ошибка сервера. Попробуйте позже',
+  incoming_request_exists: 'У вас уже есть входящая заявка: примите её в разделе заявок',
+  no_request: 'Заявка уже обработана или отозвана',
+  unauthorized: 'Сессия истекла. Войдите снова',
+  busy: 'Сервер занят. Попробуйте ещё раз',
+  bad_request: 'Некорректный запрос. Обновите страницу',
 };
 
 const SEND_MESSAGE_ERRORS = {
@@ -139,7 +144,7 @@ whenDomReady(() => {
   document.querySelectorAll('.sidebar-tab').forEach(tab => {
     tab.addEventListener('click', () => switchSidebarTab(tab.dataset.stab));
   });
-  switchSidebarTab(localStorage.getItem(SIDEBAR_TAB_KEY) === 'groups' ? 'groups' : 'dm');
+  switchSidebarTab(storage.getItem(SIDEBAR_TAB_KEY) === 'groups' ? 'groups' : 'dm');
 
   // Автофокус на поле ID, если показан экран входа
   if (!document.documentElement.classList.contains('has-session')) {
@@ -162,7 +167,7 @@ function switchSidebarTab(name) {
   });
   setDisplay('dm-panel', isGroups ? 'none' : '');
   setDisplay('groups-panel', isGroups ? '' : 'none');
-  try { localStorage.setItem(SIDEBAR_TAB_KEY, isGroups ? 'groups' : 'dm'); } catch (e) {}
+  try { storage.setItem(SIDEBAR_TAB_KEY, isGroups ? 'groups' : 'dm'); } catch (e) {}
 }
 
 /* ============================================================================
@@ -214,6 +219,7 @@ on('btn-register', 'click', async () => {
   if (userId.length < ID_MIN_LEN) return setErr(`ID минимум ${ID_MIN_LEN} символа`);
   if (!ID_RE.test(userId)) return setErr('ID: только a-z, 0-9, _');
   if (password.length < PW_MIN_LEN) return setErr(`Пароль минимум ${PW_MIN_LEN} символов`);
+  if (new TextEncoder().encode(password).length > 72 || password.includes('\0')) return setErr('Пароль: не больше 72 байт UTF-8, без нулевого символа');
 
   await withButtonBusy($('btn-register'), 'Загрузка…', () =>
     authRequest('/api/register', { userId, nickname, password }, 'Ошибка регистрации')
@@ -248,6 +254,9 @@ function showChatPlaceholder() {
 }
 
 function closeActiveChat() {
+  state.seq.chat++;
+  state.seq.groupChat++;
+  saveComposerDraft();
   state.activeFriend = null;
   state.activeGroup = null;
   state.pendingDeleteId = null;
@@ -257,10 +266,10 @@ function closeActiveChat() {
 }
 
 /* ── Восстановление сессии при загрузке (идемпотентно) ─────────────────── */
-whenDomReady(() => {
+window.addEventListener('load', () => {
   if (state.me) return;
-  const token = localStorage.getItem('chatapp_token');
-  const raw = localStorage.getItem('chatapp_profile');
+  const token = storage.getItem('chatapp_token');
+  const raw = storage.getItem('chatapp_profile');
   if (!token || !raw) return;
   try {
     const profile = JSON.parse(raw);
@@ -271,8 +280,8 @@ whenDomReady(() => {
       throw new Error('bad profile');
     }
   } catch (e) {
-    localStorage.removeItem('chatapp_profile');
-    localStorage.removeItem('chatapp_token');
+    storage.removeItem('chatapp_profile');
+    storage.removeItem('chatapp_token');
     document.documentElement.classList.remove('has-session');
   }
 });
@@ -362,9 +371,7 @@ function buildSearchItem(u) {
     e.stopPropagation();
     if (isFriend || btn.disabled) return;
     if (!socket.connected) return showTransientNotice('Нет соединения с сервером');
-    socket.emit('sendFriendRequest', u.id);
-    btn.textContent = 'Отправлено';
-    btn.disabled = true;
+    requestFriend(u.id, btn);
   });
   // mousedown раньше blur → не теряем клик из‑за закрытия дропдауна
   el.addEventListener('mousedown', e => e.preventDefault());
@@ -377,6 +384,8 @@ function buildSearchItem(u) {
 }
 
 async function doSearch(q) {
+  q = q.trim().replace(/^@/, '').slice(0, 50);
+  if (!q) return closeDrop(false);
   const drop = $('search-results');
   if (!drop) return;
 
@@ -408,6 +417,9 @@ async function doSearch(q) {
 }
 
 function closeDrop(clearInput = true) {
+  clearTimeout(searchTimer);
+  searchAbort?.abort();
+  state.seq.search++;
   $('search-results')?.classList.remove('open');
   $('search-input')?.setAttribute('aria-expanded', 'false');
   if (clearInput) {
@@ -432,7 +444,7 @@ socket.on('connect_error', err => {
 socket.on('profile', profile => {
   if (!profile) return;
   state.me = { ...state.me, ...profile };
-  try { localStorage.setItem('chatapp_profile', JSON.stringify(state.me)); } catch (e) {}
+  try { storage.setItem('chatapp_profile', JSON.stringify(state.me)); } catch (e) {}
   state.unread = Object.assign(Object.create(null), profile.unreadCounts || {});
   state.groupUnread = Object.assign(Object.create(null), profile.groupUnreadCounts || {});
 
@@ -520,9 +532,10 @@ socket.on('friendRequest', req => {
   sfx.friend();
 });
 
-socket.on('requestSent', () => showTransientNotice('Заявка отправлена'));
+socket.on('requestSent', ({ alreadySent } = {}) => showTransientNotice(alreadySent ? 'Заявка уже отправлена: ждём ответа друга' : 'Заявка отправлена'));
 
-socket.on('friendRequestError', ({ reason, targetId } = {}) => {
+socket.on('friendRequestError', ({ reason, targetId, toId } = {}) => {
+  targetId ||= toId;
   const addBtn = $('btn-add-friend');
   if (addBtn && addBtn.style.display !== 'none') {
     addBtn.textContent = 'Добавить в друзья';
@@ -955,3 +968,30 @@ function updateStatus(id, online) {
   st.textContent = online ? 'В сети' : 'Не в сети';
   st.className = 'chat-head-status' + (online ? ' on' : '');
 }
+
+async function requestFriend(userId, button) {
+  if (!button || button.disabled) return;
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Отправляем…';
+  button.setAttribute('aria-busy', 'true');
+  try {
+    const result = await socketRequest('sendFriendRequest', userId);
+    button.textContent = result.status === 'friends' ? 'В друзьях' : 'Заявка отправлена';
+  } catch (e) {
+    button.disabled = false;
+    button.textContent = original;
+    showTransientNotice(FRIEND_REQUEST_ERRORS[e.reason] || e.message);
+  } finally { button.removeAttribute('aria-busy'); }
+}
+
+
+socket.on('unreadCleared', ({ chatWith, groupId } = {}) => {
+  if (chatWith) { state.unread[chatWith] = 0; refreshFriendItem(chatWith); }
+  if (groupId) { state.groupUnread[groupId] = 0; refreshGroupItem(groupId); }
+  updateTitleBadge();
+});
+window.addEventListener('storage', event => {
+  if (event.key === 'chatapp_token' && event.oldValue !== event.newValue && state.me)
+    forceLogoutToLogin('Аккаунт изменён в другой вкладке. Войдите снова.');
+});

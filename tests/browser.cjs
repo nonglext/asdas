@@ -1,0 +1,91 @@
+'use strict';
+const { chromium } = require('playwright');
+const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
+const assert = require('node:assert/strict');
+const root=path.resolve(__dirname,'../public');
+const screenshotDir=path.resolve(__dirname,'../test-results');fs.mkdirSync(screenshotDir,{recursive:true});
+const me={id:'alice',nickname:'Алекс',friends:['bob','carol'],friendRequests:[],blockedUsers:[],status:'На связи'};
+const bob={id:'bob',nickname:'Макс',friends:['alice'],friendRequests:[],blockedUsers:[],online:true};
+const carol={...bob,id:'carol',nickname:'Саша'};
+const group={id:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',name:'Планы на выходные',ownerId:'alice',members:[me,bob,carol]};
+const mock=`window.__sent=[];window.__connections=0;window.__response={ok:true,status:'pending'};window.io=function(){const handlers={};const s={connected:false,auth:null,on(e,f){(handlers[e]??=[]).push(f);return s},off(){return s},fire(e,p){for(const f of handlers[e]||[])f(p)},connect(){s.connected=true;window.__connections++;setTimeout(()=>{s.fire('connect');s.fire('profile',${JSON.stringify(me)})},10);return s},disconnect(){s.connected=false;return s},emit(e,p,cb){window.__sent.push({event:e,payload:p});if(cb)setTimeout(()=>cb(null,window.__response),window.__ackDelay||30);return s},timeout(){return s},io:{on(){}}};window.__socket=s;return s}`;
+const server=http.createServer((req,res)=>{let pathname=new URL(req.url,'http://local').pathname;
+ if(pathname==='/socket.io/socket.io.js'){res.setHeader('Content-Type','text/javascript');return res.end(mock)}
+ if(pathname==='/')pathname='/index.html';const file=path.join(root,pathname);if(!file.startsWith(root+path.sep)){res.statusCode=403;return res.end()}
+ const type=file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html';res.setHeader('Content-Type',type);
+ res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'");
+ fs.readFile(file,(e,b)=>{if(e){res.statusCode=404;res.end('not found')}else res.end(b)});
+});
+const tests=[];async function check(name,fn){await fn();tests.push(name);console.log('PASS',name)}
+(async()=>{
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin=`http://127.0.0.1:${server.address().port}`;
+ const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+ try {
+ const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ let historyDelay=0, searchDelay=0;
+ const messages=Array.from({length:50},(_,i)=>({_id:`00000000-0000-0000-0000-${String(i+1).padStart(12,'0')}`,from:i%2?'alice':'bob',text:i===49?'В 19:00 созвонимся?':`Сообщение ${i+1}`,time:new Date(Date.UTC(2026,8,5,12,i)).toISOString()}));
+ await page.route('**/api/**',async route=>{const u=new URL(route.request().url());let data={};
+  if(u.pathname==='/api/login'||u.pathname==='/api/register')data={user:me,token:'test-token'};
+  else if(u.pathname==='/api/me')data=me;
+  else if(u.pathname==='/api/groups')data=[group];
+  else if(u.pathname==='/api/search'){if(searchDelay)await new Promise(r=>setTimeout(r,searchDelay));data=[{id:'david',nickname:'Даня',online:true}]}
+  else if(u.pathname.startsWith('/api/profile/'))data=u.pathname.endsWith('bob')?bob:carol;
+  else if(u.pathname.endsWith('/messages')||u.pathname.startsWith('/api/messages/')){if(historyDelay)await new Promise(r=>setTimeout(r,historyDelay));data=u.searchParams.has('before')?[{_id:'00000000-0000-0000-0000-000000000000',from:'bob',text:'Самое первое сообщение',time:'2026-09-04T12:00:00.000Z'}]:messages}
+  await route.fulfill({json:data});
+ });
+ await page.goto(origin);await page.waitForLoadState('load');
+ await check('clean initial boot',async()=>assert.deepEqual(errors,[]));
+ await check('light theme and no desktop overflow',async()=>{assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).colorScheme),'dark');assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth))});
+ await page.screenshot({path:path.join(screenshotDir,'auth-desktop.png'),fullPage:true});
+ await page.fill('#login-id','alice');await page.fill('#login-pw','password123');await page.click('#btn-login');await page.waitForSelector('#app-screen.active');await page.waitForTimeout(200);
+ await check('single connection after login',async()=>assert.equal(await page.evaluate(()=>window.__connections),1));
+ await page.fill('#search-input','@david');await page.waitForSelector('.s-item .btn-add');await page.click('.s-item .btn-add');await page.waitForTimeout(100);
+ await check('friend addition waits for ack and shows success',async()=>{assert.equal(await page.locator('.s-item .btn-add').textContent(),'Заявка отправлена');const sent=await page.evaluate(()=>__sent.find(x=>x.event==='sendFriendRequest'));assert.equal(sent.payload,'david')});
+ await page.evaluate(()=>{__response={ok:false,reason:'blocked',error:'Заблокирован'};closeDrop();});
+ await page.fill('#search-input','david');await page.waitForSelector('.s-item .btn-add');await page.click('.s-item .btn-add');await page.waitForTimeout(100);
+ await check('friend errors restore the button and explain reason',async()=>{assert.equal(await page.locator('.s-item .btn-add').isDisabled(),false);assert.match(await page.locator('#transient-notice').textContent(),/Невозможно/)});
+ await page.evaluate(()=>{__response={ok:true,status:'friends'};});await page.click('.s-item .btn-add');await page.waitForTimeout(100);
+ await check('cross-request success has a friends state',async()=>assert.equal(await page.locator('.s-item .btn-add').textContent(),'В друзьях'));
+ await page.evaluate(()=>closeDrop());await page.evaluate(()=>openChat('bob'));await page.waitForSelector('#messages .history-more');
+ await check('first history page renders 50 messages',async()=>assert.equal(await page.locator('#messages [data-msgid]').count(),50));
+ await page.click('#messages .history-more');await page.waitForSelector('[data-msgid="00000000-0000-0000-0000-000000000000"]');
+ await check('cursor pagination preserves existing messages',async()=>assert.equal(await page.locator('#messages [data-msgid]').count(),51));
+ await page.evaluate(()=>{__socket.connected=false});await page.fill('#msg-input','Не потеряй меня');await page.click('#btn-send');
+ await check('disconnected send preserves text',async()=>assert.equal(await page.inputValue('#msg-input'),'Не потеряй меня'));
+ await page.evaluate(()=>{__socket.connected=true;__response={ok:false,reason:'busy',error:'Сервер занят'}});await page.click('#btn-send');await page.waitForTimeout(100);
+ await check('rejected send preserves text',async()=>assert.equal(await page.inputValue('#msg-input'),'Не потеряй меня'));
+ await page.evaluate(()=>{__response={ok:true};__ackDelay=180});await page.click('#btn-send');
+ await check('send does not clear text before acknowledgement',async()=>assert.equal(await page.inputValue('#msg-input'),'Не потеряй меня'));
+ await page.waitForTimeout(240);
+ await check('confirmed send clears text and retries reuse id',async()=>{assert.equal(await page.inputValue('#msg-input'),'');const s=await page.evaluate(()=>__sent.filter(x=>x.event==='sendMessage'));assert.equal(s.at(-1).payload.clientId,s.at(-2).payload.clientId)});
+ await page.fill('#msg-input','Черновик Максу');await page.evaluate(()=>openChat('carol'));assert.equal(await page.inputValue('#msg-input'),'');await page.fill('#msg-input','Черновик Саше');await page.evaluate(()=>openChat('bob'));
+ await check('drafts stay with their conversation',async()=>assert.equal(await page.inputValue('#msg-input'),'Черновик Максу'));
+ await check('message formatting escapes HTML and marker injection',async()=>{const result=await page.evaluate(()=>formatMsgText('<img src=x onerror=alert(1)>\uE000123\uE001 **привет**'));assert.ok(!result.includes('<img'));assert.ok(!result.includes('undefined'));assert.ok(result.includes('<strong>привет</strong>'))});
+ await page.evaluate(()=>openEditProfileModal());await page.waitForTimeout(100);
+ await check('dialog traps background interaction',async()=>{assert.equal(await page.evaluate(()=>document.querySelector('#app-screen').inert),true);assert.equal(await page.locator('#edit-profile-modal').getAttribute('aria-modal'),'true')});
+ await page.keyboard.press('Escape');await page.waitForTimeout(100);assert.equal(await page.evaluate(()=>document.querySelector('#app-screen').inert),false);
+ historyDelay=250;
+ await page.evaluate(()=>{openChat('bob');setTimeout(()=>__socket.fire('newMessage',{chatWith:'bob',msg:{_id:'live-during-load',from:'bob',text:'Пришло во время загрузки',time:'2026-09-06T01:00:00.000Z'}}),80)});await page.waitForTimeout(400);
+ await check('realtime messages survive initial history response',async()=>assert.equal(await page.locator('[data-msgid="live-during-load"]').count(),1));
+ historyDelay=0;
+ await page.evaluate(()=>{openChat('bob');openGroupChat('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')});await page.waitForTimeout(200);
+ await check('switching DM to group rejects stale requests',async()=>assert.equal(await page.evaluate(()=>state.activeGroup),'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'));
+ await page.evaluate(()=>openChat('bob'));await page.waitForTimeout(150);await page.evaluate(()=>{document.activeElement?.blur();document.querySelector('#transient-notice')?.classList.remove('show');scrollMsgs('messages')});await page.screenshot({path:path.join(screenshotDir,'chat-desktop.png'),fullPage:true});
+ await page.setViewportSize({width:390,height:844});await page.waitForTimeout(200);
+ await check('mobile chat has no horizontal overflow',async()=>assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)));
+ await page.screenshot({path:path.join(screenshotDir,'chat-mobile.png'),fullPage:true});
+ await page.click('#btn-back');await page.waitForTimeout(100);
+ await check('mobile back returns to conversations',async()=>assert.equal(await page.locator('.sidebar').isVisible(),true));
+ searchDelay=180;await page.fill('#search-input','david');await page.waitForTimeout(300);await page.fill('#search-input','');await page.waitForTimeout(250);
+ await check('cleared search cannot reopen from stale response',async()=>assert.equal(await page.locator('#search-results').evaluate(e=>e.classList.contains('open')),false));
+ await check('no runtime errors through UI scenarios',async()=>assert.deepEqual(errors,[]));
+ await page.reload();await page.waitForTimeout(300);
+ await check('session restoration opens one socket',async()=>{assert.equal(await page.evaluate(()=>__connections),1);assert.equal(await page.locator('#app-screen').evaluate(e=>e.classList.contains('active')),true)});
+ const blocked=await browser.newPage();const storageErrors=[];blocked.on('pageerror',e=>storageErrors.push(e.message));
+ await blocked.addInitScript(()=>Object.defineProperty(window,'localStorage',{get(){throw new Error('blocked')}}));await blocked.goto(origin);await blocked.waitForLoadState('load');
+ await check('storage denial does not crash login screen',async()=>assert.deepEqual(storageErrors,[]));await blocked.close();
+ console.log(JSON.stringify({passed:tests.length,tests},null,2));
+ }finally{await browser.close();await new Promise(r=>server.close(r))}
+})().catch(e=>{console.error(e);server.close();process.exitCode=1});

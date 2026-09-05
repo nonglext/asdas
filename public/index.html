@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8"/>
@@ -11,16 +11,9 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%235865f2'/%3E%3Cpath fill='%23fff' d='M18 14.5a1.5 1.5 0 0 1-1.5 1.5H8.3L5 19V7.5A1.5 1.5 0 0 1 6.5 6h10A1.5 1.5 0 0 1 18 7.5z'/%3E%3C/svg%3E"/>
 
-  <script>
-    // Не мигать экраном логина, если сессия уже есть
-    if (localStorage.getItem('chatapp_token') && localStorage.getItem('chatapp_profile')) {
-      document.documentElement.classList.add('has-session');
-    }
-  </script>
+  <script src="/js/runtime-guard.js"></script>
+  <script src="/js/document-0.js"></script>
 
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
   <!-- Порядок важен: base → layout → chat → calls → адаптив/утилиты -->
   <link rel="stylesheet" href="/css/base.css"/>
@@ -28,6 +21,7 @@
   <link rel="stylesheet" href="/css/chat.css"/>
   <link rel="stylesheet" href="/css/calls-responsive.css"/>
   <link rel="stylesheet" href="/css/style.css"/>
+  <link rel="stylesheet" href="/css/refined.css"/>
 </head>
 <body>
 <noscript>
@@ -44,6 +38,12 @@
     <div class="auth-blob b3"></div>
   </div>
 
+  <section class="auth-intro" aria-label="О ChatApp">
+    <span class="intro-label">CHATAPP / НА СВЯЗИ</span>
+    <h2>Ближе,<br>даже на<br><span>расстоянии.</span></h2>
+    <p>Личные сообщения, общие разговоры и звонки. Всё, чтобы оставаться рядом.</p>
+    <div class="intro-note"><span class="intro-dot"></span>Место для твоих людей</div>
+  </section>
   <div class="auth-box">
     <div class="auth-logo">
       <div class="auth-logo-icon" aria-hidden="true">
@@ -61,17 +61,17 @@
     <div id="tab-login" class="tab-content active" role="tabpanel">
       <div class="auth-heading">
         <h1 class="auth-title">С возвращением!</h1>
-        <p class="auth-sub">Мы так рады видеть тебя снова!</p>
+        <p class="auth-sub">Твои люди. Ваши разговоры.</p>
       </div>
       <div class="field">
         <label for="login-id">Ваш ID <span class="req" aria-hidden="true">*</span></label>
-        <input type="text" id="login-id" maxlength="32" autocomplete="username"
+        <input type="text" id="login-id" maxlength="30" autocomplete="username"
                autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="next" required/>
       </div>
       <div class="field">
         <label for="login-pw">Пароль <span class="req" aria-hidden="true">*</span></label>
         <div class="pw-wrap">
-          <input type="password" id="login-pw" maxlength="64" autocomplete="current-password" enterkeyhint="go" required/>
+          <input type="password" id="login-pw" maxlength="128" autocomplete="current-password" enterkeyhint="go" required/>
           <button class="pw-toggle" data-target="login-pw" type="button" aria-label="Показать пароль" aria-pressed="false">
             <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
@@ -79,7 +79,7 @@
       </div>
       <button id="btn-login" class="btn-primary btn-block" type="button">Войти</button>
       <p class="auth-switch">Нужна учётная запись?
-        <button type="button" class="auth-link" onclick="document.querySelector('.tab[data-tab=&quot;register&quot;]').click()">Зарегистрироваться</button>
+        <button type="button" class="auth-link" data-action="0">Зарегистрироваться</button>
       </p>
     </div>
 
@@ -88,8 +88,8 @@
         <h1 class="auth-title">Создать учётную запись</h1>
       </div>
       <div class="field">
-        <label for="reg-id">ID <span class="req" aria-hidden="true">*</span> <span class="hint">только a-z, 0-9, _</span></label>
-        <input type="text" id="reg-id" maxlength="32" autocomplete="username"
+        <label for="reg-id">ID <span class="req" aria-hidden="true">*</span> <span class="hint">3-30 символов: a-z, 0-9, _</span></label>
+        <input type="text" id="reg-id" maxlength="30" autocomplete="username"
                autocapitalize="off" autocorrect="off" spellcheck="false" pattern="[a-z0-9_]+" enterkeyhint="next" required/>
       </div>
       <div class="field">
@@ -97,9 +97,9 @@
         <input type="text" id="reg-nick" maxlength="32" autocomplete="nickname" enterkeyhint="next"/>
       </div>
       <div class="field">
-        <label for="reg-pw">Пароль <span class="req" aria-hidden="true">*</span> <span class="hint">мин. 8 символов</span></label>
+        <label for="reg-pw">Пароль <span class="req" aria-hidden="true">*</span> <span class="hint">от 8 символов, до 72 байт UTF-8</span></label>
         <div class="pw-wrap">
-          <input type="password" id="reg-pw" maxlength="64" minlength="8" autocomplete="new-password" enterkeyhint="go" required/>
+          <input type="password" id="reg-pw" maxlength="128" minlength="8" autocomplete="new-password" enterkeyhint="go" required/>
           <button class="pw-toggle" data-target="reg-pw" type="button" aria-label="Показать пароль" aria-pressed="false">
             <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
@@ -107,7 +107,7 @@
       </div>
       <button id="btn-register" class="btn-primary btn-block" type="button">Продолжить</button>
       <p class="auth-switch">
-        <button type="button" class="auth-link" onclick="document.querySelector('.tab[data-tab=&quot;login&quot;]').click()">Уже зарегистрированы?</button>
+        <button type="button" class="auth-link" data-action="1">Уже зарегистрированы?</button>
       </p>
     </div>
 
@@ -122,18 +122,18 @@
     <!-- Рельса слева (как список серверов в Discord) -->
     <nav class="guild-rail" aria-label="Разделы">
       <button class="rail-btn rail-home" data-rail="dm" title="Личные сообщения" aria-label="Личные сообщения" type="button"
-              onclick="document.querySelector('.sidebar-tab[data-stab=&quot;dm&quot;]').click()">
+              data-action="2">
         <span class="rail-pill" aria-hidden="true"></span>
         <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
       </button>
       <div class="rail-divider" role="separator"></div>
       <button class="rail-btn" data-rail="groups" title="Группы" aria-label="Группы" type="button"
-              onclick="document.querySelector('.sidebar-tab[data-stab=&quot;groups&quot;]').click()">
+              data-action="3">
         <span class="rail-pill" aria-hidden="true"></span>
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
       </button>
       <button class="rail-btn rail-add" title="Создать группу" aria-label="Создать группу" type="button"
-              onclick="document.getElementById('btn-create-group').click()">
+              data-action="4">
         <span class="rail-pill" aria-hidden="true"></span>
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       </button>
@@ -144,7 +144,7 @@
       <div class="sidebar-top">
         <div class="search-box">
           <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          <input type="text" id="search-input" placeholder="Найти или начать беседу" autocomplete="off"
+          <input type="text" id="search-input" placeholder="Найти друга по @ID" autocomplete="off"
                  autocapitalize="off" spellcheck="false" aria-label="Поиск пользователей"
                  aria-controls="search-results" aria-autocomplete="list" enterkeyhint="search"/>
           <div id="search-results" class="search-drop" role="listbox" aria-label="Результаты поиска"></div>
@@ -182,7 +182,7 @@
           <div class="section-label">
             Мои группы
             <button class="section-add" type="button" title="Создать группу" aria-label="Создать группу"
-                    onclick="document.getElementById('btn-create-group').click()">
+                    data-action="5">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
             </button>
           </div>
@@ -201,7 +201,7 @@
             <div class="me-id" id="my-id">—</div>
           </div>
           <button id="btn-logout" class="icon-btn logout-btn" title="Выйти" aria-label="Выйти" type="button"
-                  onclick="event.stopPropagation()">
+                  data-action="6">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
           </button>
         </div>
@@ -326,7 +326,7 @@
 <!-- View Profile -->
 <div id="profile-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="profile-modal-nick">
   <div class="modal-box modal-profile">
-    <button class="modal-close-btn" onclick="closeProfileModal()" type="button" aria-label="Закрыть">
+    <button class="modal-close-btn" data-action="7" type="button" aria-label="Закрыть">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
     <div class="modal-profile-header">
@@ -355,7 +355,7 @@
 <!-- Edit Profile -->
 <div id="edit-profile-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="edit-profile-title">
   <div class="modal-box">
-    <button class="modal-close-btn" onclick="closeEditProfileModal()" type="button" aria-label="Закрыть">
+    <button class="modal-close-btn" data-action="8" type="button" aria-label="Закрыть">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
     <h2 class="modal-title" id="edit-profile-title">Мой профиль</h2>
@@ -386,7 +386,7 @@
       </button>
     </div>
     <div class="edit-profile-actions modal-footer">
-      <button class="btn-ghost" onclick="closeEditProfileModal()" type="button">Отмена</button>
+      <button class="btn-ghost" data-action="9" type="button">Отмена</button>
       <button id="btn-save-profile" class="btn-primary" type="button">Сохранить изменения</button>
     </div>
   </div>
@@ -395,7 +395,7 @@
 <!-- Blocked Users -->
 <div id="blocked-users-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="blocked-users-title">
   <div class="modal-box">
-    <button class="modal-close-btn" onclick="closeBlockedUsersModal()" type="button" aria-label="Закрыть">
+    <button class="modal-close-btn" data-action="10" type="button" aria-label="Закрыть">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
     <h2 class="modal-title" id="blocked-users-title">Заблокированные</h2>
@@ -406,7 +406,7 @@
 <!-- Create Group -->
 <div id="create-group-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="create-group-title">
   <div class="modal-box">
-    <button class="modal-close-btn" onclick="closeCreateGroupModal()" type="button" aria-label="Закрыть">
+    <button class="modal-close-btn" data-action="11" type="button" aria-label="Закрыть">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
     <h2 class="modal-title" id="create-group-title">Создать группу</h2>
@@ -426,7 +426,7 @@
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn-ghost" onclick="closeCreateGroupModal()" type="button">Отмена</button>
+      <button class="btn-ghost" data-action="12" type="button">Отмена</button>
       <button id="btn-confirm-create-group" class="btn-primary" type="button">Создать группу</button>
     </div>
   </div>
@@ -435,7 +435,7 @@
 <!-- Group Info -->
 <div id="group-info-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="group-info-name">
   <div class="modal-box modal-profile">
-    <button class="modal-close-btn" onclick="closeGroupInfoModal()" type="button" aria-label="Закрыть">
+    <button class="modal-close-btn" data-action="13" type="button" aria-label="Закрыть">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
     <div class="modal-profile-header">
@@ -459,7 +459,7 @@
 <!-- Add Members -->
 <div id="add-members-modal" class="modal-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="add-members-title">
   <div class="modal-box">
-    <button class="modal-close-btn" onclick="closeAddMembersModal()" type="button" aria-label="Закрыть">
+    <button class="modal-close-btn" data-action="14" type="button" aria-label="Закрыть">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
     <h2 class="modal-title" id="add-members-title">Добавить участников</h2>
@@ -470,7 +470,7 @@
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn-ghost" onclick="closeAddMembersModal()" type="button">Отмена</button>
+      <button class="btn-ghost" data-action="15" type="button">Отмена</button>
       <button id="btn-confirm-add-members" class="btn-primary" type="button">Добавить</button>
     </div>
   </div>
@@ -521,62 +521,14 @@
 <div id="delete-confirm" class="delete-confirm-popup" style="display:none" role="alertdialog" aria-label="Удалить сообщение?">
   <span>Удалить сообщение?</span>
   <button id="btn-confirm-delete" class="btn-danger-sm" type="button">Удалить</button>
-  <button onclick="closeDeleteConfirm()" class="btn-ghost-sm" type="button">Отмена</button>
+  <button data-action="16" class="btn-ghost-sm" type="button">Отмена</button>
 </div>
 
 <!-- ═══════════════════════════ MOBILE NAV GLUE ═══════════════════════════
      Не требует правок chat-ui.js: следит за открытием чата и прячет сайдбар на ≤640px,
      закрывает панель участников по тапу на щиток.
      ═════════════════════════════════════════════════════════════════════════ -->
-<script>
-(function () {
-  var mq = window.matchMedia('(max-width: 640px)');
-  var sidebar = document.querySelector('.sidebar');
-  var wins = [document.getElementById('chat-window'), document.getElementById('group-chat-window')].filter(Boolean);
-  var panel = document.getElementById('group-members-panel');
-  var backdrop = document.querySelector('.members-backdrop');
-
-  function chatOpen() {
-    return wins.some(function (w) { return w.style.display !== 'none' && getComputedStyle(w).display !== 'none'; });
-  }
-  function sync() {
-    if (!sidebar) return;
-    var open = mq.matches && chatOpen();
-    sidebar.classList.toggle('hidden', open);
-    // На мобилке при открытии чата панель участников по умолчанию скрыта
-    if (mq.matches && open && panel && !panel.dataset.userOpened) panel.classList.add('hidden');
-    if (!mq.matches && panel) delete panel.dataset.userOpened;
-  }
-
-  if ('MutationObserver' in window) {
-    var mo = new MutationObserver(sync);
-    wins.forEach(function (w) { mo.observe(w, { attributes: true, attributeFilter: ['style', 'class'] }); });
-  }
-  if (mq.addEventListener) mq.addEventListener('change', sync); else mq.addListener(sync);
-  window.addEventListener('resize', sync);
-  sync();
-
-  // Пользователь явно открыл/закрыл панель участников
-  var toggle = document.getElementById('btn-toggle-members');
-  if (toggle && panel) toggle.addEventListener('click', function () {
-    setTimeout(function () {
-      if (panel.classList.contains('hidden')) delete panel.dataset.userOpened;
-      else panel.dataset.userOpened = '1';
-    }, 0);
-  });
-  if (backdrop && panel) backdrop.addEventListener('click', function () {
-    panel.classList.add('hidden');
-    delete panel.dataset.userOpened;
-  });
-
-  // Esc закрывает панель участников на мобилке (модалки закрываются своим кодом)
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape' && mq.matches && panel && !panel.classList.contains('hidden')) {
-      panel.classList.add('hidden'); delete panel.dataset.userOpened;
-    }
-  });
-})();
-</script>
+<script src="/js/document-1.js"></script>
 
 <script src="/socket.io/socket.io.js"></script>
 <!--
@@ -592,5 +544,7 @@
 <script src="/js/auth-ui.js" defer></script>
 <script src="/js/chat-ui.js" defer></script>
 <script src="/js/calls.js" defer></script>
+<script src="/js/document-actions.js" defer></script>
+<script src="/js/accessibility.js" defer></script>
 </body>
 </html>

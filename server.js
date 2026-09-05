@@ -16,6 +16,7 @@ const sharp = require('sharp');
 const helmet = require('helmet');
 const cors = require('cors');
 const winston = require('winston');
+const { friendAction } = require('./lib/friend-policy');
 
 const production = process.env.NODE_ENV === 'production';
 const logger = winston.createLogger({
@@ -163,8 +164,15 @@ const io = new Server(server, {
   cors: { origin: corsOrigin, methods: ['GET', 'POST'], credentials: true }, maxHttpBufferSize: 100_000, connectTimeout: 10_000,
   allowRequest: (req, cb) => cb(null, ready && connectionLimit(req.socket.remoteAddress || 'unknown') && (!req.headers.origin || origins.includes(req.headers.origin)))
 });
-app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false, crossOriginResourcePolicy: { policy: 'same-site' } }));
-// CSP needs an audit of public/index.html; do not pretend it can fix unsafe innerHTML.
+app.use(helmet({ contentSecurityPolicy: { directives: {
+  defaultSrc: ["'self'"], scriptSrc: ["'self'"], scriptSrcAttr: ["'none'"],
+  styleSrc: ["'self'", "'unsafe-inline'"], imgSrc: ["'self'", 'data:', 'blob:'],
+  fontSrc: ["'self'"], connectSrc: ["'self'", ...origins.map(o => o.replace(/^http/, 'ws'))],
+  mediaSrc: ["'self'", 'blob:'], objectSrc: ["'none'"], baseUri: ["'self'"],
+  frameAncestors: ["'none'"], formAction: ["'self'"],
+  upgradeInsecureRequests: production ? [] : null
+} }, crossOriginEmbedderPolicy: false, crossOriginResourcePolicy: { policy: 'same-site' } }));
+// All executable page scripts are same-origin external files. User text is escaped before rendering.
 app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use((req, res, next) => { req.requestId = crypto.randomUUID(); res.set('X-Request-Id', req.requestId); next(); });
 const rate = (windowMs, limit) => rateLimit({ windowMs, limit, standardHeaders: true, legacyHeaders: false, message: { error: 'Слишком много запросов' } });
@@ -423,6 +431,20 @@ route('post', '/api/password/change', [authRate, authenticate], async (req, res)
 route('post', '/api/logout-all', [authenticate], async (req, res) => {
   await revokeSessions(req.user);
   res.clearCookie('chatapp_media', { path: '/uploads', httpOnly: true, secure: production, sameSite: 'lax' }); res.json({ success: true });
+});
+route('get', '/api/rtc-config', [authenticate], async (req, res) => {
+  const iceServers = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
+  const urls = (process.env.TURN_URLS || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (urls.length && urls.every(url => /^turns?:[^\s]+$/i.test(url))) {
+    if (process.env.TURN_SHARED_SECRET) {
+      const username = `${Math.floor(Date.now() / 1000) + 3600}:${req.user.id}`;
+      const credential = crypto.createHmac('sha1', process.env.TURN_SHARED_SECRET).update(username).digest('base64');
+      iceServers.push({ urls, username, credential });
+    } else if (process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
+      iceServers.push({ urls, username: process.env.TURN_USERNAME, credential: process.env.TURN_CREDENTIAL });
+    }
+  }
+  res.json({ iceServers });
 });
 route('get', '/api/me', [authenticate], async (req, res) => { mediaCookie(res, req.user); res.json(privateUser(req.user)); });
 route('get', '/api/friends', [authenticate], async (req, res) => {
@@ -683,8 +705,8 @@ function socketError(s, event, arg, error) {
   const correlation = { ...(idOK(data.toId) ? { toId: data.toId } : {}), ...(uuidOK(data.groupId) ? { groupId: data.groupId } : {}),
     ...(uuidOK(data.callId) ? { callId: data.callId } : {}), ...(clientId(data.clientId) ? { clientId: data.clientId } : {}) };
   if (event === 'sendMessage' || event === 'groupMessage') s.emit('sendMessageError', { ...correlation, reason });
-  else if (event.toLowerCase().includes('friend')) s.emit('friendRequestError', { ...(idOK(arg) ? { toId: arg } : {}), reason });
-  else if (event.startsWith('call') || event === 'watchGroupVoice') s.emit('callError', { ...correlation, reason });
+  else if (event.toLowerCase().includes('friend')) s.emit('friendRequestError', { ...(idOK(arg) ? { toId: arg, targetId: arg } : {}), reason });
+  else if (event.startsWith('call') || event === 'watchGroupVoice') s.emit('callError', { ...correlation, event, reason });
   else s.emit('groupError', { ...correlation, reason });
   if (reason === 'rate_limited') s.emit('rateLimited', event);
 }
@@ -692,22 +714,32 @@ function installEvent(socket, event, shape, handler) {
   socket.on(event, (...args) => {
     const arg = args[0], uid = socket.user.id;
     const trailingAck = typeof args[args.length - 1] === 'function';
+    const ack = trailingAck ? args[args.length - 1] : () => {};
+    const report = error => {
+      socketError(socket, event, arg, error);
+      ack({ ok: false, reason: error instanceof ApiError ? error.reason : 'server_error',
+        error: error instanceof ApiError ? error.message : 'Ошибка сервера' });
+    };
     const count = args.length - (trailingAck ? 1 : 0);
     if (count !== 1 || (shape === 'object' ? !record(arg) : !idOK(arg) && !(shape === 'groupId' && uuidOK(arg)))) {
-      socketError(socket, event, arg, new ApiError(400, 'Некорректный payload')); return;
+      report(new ApiError(400, 'Некорректный payload')); return;
     }
     if (!socket.connected) return;
     if (!eventLimit(uid) || (pendingEvents.get(uid) || 0) >= 16) {
-      socketError(socket, event, arg, new ApiError(429, 'Слишком много событий', 'rate_limited')); return;
+      report(new ApiError(429, 'Слишком много событий', 'rate_limited')); return;
     }
     pendingEvents.set(uid, (pendingEvents.get(uid) || 0) + 1);
     serial(async () => {
-      if (!socket.connected) return;
+      if (!socket.connected) throw new ApiError(503, 'Соединение потеряно', 'disconnected');
       const auth = await verifyToken(socket.authToken);
-      if (!auth || !socket.connected) { socket.disconnect(true); return; }
+      if (!auth || !socket.connected) {
+        ack({ ok: false, reason: 'unauthorized', error: 'Сессия истекла' });
+        socket.disconnect(true); return;
+      }
       socket.user = auth.user;
-      await handler(arg);
-    }).catch(e => socketError(socket, event, arg, e)).finally(() => {
+      const result = await handler(arg);
+      ack({ ok: true, ...(result || {}) });
+    }).catch(report).finally(() => {
       const n = (pendingEvents.get(uid) || 1) - 1;
       if (n > 0) pendingEvents.set(uid, n); else pendingEvents.delete(uid);
     });
@@ -802,17 +834,31 @@ io.on('connection', socket => {
   const on = (event, shape, handler) => installEvent(socket, event, shape, handler);
   on('sendFriendRequest', 'userId', async toId => {
     checkLimit(friendLimit, uid);
-    if (toId === uid) reject(400, 'Нельзя добавить себя', 'self');
     const me = socket.user, target = await User.findByPk(toId);
-    if (!target || target.blockedUsers.includes(uid)) reject(404, 'Пользователь недоступен', 'not_found');
-    if (me.blockedUsers.includes(toId)) reject(403, 'Пользователь заблокирован', 'blocked');
-    if (me.friends.length >= MAX_FRIENDS || target.friends.length >= MAX_FRIENDS) reject(400, 'Лимит друзей', 'limit_reached');
-    if (target.friends.includes(uid) || me.friends.includes(toId)) reject(400, 'Уже в друзьях', 'already_friends');
-    if (target.friendRequests.includes(uid)) reject(400, 'Запрос уже отправлен', 'already_sent');
-    if (me.friendRequests.includes(toId)) reject(400, 'Входящий запрос уже существует', 'incoming_request_exists');
-    if (target.friendRequests.length >= MAX_REQUESTS) reject(400, 'Лимит запросов', 'target_limit_reached');
+    const decision = friendAction(me, target, { maxFriends: MAX_FRIENDS, maxRequests: MAX_REQUESTS });
+    if (decision.action === 'reject') reject(400, 'Не удалось добавить пользователя', decision.reason);
+    if (decision.action === 'friends') {
+      io.to(uid).emit('friendAdded', publicUser(target));
+      return { status: 'friends', toId };
+    }
+    if (decision.action === 'accept') {
+      await sequelize.transaction(async t => {
+        await me.update({ friendRequests: me.friendRequests.filter(x => x !== toId),
+          friends: [...new Set([...me.friends, toId])] }, { transaction: t });
+        await target.update({ friendRequests: target.friendRequests.filter(x => x !== uid),
+          friends: [...new Set([...target.friends, uid])] }, { transaction: t });
+      });
+      io.to(uid).emit('friendAdded', publicUser(target));
+      io.to(toId).emit('friendAdded', publicUser(me));
+      return { status: 'friends', toId };
+    }
+    if (decision.action === 'pending') {
+      socket.emit('requestSent', { toId, alreadySent: true });
+      return { status: 'pending', toId };
+    }
     await target.update({ friendRequests: [...target.friendRequests, uid] });
     io.to(uid).emit('requestSent', { toId }); io.to(toId).emit('friendRequest', { id: uid, nickname: me.nickname, avatar: me.avatar });
+    return { status: 'pending', toId };
   });
   on('acceptFriendRequest', 'userId', async fromId => {
     checkLimit(friendLimit, uid);
