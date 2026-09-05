@@ -309,7 +309,9 @@ let searchAbort = null;
 on('search-input', 'input', () => {
   clearTimeout(searchTimer);
   const q = $('search-input').value.trim();
-  if (!q) return closeDrop();
+  // Invalidate immediately: old responses can arrive during debounce.
+  closeDrop(false);
+  if (!q) return;
   searchTimer = setTimeout(() => doSearch(q), SEARCH_DEBOUNCE_MS);
 });
 on('search-input', 'blur', () => setTimeout(() => {
@@ -417,7 +419,7 @@ async function doSearch(q) {
     $('search-input')?.setAttribute('aria-expanded', 'true');
   } catch (e) {
     if (e?.name === 'AbortError' || e instanceof AuthError || stale()) return;
-    renderSearchNotice(drop, e?.message && e.message !== 'search failed' ? `${esc(e.message)}${e.requestId ? ` · Код: ${esc(e.requestId.slice(0, 8))}` : ''}` : 'Ошибка поиска', true);
+    renderSearchNotice(drop, e?.message && e.message !== 'search failed' ? `${e.message}${e.requestId ? ` · Код: ${String(e.requestId).slice(0, 8)}` : ''}` : 'Ошибка поиска', true);
   }
 }
 

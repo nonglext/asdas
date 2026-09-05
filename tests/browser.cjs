@@ -37,7 +37,7 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
  });
  await page.goto(origin);await page.waitForLoadState('load');
  await check('clean initial boot',async()=>assert.deepEqual(errors,[]));
- await check('light theme and no desktop overflow',async()=>{assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).colorScheme),'dark');assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth))});
+ await check('dark theme and no desktop overflow',async()=>{assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).colorScheme),'dark');assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth))});
  await page.screenshot({path:path.join(screenshotDir,'auth-desktop.png'),fullPage:true});
  await page.fill('#login-id','alice');await page.fill('#login-pw','password123');await page.click('#btn-login');await page.waitForSelector('#app-screen.active');await page.waitForTimeout(200);
  await check('single connection after login',async()=>assert.equal(await page.evaluate(()=>window.__connections),1));
@@ -86,6 +86,50 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
  const blocked=await browser.newPage();const storageErrors=[];blocked.on('pageerror',e=>storageErrors.push(e.message));
  await blocked.addInitScript(()=>Object.defineProperty(window,'localStorage',{get(){throw new Error('blocked')}}));await blocked.goto(origin);await blocked.waitForLoadState('load');
  await check('storage denial does not crash login screen',async()=>assert.deepEqual(storageErrors,[]));await blocked.close();
+ await page.setViewportSize({width:1440,height:900});
+ await check('inactive screens do not participate in layout',async()=>{
+   assert.equal(await page.locator('#auth-screen').evaluate(el=>{document.documentElement.classList.remove('has-session');const d=getComputedStyle(el).display;document.documentElement.classList.add('has-session');return d}),'none');
+ });
+ await check('rail sits beside conversation column, footer remains visible',async()=>{
+   const rail=await page.locator('.guild-rail').boundingBox(), side=await page.locator('.sidebar-inner').boundingBox(), footer=await page.locator('.sidebar-footer').boundingBox();
+   assert.ok(Math.abs(rail.y-side.y)<2);assert.ok(side.x>=rail.x+rail.width-1);assert.ok(footer.y+footer.height<=901);assert.ok(side.height>800);
+ });
+ await page.route('**/api/search?**',async route=>{
+   const q=new URL(route.request().url()).searchParams.get('q');
+   if(q==='old'){await new Promise(r=>setTimeout(r,120));return route.fulfill({json:[{id:'old_user',nickname:'Old result'}]}).catch(()=>{})}
+   if(q==='error')return route.fulfill({status:500,json:{error:'Ошибка <тест> & "кавычки"'}});
+   return route.fulfill({json:[{id:'new_user',nickname:'New result'}]});
+ });
+ await page.fill('#search-input','old');await page.waitForRequest(r=>r.url().includes('/api/search?q=old'));
+ await page.fill('#search-input','new');await page.waitForTimeout(170);
+ await check('old search stays closed during new-query debounce',async()=>assert.equal(await page.locator('#search-results').evaluate(el=>el.classList.contains('open')),false));
+ await page.waitForSelector('.s-item[data-uid="new_user"]');
+ await page.fill('#search-input','error');await page.waitForSelector('.s-empty');
+ await check('search error text is escaped once',async()=>assert.equal(await page.locator('.s-empty').textContent(),'Ошибка <тест> & "кавычки"'));
+ await page.evaluate(()=>{closeDrop();openChat('bob')});await page.waitForTimeout(160);
+ await page.focus('#btn-call-audio');
+ await page.evaluate(()=>document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:' ',bubbles:true,cancelable:true})));
+ await check('typing shortcut does not steal button focus',async()=>assert.equal(await page.evaluate(()=>document.activeElement.id),'btn-call-audio'));
+ for(const width of [320,390,640,768,1024,1440]) {
+   await page.setViewportSize({width,height:844});await page.evaluate(()=>openGroupChat('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'));await page.waitForTimeout(100);
+   await check(`group chat fits ${width}px viewport`,async()=>{
+     const composer=await page.locator('#group-msg-input').boundingBox();const send=await page.locator('#btn-group-send').boundingBox();
+     assert.ok(composer.width>80);assert.ok(send.x+send.width<=width+1);assert.ok(send.y+send.height<=845);
+     const actions=await page.locator('#btn-toggle-members').boundingBox();assert.ok(actions.x+actions.width<=width+1);
+     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+   });
+ }
+ await page.emulateMedia({reducedMotion:'reduce'});
+ await check('reduced motion disables decorative transitions',async()=>assert.equal(await page.locator('.rail-btn').first().evaluate(el=>getComputedStyle(el).transitionDuration),'0s'));
+ await page.emulateMedia({reducedMotion:'no-preference'});
+ await page.setViewportSize({width:1440,height:900});await page.evaluate(()=>{openGroupChat('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');document.activeElement?.blur()});await page.waitForTimeout(200);
+ await page.screenshot({path:path.join(screenshotDir,'group-desktop.png')});
+ const authPage=await browser.newPage({viewport:{width:390,height:480}});await authPage.goto(origin);await authPage.waitForLoadState('load');await authPage.click('[data-action="0"]');
+ await check('registration remains reachable on short screens',async()=>{
+   await authPage.locator('#btn-register').scrollIntoViewIfNeeded();const button=await authPage.locator('#btn-register').boundingBox();assert.ok(button.y>=0&&button.y+button.height<=481);
+   assert.equal(await authPage.locator('#app-screen').isVisible(),false);
+ });
+ await authPage.close();
  console.log(JSON.stringify({passed:tests.length,tests},null,2));
  }finally{await browser.close();await new Promise(r=>server.close(r))}
 })().catch(e=>{console.error(e);server.close();process.exitCode=1});

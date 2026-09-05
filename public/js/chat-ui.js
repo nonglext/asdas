@@ -480,10 +480,10 @@ function sendGroupMsg() { return sendComposer(true); }
 
 // Как в Discord: начал печатать где угодно — фокус уходит в поле ввода
 document.addEventListener('keydown', e => {
-  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key.length !== 1) return;
   const ae = document.activeElement;
-  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+  if (ae && (ae.closest('input, textarea, select, button, a, [role="button"], [role="option"], [role="dialog"], [role="alertdialog"]') || ae.isContentEditable)) return;
   if (isAnyModalOpen()) return;
   const inputId = state.activeFriend ? 'msg-input' : state.activeGroup ? 'group-msg-input' : null;
   if (inputId) $(inputId)?.focus();
