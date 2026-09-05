@@ -157,7 +157,7 @@ const authUserLimit = limiter(20, 15 * 60_000), uploadUserLimit = limiter(10, 60
 const app = express(), server = http.createServer(app);
 app.disable('x-powered-by');
 app.set('query parser', 'simple');
-app.set('trust proxy', process.env.TRUST_PROXY ? process.env.TRUST_PROXY.split(',').map(s => s.trim()) : false);
+app.set('trust proxy', process.env.TRUST_PROXY ? process.env.TRUST_PROXY.split(',').map(s => s.trim()) : (production ? 1 : false));
 server.requestTimeout = 30_000; server.headersTimeout = 15_000;
 function corsOrigin(origin, cb) { cb(!origin || origins.includes(origin) ? null : new ApiError(403, 'Origin запрещён'), !origin || origins.includes(origin)); }
 const io = new Server(server, {
@@ -456,18 +456,27 @@ route('get', '/api/friends', [authenticate], async (req, res) => {
 route('get', '/api/search', [rate(60_000, 30), authenticate], async (req, res) => {
   const q = boundedText(req.query.q === undefined ? '' : req.query.q, 50);
   if (!q) return res.json([]);
-  const escaped = q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
-  const blocked = Array.isArray(req.user.blockedUsers) ? req.user.blockedUsers : [];
-  // Keep the array type explicit. Older PostgreSQL rows can contain NULL arrays,
-  // and implicit '{}' inference was the reason search failed on some Render DBs.
-  const blockedLiteral = `{${blocked.map(id => String(id).replace(/\\/g, '\\\\').replace(/"/g, '\\"')).join(',')}}`;
-  const rows = await sequelize.query(`SELECT id,nickname,avatar,status FROM users
-    WHERE id <> :me
-      AND NOT (:me = ANY(COALESCE(blocked_users, ARRAY[]::VARCHAR[])))
-      AND NOT (id = ANY(CAST(:blocked AS VARCHAR[])))
-      AND (id ILIKE :q ESCAPE '\\' OR nickname ILIKE :q ESCAPE '\\')
-    ORDER BY id LIMIT 10`,
-    { replacements: { me: req.user.id, blocked: blockedLiteral, q: `%${escaped}%` }, type: QueryTypes.SELECT });
+  const me = req.user;
+  const blocked = Array.isArray(me.blockedUsers) ? me.blockedUsers : [];
+  const rows = await User.findAll({
+    where: {
+      id: {
+        [Op.ne]: me.id,
+        [Op.notIn]: blocked.length ? blocked : ['__dummy_none__']
+      },
+      [Op.and]: [
+        Sequelize.literal(`NOT (:meId = ANY(COALESCE("blocked_users", ARRAY[]::VARCHAR[])))`)
+      ],
+      [Op.or]: [
+        { id: { [Op.iLike]: `%${q}%` } },
+        { nickname: { [Op.iLike]: `%${q}%` } }
+      ]
+    },
+    replacements: { meId: me.id },
+    attributes: ['id', 'nickname', 'avatar', 'status'],
+    order: [['id', 'ASC']],
+    limit: 10
+  });
   res.json(rows.map(publicUser));
 });
 route('get', '/api/profile/:userId', [authenticate], async (req, res) => {
@@ -1086,8 +1095,17 @@ async function start() {
   // Do not run this and the old unguarded server together against the same database.
   await sequelize.authenticate();
   instanceConnection = await sequelize.connectionManager.getConnection({ type: 'WRITE' });
-  const result = await instanceConnection.query("SELECT pg_try_advisory_lock(1780317111, hashtext(current_database())) AS locked");
-  if (!result.rows[0].locked) fail('Another ChatApp instance holds this database. Stop it before starting this server.');
+  // During zero-downtime deploy on Render, the old container might take a few seconds to exit.
+  // Wait up to 15 seconds to acquire the advisory lock before failing.
+  let locked = false;
+  const lockKey = 1780317111;
+  for (let attempt = 0; attempt < 15; attempt++) {
+    const res = await instanceConnection.query("SELECT pg_try_advisory_lock(1780317111, hashtext(current_database())) AS locked");
+    if (res.rows[0].locked) { locked = true; break; }
+    logger.warn(`Waiting for previous instance to release database lock (attempt ${attempt + 1}/15)...`);
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  if (!locked) fail('Another ChatApp instance holds this database. Stop it before starting this server.');
   instanceConnection.on('error', err => { logger.error('Instance lock connection lost', { error: err.message }); shutdown(1); });
   instanceConnection.on('end', () => { if (!stopping) { logger.error('Instance lock session ended'); shutdown(1); } });
   await ensureSchema();
