@@ -457,10 +457,17 @@ route('get', '/api/search', [rate(60_000, 30), authenticate], async (req, res) =
   const q = boundedText(req.query.q === undefined ? '' : req.query.q, 50);
   if (!q) return res.json([]);
   const escaped = q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
-  const rows = await sequelize.query(`SELECT id,nickname,avatar,status FROM users WHERE id<>:me
-    AND NOT (:me=ANY(COALESCE(blocked_users,'{}'))) AND NOT (id=ANY(CAST(:blocked AS VARCHAR[])))
-    AND (id ILIKE :q OR nickname ILIKE :q) ORDER BY id LIMIT 10`,
-    { replacements: { me: req.user.id, blocked: `{${req.user.blockedUsers.join(',')}}`, q: `%${escaped}%` }, type: QueryTypes.SELECT });
+  const blocked = Array.isArray(req.user.blockedUsers) ? req.user.blockedUsers : [];
+  // Keep the array type explicit. Older PostgreSQL rows can contain NULL arrays,
+  // and implicit '{}' inference was the reason search failed on some Render DBs.
+  const blockedLiteral = `{${blocked.map(id => String(id).replace(/\\/g, '\\\\').replace(/"/g, '\\"')).join(',')}}`;
+  const rows = await sequelize.query(`SELECT id,nickname,avatar,status FROM users
+    WHERE id <> :me
+      AND NOT (:me = ANY(COALESCE(blocked_users, ARRAY[]::VARCHAR[])))
+      AND NOT (id = ANY(CAST(:blocked AS VARCHAR[])))
+      AND (id ILIKE :q ESCAPE '\\' OR nickname ILIKE :q ESCAPE '\\')
+    ORDER BY id LIMIT 10`,
+    { replacements: { me: req.user.id, blocked: blockedLiteral, q: `%${escaped}%` }, type: QueryTypes.SELECT });
   res.json(rows.map(publicUser));
 });
 route('get', '/api/profile/:userId', [authenticate], async (req, res) => {

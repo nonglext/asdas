@@ -399,7 +399,12 @@ async function doSearch(q) {
     const res = await authFetch(BACKEND_URL + '/api/search?q=' + encodeURIComponent(q), { signal });
     if (stale()) return;
     if (res.status === 429) return renderSearchNotice(drop, 'Слишком часто, подождите');
-    if (!res.ok) throw new Error('search failed');
+    if (!res.ok) {
+      const detail = await safeJson(res);
+      const error = new Error(detail?.error || 'search failed');
+      error.requestId = detail?.requestId;
+      throw error;
+    }
     const list = await res.json();
     if (stale()) return;
 
@@ -412,7 +417,7 @@ async function doSearch(q) {
     $('search-input')?.setAttribute('aria-expanded', 'true');
   } catch (e) {
     if (e?.name === 'AbortError' || e instanceof AuthError || stale()) return;
-    renderSearchNotice(drop, 'Ошибка поиска', true);
+    renderSearchNotice(drop, e?.message && e.message !== 'search failed' ? `${esc(e.message)}${e.requestId ? ` · Код: ${esc(e.requestId.slice(0, 8))}` : ''}` : 'Ошибка поиска', true);
   }
 }
 
