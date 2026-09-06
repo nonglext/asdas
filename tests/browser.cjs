@@ -27,7 +27,9 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
  let historyDelay=0, searchDelay=0;
  const messages=Array.from({length:50},(_,i)=>({_id:`00000000-0000-0000-0000-${String(i+1).padStart(12,'0')}`,from:i%2?'alice':'bob',text:i===49?'В 19:00 созвонимся?':`Сообщение ${i+1}`,time:new Date(Date.UTC(2026,8,5,12,i)).toISOString()}));
  await page.route('**/api/**',async route=>{const u=new URL(route.request().url());let data={};
-  if(u.pathname==='/api/login'||u.pathname==='/api/register')data={user:me,token:'test-token'};
+  if(u.pathname==='/api/upload/avatar')data={success:true,avatar:'/uploads/11111111-1111-1111-1111-111111111111.webp'};
+  else if(u.pathname==='/api/upload/image')data={success:true,url:'/uploads/22222222-2222-2222-2222-222222222222.webp'};
+  else if(u.pathname==='/api/login'||u.pathname==='/api/register')data={user:me,token:'test-token'};
   else if(u.pathname==='/api/me')data=me;
   else if(u.pathname==='/api/groups')data=[group];
   else if(u.pathname==='/api/search'){if(searchDelay)await new Promise(r=>setTimeout(r,searchDelay));data=[{id:'david',nickname:'Даня',online:true}]}
@@ -41,6 +43,21 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
  await page.screenshot({path:path.join(screenshotDir,'auth-desktop.png'),fullPage:true});
  await page.fill('#login-id','alice');await page.fill('#login-pw','password123');await page.click('#btn-login');await page.waitForSelector('#app-screen.active');await page.waitForTimeout(200);
  await check('single connection after login',async()=>assert.equal(await page.evaluate(()=>window.__connections),1));
+ await page.evaluate(()=>openEditProfileModal());
+ await page.setInputFiles('#avatar-input',{name:'avatar.jpg',mimeType:'image/jpeg',buffer:Buffer.alloc(6*1024*1024,7)});
+ await page.waitForTimeout(120);
+ await check('JPG avatar over the old 5 MB limit is accepted',async()=>assert.match(await page.locator('#transient-notice').textContent(),/Аватар обновлён/));
+ await page.keyboard.press('Escape');
+ await page.evaluate(()=>openChat('bob'));await page.waitForTimeout(100);
+ await page.setInputFiles('#msg-image-input',{name:'photo.png',mimeType:'image/png',buffer:Buffer.from('png')});
+ await page.waitForSelector('#msg-attach-preview.show');
+ await page.click('#btn-send');await page.waitForTimeout(100);
+ await check('PNG attachment sends in a DM',async()=>{const sent=await page.evaluate(()=>__sent.find(x=>x.event==='sendMessage'&&x.payload.toId==='bob'));assert.equal(sent.payload.image,'/uploads/22222222-2222-2222-2222-222222222222.webp')});
+ await page.evaluate(()=>openGroupChat('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'));await page.waitForTimeout(150);
+ await page.setInputFiles('#group-image-input',{name:'group.jpg',mimeType:'image/jpeg',buffer:Buffer.from('jpg')});
+ await page.waitForSelector('#group-attach-preview.show');
+ await page.click('#btn-group-send');await page.waitForTimeout(100);
+ await check('JPG attachment sends in a group',async()=>{const sent=await page.evaluate(()=>__sent.find(x=>x.event==='groupMessage'));assert.equal(sent.payload.image,'/uploads/22222222-2222-2222-2222-222222222222.webp')});
  await page.fill('#search-input','@david');await page.waitForSelector('.s-item .btn-add');await page.click('.s-item .btn-add');await page.waitForTimeout(100);
  await check('friend addition waits for ack and shows success',async()=>{assert.equal(await page.locator('.s-item .btn-add').textContent(),'Заявка отправлена');const sent=await page.evaluate(()=>__sent.find(x=>x.event==='sendFriendRequest'));assert.equal(sent.payload,'david')});
  await page.evaluate(()=>{__response={ok:false,reason:'blocked',error:'Заблокирован'};closeDrop();});

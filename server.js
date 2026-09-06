@@ -54,7 +54,7 @@ const TMP_DIR = path.join(UPLOAD_DIR, '.tmp');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 if (UPLOAD_DIR === PUBLIC_DIR || UPLOAD_DIR.startsWith(PUBLIC_DIR + path.sep)) fail('UPLOAD_DIR must be outside public');
 fs.mkdirSync(TMP_DIR, { recursive: true, mode: 0o700 });
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_USER_MEDIA_BYTES = intEnv('MAX_USER_MEDIA_BYTES', 100 * 1024 * 1024, MAX_IMAGE_BYTES, 10 * 1024 ** 3);
 const MAX_PENDING_UPLOADS = 20;
 const PENDING_TTL = 24 * 3600_000;
@@ -295,7 +295,7 @@ let uploading = 0;
 const upload = multer({
   storage: multer.diskStorage({ destination: TMP_DIR, filename: (req, file, cb) => cb(null, `${crypto.randomUUID()}.tmp`) }),
   limits: { fileSize: MAX_IMAGE_BYTES, files: 1, fields: 0, parts: 1, fieldNameSize: 64, fieldNestingDepth: 0, fieldArrayIndexLimit: 0 },
-  fileFilter: (req, file, cb) => cb(null, ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.mimetype))
+  fileFilter: (req, file, cb) => cb(null, ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'].includes(file.mimetype))
 });
 async function uploadGuard(req, res, next) {
   try {
@@ -637,7 +637,7 @@ app.use((err, req, res, next) => {
   discardTmp(req.file).catch(() => {});
   if (res.headersSent) return next(err);
   let status = err instanceof ApiError ? err.status : 500, error = err instanceof ApiError ? err.message : 'Внутренняя ошибка сервера';
-  if (err instanceof multer.MulterError) { status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400; error = 'Недопустимая загрузка (один файл до 5 МБ, без дополнительных полей)'; }
+  if (err instanceof multer.MulterError) { status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400; error = 'Недопустимая загрузка (один файл до 10 МБ, без дополнительных полей)'; }
   else if (err.type === 'entity.parse.failed' || err instanceof URIError) { status = 400; error = 'Некорректный запрос'; }
   else if (err.type === 'entity.too.large') { status = 413; error = 'Слишком большое тело запроса'; }
   else if (err.code === 'ENOENT' || err.status === 404) { status = 404; error = 'Файл не найден'; }

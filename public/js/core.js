@@ -11,8 +11,8 @@ const storage = {
   removeItem(key) { this.memory.delete(key); try { window.localStorage.removeItem(key); } catch {} },
 };
 const MAX_MESSAGE_LENGTH = 4000;
-const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
-const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+const MAX_AVATAR_SIZE = 10 * 1024 * 1024;
+const ALLOWED_AVATAR_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
 const MSG_GROUP_WINDOW_MS = 5 * 60 * 1000; // группировка сообщений (5 минут)
 const CALL_RING_TIMEOUT_MS = 45 * 1000;    // таймаут ожидания ответа
 const SEARCH_DEBOUNCE_MS = 280;

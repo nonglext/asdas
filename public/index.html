@@ -211,10 +211,11 @@
 <div class="msg-bar-wrap">
 <div class="msg-bar">
 <textarea aria-label="Текст сообщения" autocomplete="off" enterkeyhint="enter" id="msg-input" maxlength="4000" placeholder="Написать сообщение…" rows="1"></textarea>
-<button aria-label="Отправить" class="send-btn" id="btn-send" title="Отправить" type="button">
+<button aria-label="Прикрепить изображение" class="attach-btn" id="btn-attach-image" title="Прикрепить изображение" type="button"><svg aria-hidden="true" fill="none" height="22" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="22"><path d="M21 15V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14h14"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m3 17 5-5 4 4 3-3 6 6"/></svg></button><input accept="image/jpeg,image/jpg,image/png" aria-label="Выбрать изображение" class="visually-hidden-input" id="msg-image-input" type="file"><button aria-label="Отправить" class="send-btn" id="btn-send" title="Отправить" type="button">
 <svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24"><path d="M22 2L11 13"></path><path d="M22 2L15 22L11 13L2 9L22 2Z"></path></svg>
 </button>
 </div>
+<div aria-live="polite" class="attach-preview" id="msg-attach-preview"></div>
 <div aria-hidden="true" class="composer-hint"><kbd>Enter</kbd> отправить · <kbd>Shift + Enter</kbd> новая строка</div></div>
 </section>
 <!-- Group Chat Window -->
@@ -259,11 +260,12 @@
 <div aria-label="Сообщения группы" class="messages group-messages" id="group-messages" role="log"></div>
 <div class="msg-bar-wrap">
 <div class="msg-bar">
-<textarea aria-label="Текст сообщения" autocomplete="off" enterkeyhint="enter" id="group-msg-input" maxlength="4000" placeholder="Написать в группу…" rows="1"></textarea>
+<textarea aria-label="Текст сообщения" autocomplete="off" enterkeyhint="enter" id="group-msg-input" maxlength="4000" placeholder="Написать в группу…" rows="1"></textarea><button aria-label="Прикрепить изображение в группу" class="attach-btn" id="btn-group-attach-image" title="Прикрепить изображение в группу" type="button"><svg aria-hidden="true" fill="none" height="22" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="22"><path d="M21 15V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m3 17 5-5 4 4 3-3 6 6"/></svg></button><input accept="image/jpeg,image/jpg,image/png" aria-label="Выбрать изображение" class="visually-hidden-input" id="group-image-input" type="file">
 <button aria-label="Отправить" class="send-btn" id="btn-group-send" title="Отправить" type="button">
 <svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24"><path d="M22 2L11 13"></path><path d="M22 2L15 22L11 13L2 9L22 2Z"></path></svg>
 </button>
 </div>
+<div aria-live="polite" class="attach-preview" id="group-attach-preview"></div>
 <div aria-hidden="true" class="composer-hint"><kbd>Enter</kbd> отправить · <kbd>Shift + Enter</kbd> новая строка</div></div>
 </div>
 <!-- Правая панель участников -->

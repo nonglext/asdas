@@ -179,3 +179,14 @@ button {transition:transform var(--ease-fast),opacity var(--ease-fast);}
 }
 @media (prefers-contrast:more) {:root {--text2:oklch(87% .008 275);--text3:oklch(81% .010 275);--divider:oklch(58% .012 275);}}
 @media (prefers-reduced-motion:reduce) {*,*::before,*::after {transition:none!important;animation:none!important;scroll-behavior:auto!important;}}
+/* Attachments: the composer stays a single row, preview lives below it. */
+.attach-btn { flex: 0 0 44px; width: 44px; height: 44px; margin-bottom: 5px; border-radius: 6px; color: var(--text2); display: inline-flex; align-items: center; justify-content: center; }
+.attach-btn:hover:not(:disabled) { color: var(--text-h); background: var(--hover); }
+.attach-btn:disabled { opacity: .45; cursor: wait; }
+.attach-preview { display: none; align-items: center; gap: 8px; margin: 8px 4px 0; min-height: 32px; padding: 6px 8px; background: var(--accent-bg); border-radius: 6px; color: var(--text2); font-size: 13px; }
+.attach-preview.show { display: flex; }
+.attach-preview-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-preview-remove { margin-left: auto; width: 28px; height: 28px; border-radius: 4px; color: var(--text3); font-size: 20px; line-height: 1; }
+.attach-preview-remove:hover { background: var(--hover); color: var(--text-h); }
+.attach-btn + .visually-hidden-input { width: 1px; height: 1px; }
+@media (max-width: 640px) { .attach-btn { flex-basis: 44px; width: 44px; } .attach-preview { margin-inline: 0; } }

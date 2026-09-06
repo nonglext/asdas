@@ -673,7 +673,7 @@ on('avatar-input', 'change', async e => {
     return;
   }
   if (file.size > MAX_AVATAR_SIZE) {
-    showTransientNotice('Файл слишком большой (максимум 5MB)');
+    showTransientNotice(`Файл слишком большой (максимум ${Math.round(MAX_AVATAR_SIZE / 1024 / 1024)} МБ)`);
     input.value = '';
     return;
   }
@@ -1208,6 +1208,65 @@ window.addEventListener('beforeunload', () => {
 
 const composerDrafts = new Map();
 const retryMessages = new Map();
+const composerAttachments = new Map();
+const IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif']);
+const IMAGE_EXTENSIONS = /\.(jpe?g|png|webp|gif)$/i;
+function attachmentKey(group) { return composerKey(group); }
+function isSupportedImage(file) {
+  return !!file && (IMAGE_MIME_TYPES.has(String(file.type || '').toLowerCase()) || IMAGE_EXTENSIONS.test(file.name || ''));
+}
+function fileToken(file) { return file ? `${file.name}:${file.size}:${file.lastModified}` : ''; }
+function renderAttachmentPreview(group) {
+  const key = attachmentKey(group), box = $(group ? 'group-attach-preview' : 'msg-attach-preview');
+  if (!box) return;
+  box.replaceChildren();
+  const file = key && composerAttachments.get(key);
+  const attempt = key && retryMessages.get(key);
+  if (!file && !attempt?.imageUrl) { box.classList.remove('show'); return; }
+  box.classList.add('show');
+  const label = document.createElement('span');
+  label.className = 'attach-preview-label';
+  label.textContent = file ? `Изображение: ${file.name}` : 'Изображение готово к отправке';
+  const remove = document.createElement('button');
+  remove.type = 'button'; remove.className = 'attach-preview-remove'; remove.setAttribute('aria-label', 'Убрать изображение'); remove.textContent = '×';
+  remove.addEventListener('click', () => {
+    if (key) composerAttachments.delete(key);
+    if (attempt && !attempt.inFlight) retryMessages.delete(key);
+    renderAttachmentPreview(group); refreshComposer(group);
+  });
+  box.append(label, remove);
+}
+function setComposerAttachment(group, file) {
+  const key = attachmentKey(group);
+  if (!key) return;
+  if (!isSupportedImage(file)) { showTransientNotice('Можно отправлять только JPG или PNG'); return; }
+  if (file.size > MAX_AVATAR_SIZE) { showTransientNotice(`Изображение слишком большое (максимум ${Math.round(MAX_AVATAR_SIZE / 1024 / 1024)} МБ)`); return; }
+  composerAttachments.set(key, file);
+  renderAttachmentPreview(group);
+  refreshComposer(group);
+}
+async function uploadChatImage(file) {
+  const ext = String(file.name || '').toLowerCase().match(/\.(jpe?g|png|webp|gif)$/)?.[1];
+  const mime = String(file.type || '').toLowerCase() || ({ jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif' }[ext] || 'application/octet-stream');
+  const normalized = file.type ? file : new File([file], file.name || `image.${ext || 'png'}`, { type: mime, lastModified: file.lastModified });
+  const form = new FormData();
+  form.append('image', normalized);
+  const res = await authFetch(BACKEND_URL + '/api/upload/image', { method: 'POST', body: form });
+  const data = await safeJson(res);
+  if (!res.ok || !data?.url) {
+    const error = new Error(data?.error || 'Не удалось загрузить изображение');
+    error.reason = res.status === 413 ? 'image_too_large' : data?.reason;
+    throw error;
+  }
+  return data.url;
+}
+for (const group of [false, true]) {
+  const input = $(group ? 'group-image-input' : 'msg-image-input');
+  const button = $(group ? 'btn-group-attach-image' : 'btn-attach-image');
+  button?.addEventListener('click', () => input?.click());
+  input?.addEventListener('change', () => { const file = input.files?.[0]; if (file) setComposerAttachment(group, file); input.value = ''; });
+}
+
 function saveComposerDraft() {
   if (state.activeFriend) composerDrafts.set('dm:' + state.activeFriend, $('msg-input')?.value || '');
   if (state.activeGroup) composerDrafts.set('group:' + state.activeGroup, $('group-msg-input')?.value || '');
@@ -1227,6 +1286,7 @@ function refreshComposer(group) {
     const max = Math.min(216, window.innerHeight * .30);
     input.style.height = Math.max(54, Math.min(input.scrollHeight, max)) + 'px';
   }
+  renderAttachmentPreview(group);
   if (button) {
     button.disabled = busy;
     if (busy) button.setAttribute('aria-busy', 'true');
@@ -1266,37 +1326,43 @@ async function sendComposer(group) {
   const key = (group ? 'group:' : 'dm:') + target;
   if (retryMessages.get(key)?.inFlight) return;
   const text = input.value.trim(), raw = input.value, userId = state.me.id;
-  if (!text) return;
+  const file = composerAttachments.get(key) || null;
+  if (!text && !file && !retryMessages.get(key)?.imageUrl) return;
   if (text.length > MAX_MESSAGE_LENGTH) return showTransientNotice('Сообщение не должно превышать 4000 символов');
   if (!socket.connected) return showTransientNotice('Нет соединения. Текст сохранён в поле ввода.');
+  const token = fileToken(file);
   let attempt = retryMessages.get(key);
-  if (!attempt || attempt.text !== text) {
-    attempt = { text, clientId: crypto.randomUUID() };
+  if (!attempt || attempt.text !== text || (file && attempt.fileToken && attempt.fileToken !== token) || (!file && attempt.fileToken && !attempt.imageUrl)) {
+    attempt = { text, clientId: crypto.randomUUID(), fileToken: token, imageUrl: null };
     retryMessages.set(key, attempt);
   }
   composerDrafts.set(key, raw);
   attempt.inFlight = true;
   refreshComposer(group);
-  // resetState clears this map. Object identity rejects late replies even if
-  // the same account signs back in before the old request finishes.
   const ownsAttempt = () => state.me?.id === userId && retryMessages.get(key) === attempt;
   try {
+    if (!attempt.imageUrl && file) {
+      attempt.imageUrl = await uploadChatImage(file);
+      if (!ownsAttempt()) return;
+    }
     await socketRequest(group ? 'groupMessage' : 'sendMessage', {
-      ...(group ? { groupId: target } : { toId: target }), text: attempt.text, clientId: attempt.clientId,
+      ...(group ? { groupId: target } : { toId: target }),
+      text: attempt.text, image: attempt.imageUrl || null, clientId: attempt.clientId,
     });
     if (!ownsAttempt()) return;
     retryMessages.delete(key);
+    composerAttachments.delete(key);
     if (composerDrafts.get(key) === raw) composerDrafts.delete(key);
     const current = group ? state.activeGroup : state.activeFriend;
     if (current === target && input.value === raw) input.value = '';
+    renderAttachmentPreview(group);
   } catch (e) {
-    if (ownsAttempt()) showTransientNotice(SEND_MESSAGE_ERRORS[e.reason] || e.message);
+    if (ownsAttempt()) showTransientNotice(e.reason === 'image_too_large' ? 'Изображение слишком большое (максимум 10 МБ)' : SEND_MESSAGE_ERRORS[e.reason] || e.message);
   } finally {
     attempt.inFlight = false;
     refreshComposer(group);
   }
 }
-
 
 async function loadConversationHistory(box, url, welcome, render, seqKey, seq, unread) {
   const stale = () => state.seq[seqKey] !== seq || !state.me;
