@@ -281,6 +281,11 @@ function appendChatMsg(msg, containerId, ctx, doScroll = true) {
     if (!isMine) {
       avEl.classList.add('clickable');
       avEl.setAttribute('role', 'button');
+      avEl.tabIndex = 0;
+      avEl.setAttribute('aria-label', 'Профиль: ' + ctx.senderNick);
+      avEl.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); avEl.click(); }
+      });
       avEl.addEventListener('click', () => showUserProfile(senderId));
     }
     wrap.appendChild(avEl);
@@ -297,6 +302,12 @@ function appendChatMsg(msg, containerId, ctx, doScroll = true) {
       ${ctx.isOwner ? CROWN_SVG : ''}
       <span class="g-msg-time" title="${esc(new Date(timeMs).toLocaleString('ru'))}">${esc(fmtMsgTime(timeMs))}</span>`;
     const nickEl = head.querySelector('.g-msg-nick');
+    nickEl.setAttribute('role', 'button');
+    nickEl.tabIndex = 0;
+    nickEl.setAttribute('aria-label', 'Профиль: ' + ctx.senderNick);
+    nickEl.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); nickEl.click(); }
+    });
     if (!isMine) nickEl.addEventListener('click', () => showUserProfile(senderId));
     else nickEl.addEventListener('click', () => openEditProfileModal());
     body.appendChild(head);
@@ -1348,6 +1359,7 @@ function openQuickSearch() {
   input?.select();
 }
 on('btn-find-friend', 'click', openQuickSearch);
+on('btn-empty-create-group', 'click', () => $('btn-create-group')?.click());
 // Keep the disclosure state correct after mobile backdrop/Escape handling too.
 const membersPanel = $('group-members-panel');
 if (membersPanel) {

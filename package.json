@@ -1,14 +1,14 @@
 {
   "name": "chatapp",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "private": true,
-  "description": "Single-instance chat with Discord-refactored UI, persistent voice entry and accessible UI",
+  "description": "Discord-inspired chat UI with resilient session storage and accessible conversation controls",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
     "check": "node scripts/check.cjs",
-    "test": "node --test test.js tests/voice.cjs tests/audit.cjs",
+    "test": "node --test test.js tests/voice.cjs tests/audit.cjs tests/redesign.cjs",
     "audit:prod": "npm audit --omit=dev",
     "test:e2e": "node tests/browser.cjs"
   },

@@ -6,9 +6,28 @@
 const BACKEND_URL = window.location.origin;
 const storage = {
   memory: new Map(),
-  getItem(key) { try { return window.localStorage.getItem(key); } catch { return this.memory.get(key) ?? null; } },
-  setItem(key, value) { this.memory.set(key, String(value)); try { window.localStorage.setItem(key, String(value)); } catch {} },
-  removeItem(key) { this.memory.delete(key); try { window.localStorage.removeItem(key); } catch {} },
+  pending: new Set(),
+  getItem(key) {
+    // A failed write must not be replaced by a stale, still-readable disk value.
+    if (this.pending.has(key)) return this.memory.get(key) ?? null;
+    try {
+      const value = window.localStorage.getItem(key);
+      this.memory.set(key, value);
+      return value;
+    } catch { return this.memory.get(key) ?? null; }
+  },
+  setItem(key, value) {
+    value = String(value);
+    this.memory.set(key, value);
+    try { window.localStorage.setItem(key, value); this.pending.delete(key); }
+    catch { this.pending.add(key); }
+  },
+  removeItem(key) {
+    // Keep a tombstone when removal fails, so the old token cannot reappear here.
+    this.memory.set(key, null);
+    try { window.localStorage.removeItem(key); this.pending.delete(key); }
+    catch { this.pending.add(key); }
+  },
 };
 const MAX_MESSAGE_LENGTH = 4000;
 const MAX_AVATAR_SIZE = 10 * 1024 * 1024;
@@ -603,6 +622,12 @@ function forceLogoutToLogin(message) {
 async function authFetch(url, options = {}) {
   const { timeoutMs = FETCH_TIMEOUT_MS, ...fetchOptions } = options;
   const token = storage.getItem('chatapp_token');
+  const destination = new URL(url, BACKEND_URL);
+  if (destination.origin !== BACKEND_URL || destination.username || destination.password) {
+    throw new TypeError('Авторизованные запросы разрешены только к серверу приложения');
+  }
+  const headers = new Headers(fetchOptions.headers || {});
+  if (token) headers.set('Authorization', 'Bearer ' + token);
 
   let controller = null, timer = null;
   if (!fetchOptions.signal && timeoutMs > 0 && typeof AbortController !== 'undefined') {
@@ -615,10 +640,7 @@ async function authFetch(url, options = {}) {
     const res = await fetch(url, {
       credentials: 'same-origin',
       ...fetchOptions,
-      headers: {
-        ...(fetchOptions.headers || {}),
-        ...(token ? { Authorization: 'Bearer ' + token } : {}),
-      },
+      headers,
     });
     if (res.status === 401 && state.me && token === storage.getItem('chatapp_token')) {
       forceLogoutToLogin('Сессия истекла, войдите снова');
@@ -688,7 +710,10 @@ function renderAv(el, nickname, avatarUrl) {
     img.loading = 'lazy';
     img.decoding = 'async';
     img.draggable = false;
-    img.onerror = () => { el.textContent = av(nickname); };
+    img.onerror = () => {
+      // Preserve a sibling presence indicator when an avatar fails to load.
+      if (img.parentNode === el) img.replaceWith(document.createTextNode(av(nickname)));
+    };
     el.appendChild(img);
   } else {
     el.textContent = av(nickname);

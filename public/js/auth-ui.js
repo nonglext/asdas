@@ -324,6 +324,7 @@ on('search-input', 'focus', () => {
   if (q) doSearch(q);
 });
 on('search-input', 'keydown', e => {
+  if (e.isComposing) return;
   const drop = $('search-results');
   if (e.key === 'Escape') {
     closeDrop();

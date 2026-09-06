@@ -259,10 +259,11 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
    window.rememberGroupVoice('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','retained-after-exit',false);
    __socket.fire('groupVoiceState',{groupId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',callId:null});
  });
- await check('ended session clears its ID while the permanent group entry remains',async()=>{
+ // A voice entry is conditional on a live callId, not a permanent fake channel.
+ await check('ended session clears its ID and removes the inactive voice entry',async()=>{
    assert.equal(await page.evaluate(()=>state.groupVoiceCalls['aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa']?.callId),undefined);
-   assert.equal(await page.locator('.group-voice-channel').count(),1);
-   assert.equal(await page.locator('#btn-join-group-voice').isDisabled(),false);
+   assert.equal(await page.locator('.group-voice-channel').count(),0);
+   assert.equal(await page.locator('#group-voice-bar').isVisible(),false);
  });
  await page.click('#btn-toggle-members');
  await check('members button exposes actual expanded state',async()=>assert.equal(await page.locator('#btn-toggle-members').getAttribute('aria-expanded'),String(!(await page.locator('#group-members-panel').evaluate(el=>el.classList.contains('hidden'))))));
