@@ -2,7 +2,7 @@
   "name": "chatapp",
   "version": "1.3.0",
   "private": true,
-  "description": "Single-instance chat with persistent voice entry, acknowledged delivery and accessible UI",
+  "description": "Single-instance chat with Discord-refactored UI, persistent voice entry and accessible UI",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
