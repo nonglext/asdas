@@ -329,9 +329,49 @@ async function startExistingCall(call, groupId) {
   sfx.join();
 }
 
+/* ── Discord-style group voice rejoin cache ───────────────────────────── */
+const GROUP_REJOIN_MS = 60_000;
+function rememberGroupVoice(groupId, callId, video = false) {
+  if (!groupId || !callId) return;
+  clearTimeout(state.voiceRejoin[groupId]?.timer);
+  const entry = { callId, video: !!video, expiresAt: Date.now() + GROUP_REJOIN_MS, timer: null };
+  entry.timer = setTimeout(() => {
+    if (state.voiceRejoin[groupId] !== entry) return;
+    delete state.voiceRejoin[groupId];
+    if (state.groupVoiceCalls[groupId]?.callId === callId && state.activeGroup !== groupId) delete state.groupVoiceCalls[groupId];
+    renderGroupsList();
+    updateGroupVoiceBar(groupId);
+  }, GROUP_REJOIN_MS + 100);
+  entry.timer.unref?.();
+  state.voiceRejoin[groupId] = entry;
+  if (!state.groupVoiceCalls[groupId] || state.groupVoiceCalls[groupId].callId !== callId) {
+    state.groupVoiceCalls[groupId] = { callId, video: !!video, participants: [] };
+  }
+}
+function clearGroupVoiceRejoin(groupId, callId = null) {
+  const entry = state.voiceRejoin[groupId];
+  if (!entry || (callId && entry.callId !== callId)) return;
+  clearTimeout(entry.timer);
+  delete state.voiceRejoin[groupId];
+}
+function restoreGroupVoiceRejoin(groupId) {
+  const entry = state.voiceRejoin[groupId];
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) { clearGroupVoiceRejoin(groupId); return null; }
+  const current = state.groupVoiceCalls[groupId];
+  if (!current || current.callId !== entry.callId) state.groupVoiceCalls[groupId] = { callId: entry.callId, video: entry.video, participants: [] };
+  return state.groupVoiceCalls[groupId];
+}
+window.rememberGroupVoice = rememberGroupVoice;
+window.clearGroupVoiceRejoin = clearGroupVoiceRejoin;
+window.restoreGroupVoiceRejoin = restoreGroupVoiceRejoin;
+
 /* ── Завершение звонка ─────────────────────────────────────────────────── */
 function hangupCall() {
   if (!callState.active) return;
+  const leavingGroupId = callState.isGroup ? callState.groupId : null;
+  const leavingCallId = callState.callId;
+  if (leavingGroupId && leavingCallId) rememberGroupVoice(leavingGroupId, leavingCallId, callState.video);
   if (callState.callId) {
     socket.emit('callLeave', { callId: callState.callId });
   } else {
@@ -686,6 +726,7 @@ function openCallOverlay(statusText) {
   syncCallDetached();
 
   if (callState.isGroup) {
+    rememberGroupVoice(callState.groupId, callState.callId, callState.video);
     updateGroupVoiceBar(callState.groupId);
     renderGroupsList();
   }
@@ -1837,6 +1878,13 @@ socket.on('callEnded', ({ callId, reason } = {}) => {
     return;
   }
 
+  const groupId = callState.isGroup ? callState.groupId : null;
+  if (['timeout', 'group_deleted', 'kicked'].includes(reason) && groupId) {
+    clearGroupVoiceRejoin(groupId, callId);
+    delete state.groupVoiceCalls[groupId];
+    renderGroupsList();
+    updateGroupVoiceBar(groupId);
+  }
   if (callState.active && callState.callId === callId) {
     const messages = {
       timeout:      'Нет ответа',

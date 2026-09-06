@@ -255,6 +255,14 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
    assert.equal(await page.evaluate(()=>callState.active),false);
    assert.equal(await page.locator('#btn-join-group-voice').isDisabled(),false);
  });
+ await page.evaluate(()=>{
+   window.rememberGroupVoice('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','retained-after-exit',false);
+   __socket.fire('groupVoiceState',{groupId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',callId:null});
+ });
+ await check('voice channel survives a null state after manual exit',async()=>{
+   assert.equal(await page.evaluate(()=>state.groupVoiceCalls['aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa']?.callId),'retained-after-exit');
+   assert.equal(await page.locator('#btn-join-group-voice').isDisabled(),false);
+ });
  await page.click('#btn-toggle-members');
  await check('members button exposes actual expanded state',async()=>assert.equal(await page.locator('#btn-toggle-members').getAttribute('aria-expanded'),String(!(await page.locator('#group-members-panel').evaluate(el=>el.classList.contains('hidden'))))));
  await page.evaluate(()=>{__ackDelay=500;openChat('bob')});await page.waitForTimeout(100);

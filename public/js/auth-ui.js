@@ -92,6 +92,7 @@ function removeFriendRequest(fromId) {
 function forgetGroup(groupId) {
   delete state.groups[groupId];
   delete state.groupUnread[groupId];
+  clearGroupVoiceRejoin?.(groupId);
   delete state.groupVoiceCalls[groupId];
   delete state.groupLastActivity[groupId];
   renderGroupsList();
@@ -715,8 +716,13 @@ socket.on('addedToGroup', ({ group } = {}) => {
 
 socket.on('groupVoiceState', ({ groupId, callId, video, participants } = {}) => {
   if (!groupId) return;
-  if (!callId) delete state.groupVoiceCalls[groupId];
-  else state.groupVoiceCalls[groupId] = { callId, video: !!video, participants: Array.isArray(participants) ? participants : [] };
+  if (!callId) {
+    const retained = window.restoreGroupVoiceRejoin?.(groupId);
+    if (!retained) delete state.groupVoiceCalls[groupId];
+  } else {
+    state.groupVoiceCalls[groupId] = { callId, video: !!video, participants: Array.isArray(participants) ? participants : [] };
+    window.rememberGroupVoice?.(groupId, callId, !!video);
+  }
   renderGroupsList();
   updateGroupVoiceBar(groupId);
 });

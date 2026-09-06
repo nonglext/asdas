@@ -110,6 +110,7 @@ const state = {
   unread: Object.create(null),
   groupUnread: Object.create(null),
   groupVoiceCalls: Object.create(null),
+  voiceRejoin: Object.create(null),
   lastActivity: Object.create(null),      // friendId -> ts последнего сообщения (сортировка как в Discord)
   groupLastActivity: Object.create(null), // groupId -> ts
   pendingDeleteId: null,
@@ -148,6 +149,7 @@ function bumpAllSeq() {
 
 function resetState() {
   bumpAllSeq();
+  for (const entry of Object.values(state.voiceRejoin || {})) clearTimeout(entry?.timer);
   state.me = null;
   composerDrafts.clear();
   retryMessages.clear();
