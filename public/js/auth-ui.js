@@ -717,8 +717,8 @@ socket.on('addedToGroup', ({ group } = {}) => {
 socket.on('groupVoiceState', ({ groupId, callId, video, participants } = {}) => {
   if (!groupId) return;
   if (!callId) {
-    const retained = window.restoreGroupVoiceRejoin?.(groupId);
-    if (!retained) delete state.groupVoiceCalls[groupId];
+    window.clearGroupVoiceRejoin?.(groupId);
+    delete state.groupVoiceCalls[groupId];
   } else {
     state.groupVoiceCalls[groupId] = { callId, video: !!video, participants: Array.isArray(participants) ? participants : [] };
     window.rememberGroupVoice?.(groupId, callId, !!video);

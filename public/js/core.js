@@ -102,6 +102,7 @@ class AuthError extends Error {
 
 const state = {
   me: null,
+  sessionRevision: 0,
   activeFriend: null,
   activeGroup: null,
   infoGroupId: null,           // группа, открытая в модалке «инфо»
@@ -110,6 +111,7 @@ const state = {
   unread: Object.create(null),
   groupUnread: Object.create(null),
   groupVoiceCalls: Object.create(null),
+  dmVoiceCalls: Object.create(null),
   voiceRejoin: Object.create(null),
   lastActivity: Object.create(null),      // friendId -> ts последнего сообщения (сортировка как в Discord)
   groupLastActivity: Object.create(null), // groupId -> ts
@@ -148,6 +150,7 @@ function bumpAllSeq() {
 }
 
 function resetState() {
+  state.sessionRevision++;
   bumpAllSeq();
   for (const entry of Object.values(state.voiceRejoin || {})) clearTimeout(entry?.timer);
   state.me = null;
@@ -161,6 +164,8 @@ function resetState() {
   state.unread = Object.create(null);
   state.groupUnread = Object.create(null);
   state.groupVoiceCalls = Object.create(null);
+  state.voiceRejoin = Object.create(null);
+  state.dmVoiceCalls = Object.create(null);
   state.lastActivity = Object.create(null);
   state.groupLastActivity = Object.create(null);
   state.pendingDeleteId = null;

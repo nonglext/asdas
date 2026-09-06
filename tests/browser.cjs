@@ -259,8 +259,9 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
    window.rememberGroupVoice('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','retained-after-exit',false);
    __socket.fire('groupVoiceState',{groupId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',callId:null});
  });
- await check('voice channel survives a null state after manual exit',async()=>{
-   assert.equal(await page.evaluate(()=>state.groupVoiceCalls['aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa']?.callId),'retained-after-exit');
+ await check('ended session clears its ID while the permanent group entry remains',async()=>{
+   assert.equal(await page.evaluate(()=>state.groupVoiceCalls['aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa']?.callId),undefined);
+   assert.equal(await page.locator('.group-voice-channel').count(),1);
    assert.equal(await page.locator('#btn-join-group-voice').isDisabled(),false);
  });
  await page.click('#btn-toggle-members');

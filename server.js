@@ -677,12 +677,24 @@ const CALL_RECONNECT_GRACE_MS = 60_000;
 const GROUP_EMPTY_GRACE_MS = 60_000;
 const pendingEvents = new Map();
 function busyUser(uid, except) {
-  for (const c of calls.values()) if (c.callId !== except && (c.participants.has(uid) || (c.type === 'dm' && (c.initiator === uid || c.targetId === uid)))) return true;
+  for (const c of calls.values()) if (c.callId !== except && (c.participants.has(uid) || (c.type === 'dm' && !c.answered && (c.initiator === uid || c.targetId === uid)))) return true;
   return false;
 }
 function voiceState(gid, target = io.to(`group:${gid}`)) {
   const c = callsByChat.get(`group:${gid}`);
   target.emit('groupVoiceState', c ? { groupId: gid, callId: c.callId, video: c.video, participants: [...c.participants] } : { groupId: gid, callId: null });
+}
+// Broadcast the same authoritative voice session to both sides, including leavers.
+function dmVoiceState(c) {
+  if (c.type !== 'dm') return;
+  const live = calls.get(c.callId) === c && c.answered;
+  for (const uid of [c.initiator, c.targetId]) {
+    io.to(uid).emit('dmVoiceState', {
+      peerId: uid === c.initiator ? c.targetId : c.initiator,
+      callId: live ? c.callId : null, video: c.video,
+      participants: live ? [...c.participants] : [],
+    });
+  }
 }
 function invite(c) { return { callId: c.callId, chatKey: c.chatKey, isGroup: c.type === 'group', ...(c.groupId ? { groupId: c.groupId } : {}),
   video: c.video, from: c.initiator, fromNick: c.fromNick, fromAvatar: c.fromAvatar, createdAt: c.createdAt }; }
@@ -699,6 +711,7 @@ function endCall(c, reason = 'ended') {
   }
   c.participants.clear(); c.peers.clear();
   if (c.type === 'group') voiceState(c.groupId);
+  else dmVoiceState(c);
 }
 function scheduleEmptyGroupCall(c) {
   if (c.type !== 'group' || c.emptyTimer || c.participants.size) return;
@@ -714,21 +727,12 @@ function leaveCall(uid, callId, reason = 'left') {
   clearTimeout(c.grace.get(uid)); c.grace.delete(uid); c.participants.delete(uid); c.peers.delete(uid);
   for (const s of sockets(uid)) { s.leave(`call:${callId}`); s.activeCallKeys?.delete(c.chatKey); }
   io.to(`call:${callId}`).emit('callPeerLeft', { callId, peerId: uid, reason });
+  io.to(uid).emit('callLeft', { callId, reason });
   if (!c.participants.size) {
     if (c.type === 'group') scheduleEmptyGroupCall(c);
     else endCall(c, reason === 'left' ? 'ended' : reason);
-  } else if (c.type === 'dm') schedulePeerReturn(c, uid);
+  } else if (c.type === 'dm') dmVoiceState(c);
   else voiceState(c.groupId);
-}
-function schedulePeerReturn(c, uid) {
-  if (c.grace.has(uid)) return;
-  const timer = setTimeout(() => {
-    c.grace.delete(uid);
-    if (calls.get(c.callId) !== c || c.participants.has(uid) || c.peers.has(uid)) return;
-    endCall(c, 'timeout');
-  }, CALL_RECONNECT_GRACE_MS);
-  timer.unref(); c.grace.set(uid, timer);
-  io.to(`call:${c.callId}`).emit('callPeerReconnecting', { callId: c.callId, peerId: uid, graceMs: CALL_RECONNECT_GRACE_MS });
 }
 function scheduleLeave(c, uid) {
   if (c.grace.has(uid)) return;
@@ -771,10 +775,10 @@ function socketError(s, event, arg, error) {
   const reason = error instanceof ApiError ? error.reason : 'server_error';
   const data = record(arg) ? arg : {};
   const correlation = { ...(idOK(data.toId) ? { toId: data.toId } : {}), ...(uuidOK(data.groupId) ? { groupId: data.groupId } : {}),
-    ...(uuidOK(data.callId) ? { callId: data.callId } : {}), ...(clientId(data.clientId) ? { clientId: data.clientId } : {}) };
+    ...(uuidOK(data.callId) ? { callId: data.callId } : {}), ...(clientId(data.requestId) ? { requestId: data.requestId } : {}), ...(clientId(data.clientId) ? { clientId: data.clientId } : {}) };
   if (event === 'sendMessage' || event === 'groupMessage') s.emit('sendMessageError', { ...correlation, reason });
   else if (event.toLowerCase().includes('friend')) s.emit('friendRequestError', { ...(idOK(arg) ? { toId: arg, targetId: arg } : {}), reason });
-  else if (event.startsWith('call') || event === 'watchGroupVoice') s.emit('callError', { ...correlation, event, reason });
+  else if (event.startsWith('call') || ['watchGroupVoice', 'watchDmVoice'].includes(event)) s.emit('callError', { ...correlation, event, reason });
   else s.emit('groupError', { ...correlation, reason });
   if (reason === 'rate_limited') s.emit('rateLimited', event);
 }
@@ -895,6 +899,10 @@ io.on('connection', socket => {
       AND (r.last_read_at IS NULL OR m.created_at>r.last_read_at) GROUP BY m.group_id`, { replacements: { u: uid, ids: gids }, type: QueryTypes.SELECT }) : [];
     if (!socket.connected) return;
     socket.emit('profile', { ...privateUser(auth.user), unreadCounts: Object.fromEntries(dmRows.map(r => [r.from, r.count])), groupUnreadCounts: Object.fromEntries(groupRows.map(r => [r.groupId, r.count])) });
+    socket.emit('dmVoiceSnapshot', [...calls.values()]
+      .filter(c => c.type === 'dm' && c.answered && [c.initiator, c.targetId].includes(uid))
+      .map(c => ({ peerId: c.initiator === uid ? c.targetId : c.initiator,
+        callId: c.callId, video: c.video, participants: [...c.participants] })));
     if (wasOffline) for (const id of auth.user.friends) io.to(id).emit('friendOnline', { id: uid, nickname: auth.user.nickname, avatar: auth.user.avatar });
     for (const c of calls.values()) if (c.type === 'dm' && c.targetId === uid && !c.answered) socket.emit('callIncoming', invite(c));
   }).catch(e => { logger.warn('Socket initialization failed', { error: e.message }); socket.disconnect(true); });
@@ -1030,7 +1038,7 @@ io.on('connection', socket => {
     if (!socket.connected) return;
     const key = isGroup ? `group:${data.groupId}` : dmKey(uid, data.toId);
     let c = callsByChat.get(key);
-    if (busyUser(uid, c?.callId) || (!isGroup && (c || busyUser(data.toId)))) reject(409, 'Занято', 'busy');
+    if (busyUser(uid, c?.callId) || (!isGroup && ((!c && busyUser(data.toId)) || (c && !c.answered)))) reject(409, 'Занято', 'busy');
     const isNew = !c;
     if (isNew) {
       c = { callId: crypto.randomUUID(), chatKey: key, type: isGroup ? 'group' : 'dm', groupId: isGroup ? data.groupId : null,
@@ -1040,12 +1048,14 @@ io.on('connection', socket => {
     }
     const peers = [...c.participants].filter(id => id !== uid);
     attachCall(socket, c);
-    socket.emit('callStarted', { callId: c.callId, chatKey: key, video: c.video, isGroup, ...(isGroup ? { groupId: c.groupId } : {}), participants: peers });
+    socket.lastCallRequest = { callId: c.callId, requestId: clientId(data.requestId) };
+    socket.emit('callStarted', { callId: c.callId, requestId: clientId(data.requestId), answered: c.answered, chatKey: key, video: c.video, isGroup, ...(isGroup ? { groupId: c.groupId } : {}), participants: peers });
     if (isNew) {
       if (isGroup) io.to(`group:${c.groupId}`).except(uid).emit('callIncoming', invite(c));
       else io.to(c.targetId).emit('callIncoming', invite(c));
     }
     if (isGroup) voiceState(c.groupId);
+    else if (c.answered) dmVoiceState(c);
   });
   on('callJoin', 'object', async data => {
     if (!uuidOK(data.callId)) reject(400, 'Некорректный ID звонка');
@@ -1059,8 +1069,10 @@ io.on('connection', socket => {
     }
     const peers = [...c.participants].filter(id => id !== uid);
     attachCall(socket, c, data.rejoin === true);
-    socket.emit('callJoined', { callId: c.callId, chatKey: c.chatKey, video: c.video, isGroup: c.type === 'group', groupId: c.groupId, participants: peers });
+    socket.lastCallRequest = { callId: c.callId, requestId: clientId(data.requestId) };
+    socket.emit('callJoined', { callId: c.callId, requestId: clientId(data.requestId), chatKey: c.chatKey, video: c.video, isGroup: c.type === 'group', groupId: c.groupId, participants: peers });
     if (c.type === 'group') voiceState(c.groupId);
+    else dmVoiceState(c);
   });
   on('callReject', 'object', async data => {
     const c = uuidOK(data.callId) ? calls.get(data.callId) : null;
@@ -1073,6 +1085,13 @@ io.on('connection', socket => {
     // Declining a group invitation is local, not a broadcast to every caller.
   });
   on('watchGroupVoice', 'object', async data => { checkLimit(typingLimit, uid); await membership(uid, data.groupId); voiceState(data.groupId, socket); });
+  on('watchDmVoice', 'object', async data => {
+    checkLimit(typingLimit, uid); await dmAccess(uid, data.peerId);
+    const c = callsByChat.get(dmKey(uid, data.peerId));
+    socket.emit('dmVoiceState', { peerId: data.peerId,
+      callId: c?.answered ? c.callId : null, video: !!c?.video,
+      participants: c?.answered ? [...c.participants] : [] });
+  });
   on('callSignal', 'object', async data => {
     checkLimit(signalLimit, uid);
     const c = uuidOK(data.callId) ? calls.get(data.callId) : null;
@@ -1086,6 +1105,8 @@ io.on('connection', socket => {
   on('callLeave', 'object', async data => {
     const c = uuidOK(data.callId) ? calls.get(data.callId) : null;
     if (!c || c.peers.get(uid) !== socket.id) return;
+    // Ignore cancellation of an older start after this socket has already rejoined.
+    if (data.requestId && (socket.lastCallRequest?.callId !== c.callId || socket.lastCallRequest?.requestId !== data.requestId)) return;
     if (c.type === 'dm' && !c.answered && c.initiator === uid) endCall(c, 'cancelled'); else leaveCall(uid, c.callId);
   });
 });

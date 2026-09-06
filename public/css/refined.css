@@ -190,3 +190,37 @@ button {transition:transform var(--ease-fast),opacity var(--ease-fast);}
 .attach-preview-remove:hover { background: var(--hover); color: var(--text-h); }
 .attach-btn + .visually-hidden-input { width: 1px; height: 1px; }
 @media (max-width: 640px) { .attach-btn { flex-basis: 44px; width: 44px; } .attach-preview { margin-inline: 0; } }
+
+/* Voice 4: unified profile surfaces and persistent voice entry. */
+#profile-modal .modal-profile {padding:0 0 24px;isolation:isolate;}
+#profile-modal .modal-profile-header {padding:64px 24px 20px;gap:8px;background:var(--bg2);}
+#profile-modal .modal-profile-header::before {inset:0 0 auto;height:104px;background:var(--accent);}
+#profile-modal .modal-profile-header .modal-avatar {box-sizing:border-box;width:88px;height:88px;border:6px solid var(--bg2);margin:0 0 4px;}
+#profile-modal .modal-profile-name {font-size:1.5rem;line-height:1.25;max-width:100%;overflow-wrap:anywhere;}
+#profile-modal .modal-profile-id {max-width:100%;overflow-wrap:anywhere;}
+#profile-modal .modal-profile-body {margin:0 24px;padding:20px 0 0;background:transparent;border-radius:0;border-top:1px solid var(--divider);}
+#profile-modal .profile-info-value {font-size:1rem;line-height:1.5;}
+#profile-modal .modal-actions {margin:24px 24px 0;gap:12px;}
+#profile-modal .modal-actions button {min-height:44px;}
+#profile-modal .modal-close-btn {width:44px;height:44px;top:8px;right:8px;}
+.dm-voice-bar {display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 20px;background:var(--bg1);border-bottom:1px solid var(--border);flex-shrink:0;}
+.dm-voice-info {display:flex;flex-direction:column;min-width:0;gap:4px;}
+.dm-voice-info strong {font-size:.875rem;color:var(--text-h);}
+.dm-voice-info span {font-size:.875rem;color:var(--text2);overflow-wrap:anywhere;}
+.dm-voice-bar button {padding:10px 16px;flex-shrink:0;}
+.group-voice-channel-members {max-height:160px;overflow-y:auto;}
+.group-voice-member {max-width:100%;overflow-wrap:anywhere;}
+@media (max-width:640px) {
+ #profile-modal .modal-profile {padding-bottom:calc(20px + env(safe-area-inset-bottom,0px));}
+ #profile-modal .modal-profile-header {padding-inline:20px;}
+ #profile-modal .modal-profile-body {margin-inline:20px;}
+ #profile-modal .modal-actions {margin-inline:20px;}
+ .dm-voice-bar {padding:12px;gap:12px;flex-wrap:wrap;}
+ .dm-voice-bar button {flex:1 0 auto;}
+}
+@media (max-width:360px) {
+ #chat-window .chat-head-actions #btn-call-audio {display:flex;}
+}
+@media (prefers-reduced-motion:reduce) {
+ #profile-modal .modal-box,.dm-voice-bar button {animation:none;transition:none;}
+}

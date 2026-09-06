@@ -11,15 +11,15 @@
 <meta content="yes" name="apple-mobile-web-app-capable"/>
 <meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"/>
 <link href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%235865f2'/%3E%3Cpath fill='%23fff' d='M18 14.5a1.5 1.5 0 0 1-1.5 1.5H8.3L5 19V7.5A1.5 1.5 0 0 1 6.5 6h10A1.5 1.5 0 0 1 18 7.5z'/%3E%3C/svg%3E" rel="icon"/>
-<script src="/js/runtime-guard.js?v=discord-3"></script>
-<script src="/js/document-0.js?v=discord-3"></script>
+<script src="/js/runtime-guard.js?v=voice-4"></script>
+<script src="/js/document-0.js?v=voice-4"></script>
 <!-- Порядок важен: base → layout → chat → calls → адаптив/утилиты -->
-<link href="/css/base.css?v=discord-3" rel="stylesheet"/>
-<link href="/css/layout.css?v=discord-3" rel="stylesheet"/>
-<link href="/css/chat.css?v=discord-3" rel="stylesheet"/>
-<link href="/css/calls-responsive.css?v=discord-3" rel="stylesheet"/>
-<link href="/css/style.css?v=discord-3" rel="stylesheet"/>
-<link href="/css/refined.css?v=discord-3" rel="stylesheet"/>
+<link href="/css/base.css?v=voice-4" rel="stylesheet"/>
+<link href="/css/layout.css?v=voice-4" rel="stylesheet"/>
+<link href="/css/chat.css?v=voice-4" rel="stylesheet"/>
+<link href="/css/calls-responsive.css?v=voice-4" rel="stylesheet"/>
+<link href="/css/style.css?v=voice-4" rel="stylesheet"/>
+<link href="/css/refined.css?v=voice-4" rel="stylesheet"/>
 </head>
 <body>
 <noscript>
@@ -207,6 +207,10 @@
 </button>
 </div>
 </div>
+<div class="dm-voice-bar" id="dm-voice-bar" style="display:none" role="region" aria-label="Голосовой канал">
+<div class="dm-voice-info"><strong>Голосовой канал</strong><span id="dm-voice-status" aria-live="polite"></span></div>
+<button type="button" class="btn-primary" id="btn-rejoin-dm-voice">Вернуться в войс</button>
+</div>
 <div aria-label="Сообщения" class="messages" id="messages" role="log"></div>
 <div class="msg-bar-wrap">
 <div class="msg-bar">
@@ -296,7 +300,7 @@
 <div class="modal-profile-id" id="profile-modal-id">—</div>
 <div class="modal-online-badge" id="profile-modal-online"></div>
 </div>
-<div class="modal-profile-body">
+<div class="modal-profile-body" id="profile-modal-body">
 <div class="profile-info-row" id="profile-modal-status-row">
 <span class="profile-info-label">Статус</span>
 <span class="profile-info-value" id="profile-modal-status">—</span>
@@ -468,7 +472,7 @@
 <button aria-label="Выключить камеру" class="call-round-btn call-control" id="btn-call-toggle-cam" title="Камера" type="button">
 <svg aria-hidden="true" fill="none" height="22" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="22"><path d="M23 7l-7 5 7 5V7z"></path><rect height="14" rx="2" ry="2" width="15" x="1" y="5"></rect></svg>
 </button>
-<button aria-label="Завершить звонок" class="call-round-btn call-decline" id="btn-call-hangup" title="Завершить звонок" type="button">
+<button aria-label="Отключиться от войса" class="call-round-btn call-decline" id="btn-call-hangup" title="Отключиться от войса" type="button">
 <svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="24"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"></path><line x1="23" x2="1" y1="1" y2="23"></line></svg>
 </button>
 </div>
@@ -483,7 +487,7 @@
      Не требует правок chat-ui.js: следит за открытием чата и прячет сайдбар на ≤640px,
      закрывает панель участников по тапу на щиток.
      ═════════════════════════════════════════════════════════════════════════ -->
-<script src="/js/document-1.js?v=discord-3"></script>
+<script src="/js/document-1.js?v=voice-4"></script>
 <script src="/socket.io/socket.io.js"></script>
 <!--
   Если код разбит по файлам (core / auth-ui / chat-ui / calls), а app.js их НЕ содержит —
@@ -494,11 +498,11 @@
   <script src="/js/calls.js"></script>
   Если app.js — единая сборка, оставь как есть (иначе будет ошибка «Identifier has already been declared»).
 -->
-<script defer="" src="/js/core.js?v=discord-3"></script>
-<script defer="" src="/js/auth-ui.js?v=discord-3"></script>
-<script defer="" src="/js/chat-ui.js?v=discord-3"></script>
-<script defer="" src="/js/calls.js?v=discord-3"></script>
-<script defer="" src="/js/document-actions.js?v=discord-3"></script>
-<script defer="" src="/js/accessibility.js?v=discord-3"></script>
+<script defer="" src="/js/core.js?v=voice-4"></script>
+<script defer="" src="/js/auth-ui.js?v=voice-4"></script>
+<script defer="" src="/js/chat-ui.js?v=voice-4"></script>
+<script defer="" src="/js/calls.js?v=voice-4"></script>
+<script defer="" src="/js/document-actions.js?v=voice-4"></script>
+<script defer="" src="/js/accessibility.js?v=voice-4"></script>
 </body>
 </html>

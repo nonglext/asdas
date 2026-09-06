@@ -54,9 +54,9 @@ function buildGroupEl(id) {
   const u = state.groupUnread[id] || 0;
   const members = g.members || [];
   const onlineCount = members.filter(m => m.online).length;
-  const voice = state.groupVoiceCalls[id];
+  const voice = state.groupVoiceCalls[id] || { callId: null, participants: [] };
   const voiceMembers = voice ? voice.participants.map(pid => memberName(g, pid)) : [];
-  const inThisCall = voice && callState.active && callState.callId === voice.callId;
+  const inThisCall = !!voice.callId && callState.active && callState.callId === voice.callId;
 
   const el = document.createElement('div');
   el.className = 'friend-item group-item' + (state.activeGroup === id ? ' active' : '');
@@ -78,7 +78,7 @@ function buildGroupEl(id) {
       </div>
       <div class="group-voice-channel-members">${voiceMembers.length
         ? voiceMembers.map(name => `<span class="group-voice-member"><i></i>${esc(name)}</span>`).join('')
-        : '<span class="group-voice-member empty">Канал активен</span>'}</div>
+        : '<span class="group-voice-member empty">Никто не подключён</span>'}</div>
       <button class="group-voice-channel-join" type="button" ${inThisCall || callState.active ? 'disabled' : ''}>${inThisCall ? 'Вы в канале' : 'Войти'}</button>
     </div>` : ''}`;
 
@@ -89,7 +89,8 @@ function buildGroupEl(id) {
   if (joinButton) {
     joinButton.onclick = event => {
       event.stopPropagation();
-      joinExistingGroupVoice(id);
+      if (state.groupVoiceCalls[id]) joinExistingGroupVoice(id);
+      else startCall({ groupId: id, video: false });
     };
   }
   return el;
@@ -205,6 +206,8 @@ async function openChat(id) {
   setDisplay('group-chat-window', 'none');
   setDisplay('group-voice-bar', 'none');
   setDisplay('chat-window', 'flex');
+  window.updateDmVoiceBar?.();
+  if (socket.connected) socket.emit('watchDmVoice', { peerId: id });
 
   enterMobileChatView('btn-back');
   refreshComposer(false);
@@ -411,9 +414,10 @@ async function openGroupChat(groupId) {
 function updateGroupVoiceBar(groupId) {
   const bar = $('group-voice-bar');
   if (!bar) return;
-  const isCurrent = !!groupId && state.activeGroup === groupId;
-  bar.style.display = isCurrent ? 'flex' : 'none';
-  if (!isCurrent) return;
+  // An update from a background group must not hide the visible group's bar.
+  groupId = state.activeGroup;
+  bar.style.display = groupId ? 'flex' : 'none';
+  if (!groupId) return;
 
   const call = state.groupVoiceCalls[groupId];
   const g = state.groups[groupId];
