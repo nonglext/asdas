@@ -224,3 +224,6 @@ button {transition:transform var(--ease-fast),opacity var(--ease-fast);}
 @media (prefers-reduced-motion:reduce) {
  #profile-modal .modal-box,.dm-voice-bar button {animation:none;transition:none;}
 }
+
+/* Remote voice streams use a real media sink, while the visual tile stays avatar-only. */
+.call-tile-audio { position:absolute; width:1px; height:1px; opacity:0.01; pointer-events:none; }

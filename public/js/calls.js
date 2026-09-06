@@ -985,25 +985,50 @@ function updateCallTile(tile, { nick: nickname, avatar: avatarUrl, stream, isLoc
     speaking  ? 'speaking'   : '',
   ].filter(Boolean).join(' ');
 
-  /* ── <video> ── */
+  /* ── Медиа-вывод ──
+   * В voice-only звонке MediaStream всё равно приходит через ontrack, но
+   * раньше мы создавали только <video> при наличии video-трека. В итоге
+   * удалённый микрофон был принят и отображался как плитка, но не звучал.
+   */
   let video = tile.querySelector('video');
   if (hasVideo && stream) {
     if (!video) {
       video = document.createElement('video');
-      video.autoplay          = true;
-      video.playsInline       = true;
+      video.autoplay = true;
+      video.playsInline = true;
       video.setAttribute('playsinline', '');
       video.disablePictureInPicture = true;
       tile.prepend(video);
     }
-    video.muted = isLocal; // собственный поток не воспроизводим — иначе эхо
-    if (video.srcObject !== stream) {
-      video.srcObject = stream;
-      video.play?.().catch(() => {});
-    }
+    video.muted = isLocal; // собственный поток не воспроизводим, иначе эхо
+    if (video.srcObject !== stream) video.srcObject = stream;
+    video.play?.().catch(() => {});
   } else if (video) {
-    try { video.srcObject = null; } catch (_) {}
+    try { video.pause?.(); video.srcObject = null; } catch (_) {}
     video.remove();
+  }
+
+  let audio = tile.querySelector('audio.call-tile-audio');
+  if (!isLocal && !hasVideo && stream) {
+    if (!audio) {
+      audio = document.createElement('audio');
+      audio.className = 'call-tile-audio';
+      audio.autoplay = true;
+      audio.setAttribute('autoplay', '');
+      audio.setAttribute('playsinline', '');
+      audio.setAttribute('aria-label', `Аудио ${nickname}`);
+      tile.prepend(audio);
+    }
+    audio.muted = false;
+    audio.volume = 1;
+    if (audio.srcObject !== stream) audio.srcObject = stream;
+    audio.play?.().catch(() => {
+      // Браузер может отложить autoplay до следующего пользовательского клика.
+      audio.dataset.playPending = '1';
+    });
+  } else if (audio) {
+    try { audio.pause?.(); audio.srcObject = null; } catch (_) {}
+    audio.remove();
   }
 
   /* ── Аватар ── */

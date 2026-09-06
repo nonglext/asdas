@@ -166,3 +166,16 @@ test('Client: background group broadcast does not hide current voice bar',()=>{
 test('Client: missing DM session is removed instead of offering a broken rejoin',()=>{
  const h=clientHarness();h.state.dmVoiceCalls.bob={callId:'dead',participants:['bob']};Object.assign(h.callState,{active:true,callId:'dead',localStream:h.stream});h.handlers.callError({event:'callJoin',callId:'dead',reason:'not_found'});assert.equal(h.state.dmVoiceCalls.bob,undefined);assert.equal(h.callState.active,false);
 });
+
+
+test('Client: voice-only remote streams create an audible autoplay sink',()=>{
+ const source=fs.readFileSync(path.join(root,'public/js/calls.js'),'utf8');
+ assert.match(source,/audio\.call-tile-audio/);
+ assert.match(source,/audio\.autoplay\s*=\s*true/);
+ assert.match(source,/audio\.muted\s*=\s*false/);
+ assert.match(source,/audio\.play\?\.\(\)\.catch/);
+});
+test('Client: audio sink is removed when a peer stream disappears',()=>{
+ const source=fs.readFileSync(path.join(root,'public/js/calls.js'),'utf8');
+ assert.match(source,/audio\.pause\?\.\(\); audio\.srcObject = null/);
+});
