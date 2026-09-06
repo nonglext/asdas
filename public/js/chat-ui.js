@@ -54,9 +54,9 @@ function buildGroupEl(id) {
   const u = state.groupUnread[id] || 0;
   const members = g.members || [];
   const onlineCount = members.filter(m => m.online).length;
-  const voice = state.groupVoiceCalls[id] || { callId: null, participants: [] };
-  const voiceMembers = voice ? voice.participants.map(pid => memberName(g, pid)) : [];
-  const inThisCall = !!voice.callId && callState.active && callState.callId === voice.callId;
+  const voice = state.groupVoiceCalls[id];
+  const voiceMembers = voice?.participants?.map(pid => memberName(g, pid)) || [];
+  const inThisCall = !!voice?.callId && callState.active && callState.callId === voice.callId;
 
   const el = document.createElement('div');
   el.className = 'friend-item group-item' + (state.activeGroup === id ? ' active' : '');
@@ -70,7 +70,7 @@ function buildGroupEl(id) {
       <div class="f-stat">${plural(members.length, 'участник', 'участника', 'участников')} · ${onlineCount} в сети</div>
     </div>
     ${u ? `<div class="f-unread">${u > 99 ? '99+' : u}</div>` : ''}
-    ${voice ? `<div class="group-voice-channel" data-voice-group="${esc(id)}">
+    ${voice?.callId ? `<div class="group-voice-channel" data-voice-group="${esc(id)}">
       <div class="group-voice-channel-head">
         <span class="group-voice-channel-icon">🔊</span>
         <span class="group-voice-channel-name">Голосовой канал</span>
@@ -416,10 +416,10 @@ function updateGroupVoiceBar(groupId) {
   if (!bar) return;
   // An update from a background group must not hide the visible group's bar.
   groupId = state.activeGroup;
-  bar.style.display = groupId ? 'flex' : 'none';
-  if (!groupId) return;
-
-  const call = state.groupVoiceCalls[groupId];
+  const call = groupId ? state.groupVoiceCalls[groupId] : null;
+  const isVisible = !!(groupId && call?.callId);
+  bar.style.display = isVisible ? 'flex' : 'none';
+  if (!isVisible) return;
   const g = state.groups[groupId];
   setText('group-voice-count', call
     ? (call.participants.length
