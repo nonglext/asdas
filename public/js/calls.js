@@ -77,6 +77,7 @@ let leaveWhenStarted  = false; // трубку положили раньше, ч
 let idleTimer         = null;  // автоскрытие контролов в видео-режиме
 let callTimerId       = null;  // таймер длительности звонка
 let callConnectedAt   = 0;
+let screenShareNegotiationTimer = null;
 let screenShareStream = null;
 let screenShareTrack = null;
 let screenShareStopping = false;
@@ -215,7 +216,7 @@ async function startCall({ toId, groupId, video }) {
     return;
   }
   if (window.__chatappRtc?.configError) {
-    showTransientNotice('TURN не настроен: через VPN звонок может не пройти');
+    showTransientNotice('TURN не настроен: через VPN голос и демонстрация могут зависнуть');
   }
 
   // Если в группе уже идёт канал — присоединяемся
@@ -426,12 +427,32 @@ function screenTrackFrom(stream) {
 }
 async function renegotiateAllPeers() {
   const peers = Object.entries(callState.peers);
+  clearTimeout(screenShareNegotiationTimer);
+  if (screenShareTrack && peers.length) {
+    screenShareNegotiationTimer = setTimeout(() => {
+      screenShareNegotiationTimer = null;
+      const waiting = Object.entries(callState.peers).filter(([, peer]) => {
+        const state = peer.pc?.connectionState || peer.pc?.iceConnectionState;
+        return state !== 'connected';
+      });
+      if (waiting.length && screenShareTrack) {
+        showTransientNotice(window.__chatappRtc?.relayConfigured
+          ? 'Демонстрация не подключилась. Проверьте TURN и порт TCP/TLS 443.'
+          : 'Демонстрация не подключилась: на сервере не настроен TURN.');
+      }
+      for (const [peerId, peer] of waiting) handlePeerFailed(peerId, peer.pc);
+    }, 12_000);
+  }
   await Promise.all(peers.map(async ([peerId, peer]) => {
     if (!peer?.pc || !isCurrentPc(peerId, peer.pc)) return;
     try {
       if (peer.pc.signalingState === 'stable') await sendOffer(peerId, peer.pc);
     } catch (e) { console.warn('[call] screen renegotiation failed', peerId, e); }
   }));
+  if (screenShareTrack && peers.every(([, peer]) => (peer.pc?.connectionState || peer.pc?.iceConnectionState) === 'connected')) {
+    clearTimeout(screenShareNegotiationTimer);
+    screenShareNegotiationTimer = null;
+  }
 }
 async function stopScreenShare({ silent = false } = {}) {
   if (screenShareStopping) return;
@@ -690,6 +711,7 @@ whenDomReady(() => {
 function closePeerConnection(p) {
   if (!p) return;
   clearTimeout(p.restartTimer);
+  clearTimeout(p.disconnectTimer);
   try {
     if (p.dc) {
       p.dc.onopen    = null;
@@ -720,6 +742,8 @@ function closeCallOverlay() {
   }
 
   stopCallTimer();
+  clearTimeout(screenShareNegotiationTimer);
+  screenShareNegotiationTimer = null;
   setDisplay('incoming-call-modal', 'none');
   clearTimeout(callState.ringTimer);
   clearTimeout(callState.incomingTimer);
@@ -1090,6 +1114,7 @@ function createPeerConnection(peerId) {
     makingOffer:       false,
     iceRestarted:      false,
     restartTimer:      null,
+    disconnectTimer:   null,
     micOn:             true,
     camOn:             true,
   };
@@ -1160,7 +1185,9 @@ function createPeerConnection(peerId) {
 
     if (st === 'connected') {
       clearTimeout(peer.restartTimer);
+      clearTimeout(peer.disconnectTimer);
       peer.restartTimer = null;
+      peer.disconnectTimer = null;
       peer.iceRestarted = false;
       clearTimeout(callState.ringTimer);
       callState.ringTimer = null;
@@ -1169,7 +1196,14 @@ function createPeerConnection(peerId) {
       startCallTimer();
       if (!peer.dc || peer.dc.readyState !== 'open') sendMediaState(peerId);
     } else if (st === 'disconnected') {
-      setText('call-overlay-status', 'переподключение…');
+      setText('call-overlay-status', 'переподключение через relay…');
+      clearTimeout(peer.disconnectTimer);
+      peer.disconnectTimer = setTimeout(() => {
+        if (!isCurrentPc(peerId, pc)) return;
+        const current = pc.connectionState || pc.iceConnectionState;
+        if (current === 'connected') return;
+        handlePeerFailed(peerId, pc);
+      }, 2_500);
     } else if (st === 'failed') {
       handlePeerFailed(peerId, pc);
     }
@@ -1316,7 +1350,9 @@ function giveUpPeer(peerId) {
       setText('call-overlay-status', 'ожидание участников…');
     }
   } else {
-    showTransientNotice('Соединение с собеседником потеряно');
+    showTransientNotice(window.__chatappRtc?.relayRequired && !window.__chatappRtc?.relayConfigured
+      ? 'Голос не прошёл через VPN: TURN не настроен или недоступен.'
+      : 'Соединение с собеседником потеряно');
     hangupCall();
   }
 }

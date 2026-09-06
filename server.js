@@ -442,8 +442,11 @@ route('post', '/api/logout-all', [authenticate], async (req, res) => {
 });
 route('get', '/api/rtc-config', [authenticate], async (req, res) => {
   const iceServers = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
-  const urls = (process.env.TURN_URLS || '').split(',').map(s => s.trim()).filter(Boolean);
-  const validTurnUrls = urls.length && urls.every(url => /^turns?:[^\s]+$/i.test(url));
+  // Browsers expect turn:host and turns:host, not turn://host. Accept both
+  // env spellings because reverse proxies and deployment UIs often add //.
+  const urls = (process.env.TURN_URLS || '').split(',').map(s => s.trim()).filter(Boolean)
+    .map(url => url.replace(/^turn(s?):\/\//i, 'turn$1:'));
+  const validTurnUrls = urls.length > 0 && urls.every(url => /^turns?:[^\s]+$/i.test(url));
   const hasCredentials = !!process.env.TURN_SHARED_SECRET || (!!process.env.TURN_USERNAME && !!process.env.TURN_CREDENTIAL);
   if (validTurnUrls && hasCredentials) {
     if (process.env.TURN_SHARED_SECRET) {
@@ -463,6 +466,10 @@ route('get', '/api/rtc-config', [authenticate], async (req, res) => {
     iceTransportPolicy: relay ? 'relay' : 'all',
     iceCandidatePoolSize: relay ? 4 : 0,
     relayConfigured: !!(validTurnUrls && hasCredentials),
+    relayRequired: process.env.TURN_FORCE_RELAY === 'true',
+    relayError: process.env.TURN_FORCE_RELAY === 'true' && !(validTurnUrls && hasCredentials)
+      ? 'TURN_FORCE_RELAY включён, но TURN_URLS или credentials не настроены'
+      : null,
   });
 });
 route('get', '/api/me', [authenticate], async (req, res) => { mediaCookie(res, req.user); res.json(privateUser(req.user)); });

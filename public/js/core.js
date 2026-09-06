@@ -785,12 +785,17 @@ function configureRTC() {
       if (Array.isArray(config.iceServers) && config.iceServers.length) RTC_CONFIG.iceServers = config.iceServers;
       if (config.iceTransportPolicy === 'relay' || config.iceTransportPolicy === 'all') RTC_CONFIG.iceTransportPolicy = config.iceTransportPolicy;
       if (Number.isInteger(config.iceCandidatePoolSize) && config.iceCandidatePoolSize >= 0 && config.iceCandidatePoolSize <= 16) RTC_CONFIG.iceCandidatePoolSize = config.iceCandidatePoolSize;
-      window.__chatappRtc = { relayConfigured: !!config.relayConfigured, policy: RTC_CONFIG.iceTransportPolicy };
+      window.__chatappRtc = {
+        relayConfigured: !!config.relayConfigured,
+        relayRequired: !!config.relayRequired,
+        relayError: config.relayError || null,
+        policy: RTC_CONFIG.iceTransportPolicy,
+      };
     } catch (e) {
       rtcConfigAt = 0;
       if (e instanceof AuthError) throw e;
       // STUN fallback remains available, but a relay is required behind some VPNs.
-      window.__chatappRtc = { relayConfigured: false, policy: RTC_CONFIG.iceTransportPolicy, configError: true };
+      window.__chatappRtc = { relayConfigured: false, policy: RTC_CONFIG.iceTransportPolicy, configError: true, relayError: e.message };
     }
   })();
   return rtcConfigPromise;
