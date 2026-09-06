@@ -418,7 +418,9 @@ function updateGroupVoiceBar(groupId) {
   const call = state.groupVoiceCalls[groupId];
   const g = state.groups[groupId];
   setText('group-voice-count', call
-    ? `${plural(call.participants.length, 'участник', 'участника', 'участников')} в голосовом канале`
+    ? (call.participants.length
+      ? `${plural(call.participants.length, 'участник', 'участника', 'участников')} в голосовом канале`
+      : 'Канал ждёт участников')
     : 'Никто не подключён');
 
   const members = $('group-voice-members');

@@ -226,6 +226,24 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
  await check('quick search does not steal focus from a dialog',async()=>assert.equal(await page.evaluate(()=>document.activeElement.id),modalFocus));
  await page.keyboard.press('Escape');
  await page.evaluate(()=>openGroupChat('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'));await page.waitForTimeout(100);
+ await page.evaluate(()=>{
+   state.groupVoiceCalls['aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa']={callId:'retained-voice',video:false,participants:[]};
+   updateGroupVoiceBar('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+ });
+ await check('empty group voice stays visible with a join action',async()=>{
+   assert.equal(await page.locator('#group-voice-bar').isVisible(),true);
+   assert.equal(await page.locator('#btn-join-group-voice').isDisabled(),false);
+   assert.equal(await page.locator('#btn-join-group-voice').textContent(),'Присоединиться');
+ });
+ await page.evaluate(()=>{
+   window.__response={ok:true};window.__socket.connected=true;
+   Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>({getTracks:()=>[],getAudioTracks:()=>[],getVideoTracks:()=>[]})}});
+ });
+ await page.click('#btn-join-group-voice');await page.waitForTimeout(100);
+ await check('join action reuses the retained voice call',async()=>{
+   const joined=await page.evaluate(()=>__sent.find(x=>x.event==='callJoin'&&x.payload.callId==='retained-voice'));
+   assert.ok(joined);
+ });
  await page.click('#btn-toggle-members');
  await check('members button exposes actual expanded state',async()=>assert.equal(await page.locator('#btn-toggle-members').getAttribute('aria-expanded'),String(!(await page.locator('#group-members-panel').evaluate(el=>el.classList.contains('hidden'))))));
  await page.evaluate(()=>{__ackDelay=500;openChat('bob')});await page.waitForTimeout(100);

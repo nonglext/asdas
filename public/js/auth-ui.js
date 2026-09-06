@@ -716,7 +716,7 @@ socket.on('addedToGroup', ({ group } = {}) => {
 socket.on('groupVoiceState', ({ groupId, callId, video, participants } = {}) => {
   if (!groupId) return;
   if (!callId) delete state.groupVoiceCalls[groupId];
-  else state.groupVoiceCalls[groupId] = { callId, video: !!video, participants: participants || [] };
+  else state.groupVoiceCalls[groupId] = { callId, video: !!video, participants: Array.isArray(participants) ? participants : [] };
   renderGroupsList();
   updateGroupVoiceBar(groupId);
 });

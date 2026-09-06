@@ -674,6 +674,7 @@ app.use((err, req, res, next) => {
 // Calls and socket state are intentionally process-local. No cluster/PM2 workers.
 const calls = new Map(), callsByChat = new Map();
 const CALL_RECONNECT_GRACE_MS = 60_000;
+const GROUP_EMPTY_GRACE_MS = 60_000;
 const pendingEvents = new Map();
 function busyUser(uid, except) {
   for (const c of calls.values()) if (c.callId !== except && (c.participants.has(uid) || (c.type === 'dm' && (c.initiator === uid || c.targetId === uid)))) return true;
@@ -689,6 +690,7 @@ function endCall(c, reason = 'ended') {
   if (calls.get(c.callId) !== c) return;
   calls.delete(c.callId); if (callsByChat.get(c.chatKey) === c) callsByChat.delete(c.chatKey);
   for (const timer of c.grace.values()) clearTimeout(timer); c.grace.clear();
+  clearTimeout(c.emptyTimer); c.emptyTimer = null;
   if (c.type === 'dm' && !c.answered && ['cancelled', 'no_answer'].includes(reason)) io.to(c.targetId).emit('callCancelled', { callId: c.callId, reason });
   const emitter = c.type === 'dm' ? io.to(c.initiator).to(c.targetId) : io.to(`call:${c.callId}`);
   emitter.emit('callEnded', { callId: c.callId, chatKey: c.chatKey, reason });
@@ -698,13 +700,24 @@ function endCall(c, reason = 'ended') {
   c.participants.clear(); c.peers.clear();
   if (c.type === 'group') voiceState(c.groupId);
 }
+function scheduleEmptyGroupCall(c) {
+  if (c.type !== 'group' || c.emptyTimer || c.participants.size) return;
+  c.emptyTimer = setTimeout(() => {
+    c.emptyTimer = null;
+    if (calls.get(c.callId) === c && !c.participants.size) endCall(c, 'timeout');
+  }, GROUP_EMPTY_GRACE_MS);
+  c.emptyTimer.unref();
+  voiceState(c.groupId);
+}
 function leaveCall(uid, callId, reason = 'left') {
   const c = calls.get(callId); if (!c || !c.participants.has(uid)) return;
   clearTimeout(c.grace.get(uid)); c.grace.delete(uid); c.participants.delete(uid); c.peers.delete(uid);
   for (const s of sockets(uid)) { s.leave(`call:${callId}`); s.activeCallKeys?.delete(c.chatKey); }
   io.to(`call:${callId}`).emit('callPeerLeft', { callId, peerId: uid, reason });
-  if (!c.participants.size) endCall(c, reason === 'left' ? 'ended' : reason);
-  else if (c.type === 'dm') schedulePeerReturn(c, uid);
+  if (!c.participants.size) {
+    if (c.type === 'group') scheduleEmptyGroupCall(c);
+    else endCall(c, reason === 'left' ? 'ended' : reason);
+  } else if (c.type === 'dm') schedulePeerReturn(c, uid);
   else voiceState(c.groupId);
 }
 function schedulePeerReturn(c, uid) {
@@ -736,6 +749,7 @@ function attachCall(socket, c, notify = false) {
     old?.emit('callEnded', { callId: c.callId, chatKey: c.chatKey, reason: 'replaced_device' });
   }
   clearTimeout(c.grace.get(uid)); c.grace.delete(uid);
+  clearTimeout(c.emptyTimer); c.emptyTimer = null;
   c.participants.add(uid); c.peers.set(uid, socket.id); socket.join(`call:${c.callId}`); socket.activeCallKeys.add(c.chatKey);
   if (!already || recovering || notify || (oldSid && oldSid !== socket.id)) socket.to(`call:${c.callId}`).emit('callPeerJoined', { callId: c.callId, peerId: uid });
 }
@@ -1021,7 +1035,7 @@ io.on('connection', socket => {
     if (isNew) {
       c = { callId: crypto.randomUUID(), chatKey: key, type: isGroup ? 'group' : 'dm', groupId: isGroup ? data.groupId : null,
         initiator: uid, targetId: isGroup ? null : data.toId, video: !!data.video, answered: false, createdAt: Date.now(),
-        fromNick: socket.user.nickname, fromAvatar: socket.user.avatar, participants: new Set(), peers: new Map(), grace: new Map() };
+        fromNick: socket.user.nickname, fromAvatar: socket.user.avatar, participants: new Set(), peers: new Map(), grace: new Map(), emptyTimer: null };
       calls.set(c.callId, c); callsByChat.set(key, c);
     }
     const peers = [...c.participants].filter(id => id !== uid);
