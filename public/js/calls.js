@@ -535,7 +535,7 @@ async function startScreenShare() {
   if (!screenShareSupported()) { showTransientNotice('Демонстрация экрана недоступна в этом браузере'); return; }
   let stream;
   try {
-    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 30 } }, audio: true });
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 30 } }, audio: false });
   } catch (e) {
     if (e?.name !== 'AbortError' && e?.name !== 'NotAllowedError') showTransientNotice('Не удалось начать демонстрацию экрана');
     return;
@@ -908,7 +908,7 @@ function renderCallGrid() {
       grid.appendChild(tile);
     }
     updateCallTile(tile, entry);
-    ensureSpeakingMonitor(entry.id, entry.stream);
+    ensureSpeakingMonitor(entry.id, entry.isLocal ? callState.localStream : entry.stream);
   }
 
   // Удаляем плитки ушедших участников
@@ -986,9 +986,9 @@ function updateCallTile(tile, { nick: nickname, avatar: avatarUrl, stream, isLoc
   ].filter(Boolean).join(' ');
 
   /* ── Медиа-вывод ──
-   * В voice-only звонке MediaStream всё равно приходит через ontrack, но
-   * раньше мы создавали только <video> при наличии video-трека. В итоге
-   * удалённый микрофон был принят и отображался как плитка, но не звучал.
+   * Разделение видео и звука:
+   * Видео-элемент отвечает за отображение экрана или камеры (muted, чтобы не вызывать конфликтов воспроизведения и эха).
+   * Аудио-элемент отвечает за воспроизведение голоса удалённого собеседника ВСЕГДА, даже когда включена демонстрация экрана!
    */
   let video = tile.querySelector('video');
   if (hasVideo && stream) {
@@ -1000,7 +1000,7 @@ function updateCallTile(tile, { nick: nickname, avatar: avatarUrl, stream, isLoc
       video.disablePictureInPicture = true;
       tile.prepend(video);
     }
-    video.muted = isLocal; // собственный поток не воспроизводим, иначе эхо
+    video.muted = true; // Видео всегда muted, так как весь удалённый звук идёт через audio.call-tile-audio
     if (video.srcObject !== stream) video.srcObject = stream;
     video.play?.().catch(() => {});
   } else if (video) {
@@ -1008,8 +1008,9 @@ function updateCallTile(tile, { nick: nickname, avatar: avatarUrl, stream, isLoc
     video.remove();
   }
 
+  const hasRemoteAudio = !isLocal && !!stream && stream.getAudioTracks().some(t => t.readyState !== 'ended');
   let audio = tile.querySelector('audio.call-tile-audio');
-  if (!isLocal && !hasVideo && stream) {
+  if (hasRemoteAudio) {
     if (!audio) {
       audio = document.createElement('audio');
       audio.className = 'call-tile-audio';
@@ -1023,7 +1024,6 @@ function updateCallTile(tile, { nick: nickname, avatar: avatarUrl, stream, isLoc
     audio.volume = 1;
     if (audio.srcObject !== stream) audio.srcObject = stream;
     audio.play?.().catch(() => {
-      // Браузер может отложить autoplay до следующего пользовательского клика.
       audio.dataset.playPending = '1';
     });
   } else if (audio) {
@@ -1262,11 +1262,18 @@ function createPeerConnection(peerId) {
 
   pc.ontrack = e => {
     if (!isCurrentPc(peerId, pc)) return;
-    if (e.streams?.[0]) {
-      peer.stream = e.streams[0];
-    } else {
-      if (!peer.stream) peer.stream = new MediaStream();
+    if (!peer.stream) {
+      peer.stream = e.streams?.[0] || new MediaStream();
+    }
+    if (e.track && !peer.stream.getTracks().includes(e.track)) {
       peer.stream.addTrack(e.track);
+    }
+    if (e.streams?.[0]) {
+      for (const t of e.streams[0].getTracks()) {
+        if (!peer.stream.getTracks().includes(t)) {
+          peer.stream.addTrack(t);
+        }
+      }
     }
     e.track.onmute   = () => renderCallGrid();
     e.track.onunmute = () => renderCallGrid();
