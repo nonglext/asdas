@@ -58,6 +58,29 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
  await page.waitForSelector('#group-attach-preview.show');
  await page.click('#btn-group-send');await page.waitForTimeout(100);
  await check('JPG attachment sends in a group',async()=>{const sent=await page.evaluate(()=>__sent.find(x=>x.event==='groupMessage'));assert.equal(sent.payload.image,'/uploads/22222222-2222-2222-2222-222222222222.webp')});
+ await page.evaluate(()=>openEditProfileModal());
+ await page.setInputFiles('#avatar-input',{name:'avatar-700kb.jpg',mimeType:'image/jpeg',buffer:Buffer.alloc(700*1024,7)});
+ await page.waitForTimeout(120);
+ await check('700 KB JPG avatar is not rejected by the client limit',async()=>assert.match(await page.locator('#transient-notice').textContent(),/Аватар обновлён/));
+ await page.keyboard.press('Escape');
+ await page.evaluate(()=>openChat('bob'));await page.waitForTimeout(100);
+ await page.evaluate(()=>{
+   const dt=new DataTransfer();
+   dt.items.add(new File([new Uint8Array(16)],'clipboard-screenshot.png',{type:'image/png'}));
+   document.querySelector('#msg-input').dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true}));
+ });
+ await page.waitForSelector('#msg-attach-preview.show');
+ await check('Ctrl+V screenshot attaches in a DM',async()=>assert.match(await page.locator('#transient-notice').textContent(),/Скриншот добавлен/));
+ await page.click('#btn-send');await page.waitForTimeout(120);
+ await page.evaluate(()=>openGroupChat('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'));await page.waitForTimeout(120);
+ await page.evaluate(()=>{
+   const dt=new DataTransfer();
+   dt.items.add(new File([new Uint8Array(16)],'clipboard-screenshot.png',{type:'image/png'}));
+   document.querySelector('#group-msg-input').dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true}));
+ });
+ await page.waitForSelector('#group-attach-preview.show');
+ await check('Ctrl+V screenshot attaches in a group',async()=>assert.match(await page.locator('#transient-notice').textContent(),/группы/));
+ await page.click('#btn-group-send');await page.waitForTimeout(120);
  await page.fill('#search-input','@david');await page.waitForSelector('.s-item .btn-add');await page.click('.s-item .btn-add');await page.waitForTimeout(100);
  await check('friend addition waits for ack and shows success',async()=>{assert.equal(await page.locator('.s-item .btn-add').textContent(),'Заявка отправлена');const sent=await page.evaluate(()=>__sent.find(x=>x.event==='sendFriendRequest'));assert.equal(sent.payload,'david')});
  await page.evaluate(()=>{__response={ok:false,reason:'blocked',error:'Заблокирован'};closeDrop();});

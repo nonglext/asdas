@@ -667,8 +667,11 @@ on('avatar-input', 'change', async e => {
   const input = e.target;
   const file = input.files && input.files[0];
   if (!file || !state.me) return;
-  if (!ALLOWED_AVATAR_TYPES.includes(file.type)) {
-    showTransientNotice('Разрешены только изображения (jpeg, png, webp, gif)');
+  const avatarExt = String(file.name || '').toLowerCase().match(/\.(jpe?g|png|webp|gif)$/)?.[1];
+  const avatarMime = String(file.type || '').toLowerCase();
+  const avatarAllowed = ALLOWED_AVATAR_TYPES.includes(avatarMime) || !!avatarExt;
+  if (!avatarAllowed) {
+    showTransientNotice('Разрешены только JPG, PNG, WEBP или GIF');
     input.value = '';
     return;
   }
@@ -678,7 +681,7 @@ on('avatar-input', 'change', async e => {
     return;
   }
   const formData = new FormData();
-  formData.append('avatar', file);
+  formData.append('avatar', normalizeImageFile(file, `avatar.${avatarExt || 'png'}`), file.name || `avatar.${avatarExt || 'png'}`);
   try {
     const res = await authFetch(BACKEND_URL + '/api/upload/avatar', { method: 'POST', body: formData });
     if (!res.ok) {
@@ -1215,7 +1218,16 @@ function attachmentKey(group) { return composerKey(group); }
 function isSupportedImage(file) {
   return !!file && (IMAGE_MIME_TYPES.has(String(file.type || '').toLowerCase()) || IMAGE_EXTENSIONS.test(file.name || ''));
 }
-function fileToken(file) { return file ? `${file.name}:${file.size}:${file.lastModified}` : ''; }
+function normalizeImageFile(file, fallbackName = 'image.png') {
+  if (!file) return null;
+  const ext = String(file.name || fallbackName).toLowerCase().match(/\.(jpe?g|png|webp|gif)$/)?.[1] || 'png';
+  const mime = String(file.type || '').toLowerCase() || ({ jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif' }[ext] || 'image/png');
+  if (typeof File === 'function' && (!file.type || file.type === 'application/octet-stream')) {
+    try { return new File([file], file.name || fallbackName, { type: mime, lastModified: file.lastModified || Date.now() }); } catch (_) {}
+  }
+  return file;
+}
+function fileToken(file) { return file ? `${file.name}:${file.size}:${file.lastModified}:${file.type}` : ''; }
 function renderAttachmentPreview(group) {
   const key = attachmentKey(group), box = $(group ? 'group-attach-preview' : 'msg-attach-preview');
   if (!box) return;
@@ -1241,16 +1253,14 @@ function setComposerAttachment(group, file) {
   if (!key) return;
   if (!isSupportedImage(file)) { showTransientNotice('Можно отправлять только JPG или PNG'); return; }
   if (file.size > MAX_AVATAR_SIZE) { showTransientNotice(`Изображение слишком большое (максимум ${Math.round(MAX_AVATAR_SIZE / 1024 / 1024)} МБ)`); return; }
-  composerAttachments.set(key, file);
+  composerAttachments.set(key, normalizeImageFile(file));
   renderAttachmentPreview(group);
   refreshComposer(group);
 }
 async function uploadChatImage(file) {
-  const ext = String(file.name || '').toLowerCase().match(/\.(jpe?g|png|webp|gif)$/)?.[1];
-  const mime = String(file.type || '').toLowerCase() || ({ jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif' }[ext] || 'application/octet-stream');
-  const normalized = file.type ? file : new File([file], file.name || `image.${ext || 'png'}`, { type: mime, lastModified: file.lastModified });
+  const normalized = normalizeImageFile(file);
   const form = new FormData();
-  form.append('image', normalized);
+  form.append('image', normalized, normalized.name || 'image.png');
   const res = await authFetch(BACKEND_URL + '/api/upload/image', { method: 'POST', body: form });
   const data = await safeJson(res);
   if (!res.ok || !data?.url) {
@@ -1266,6 +1276,26 @@ for (const group of [false, true]) {
   button?.addEventListener('click', () => input?.click());
   input?.addEventListener('change', () => { const file = input.files?.[0]; if (file) setComposerAttachment(group, file); input.value = ''; });
 }
+function pastedImage(event) {
+  const items = [...(event.clipboardData?.items || [])];
+  for (const item of items) {
+    if (item.kind === 'file' && /^image\//i.test(item.type || '')) return item.getAsFile();
+  }
+  const file = [...(event.clipboardData?.files || [])].find(isSupportedImage);
+  return file || null;
+}
+document.addEventListener('paste', event => {
+  if (isAnyModalOpen()) return;
+  const target = event.target;
+  const group = target?.id === 'group-msg-input' || (!!state.activeGroup && target?.closest?.('#group-chat-window'));
+  const dm = target?.id === 'msg-input' || (!!state.activeFriend && target?.closest?.('#chat-window'));
+  if (!group && !dm) return;
+  const file = pastedImage(event);
+  if (!file) return;
+  event.preventDefault();
+  setComposerAttachment(group, file);
+  showTransientNotice(group ? 'Скриншот добавлен в сообщение группы' : 'Скриншот добавлен в сообщение');
+});
 
 function saveComposerDraft() {
   if (state.activeFriend) composerDrafts.set('dm:' + state.activeFriend, $('msg-input')?.value || '');

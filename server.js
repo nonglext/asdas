@@ -294,8 +294,16 @@ async function advanceRead(groupId, userId, time, transaction) {
 let uploading = 0;
 const upload = multer({
   storage: multer.diskStorage({ destination: TMP_DIR, filename: (req, file, cb) => cb(null, `${crypto.randomUUID()}.tmp`) }),
-  limits: { fileSize: MAX_IMAGE_BYTES, files: 1, fields: 0, parts: 1, fieldNameSize: 64, fieldNestingDepth: 0, fieldArrayIndexLimit: 0 },
-  fileFilter: (req, file, cb) => cb(null, ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'].includes(file.mimetype))
+  // Some browsers/clipboard providers send a valid image as application/octet-stream
+  // or image/jpg. sharp still validates the actual bytes in finalizeUpload().
+  limits: { fileSize: MAX_IMAGE_BYTES, files: 1, fields: 1, parts: 2, fieldNameSize: 64, fieldNestingDepth: 0, fieldArrayIndexLimit: 0 },
+  fileFilter: (req, file, cb) => {
+    const mime = String(file.mimetype || '').toLowerCase();
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    const allowedMime = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
+    const allowedExt = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+    cb(null, allowedMime.includes(mime) || allowedExt.includes(ext));
+  }
 });
 async function uploadGuard(req, res, next) {
   try {
