@@ -32,7 +32,7 @@
 
 /* Мобильный «щиток» под панелью участников */
 .members-backdrop {
-  position: fixed; inset: 0; z-index: calc(var(--z-modal) - 1);
+  position: fixed; inset: 0; z-index: calc(var(--z-modal) - 10);
   background: rgba(0,0,0,0.6);
   opacity: 0; pointer-events: none;
   transition: opacity var(--ease);
@@ -134,7 +134,7 @@
   /* Панель участников — выезжает справа поверх чата */
   .group-chat-body { position: relative; }
   .group-members-panel {
-    position: fixed; top: 0; right: 0; bottom: 0; z-index: var(--z-modal);
+    position: fixed; top: 0; right: 0; bottom: 0; z-index: calc(var(--z-modal) - 5);
     width: min(85vw, 300px); min-width: 0;
     box-shadow: -8px 0 24px rgba(0,0,0,0.45);
     transform: translateX(0);

@@ -77,6 +77,9 @@ let leaveWhenStarted  = false; // трубку положили раньше, ч
 let idleTimer         = null;  // автоскрытие контролов в видео-режиме
 let callTimerId       = null;  // таймер длительности звонка
 let callConnectedAt   = 0;
+let screenShareStream = null;
+let screenShareTrack = null;
+let screenShareStopping = false;
 
 /* ── Имена/аватары участников ──────────────────────────────────────────── */
 function callPeerName(peerId) {
@@ -357,7 +360,7 @@ function resetCallControls() {
  * — через сигналинговый сервер.
  * ────────────────────────────────────────────────────────────────────── */
 function mediaStatePayload() {
-  return { type: 'state', micOn: !!callState.micOn, camOn: !!callState.camOn };
+  return { type: 'state', micOn: !!callState.micOn, camOn: !!callState.camOn, screenOn: !!screenShareTrack };
 }
 
 function sendMediaState(peerId) {
@@ -395,6 +398,98 @@ function applyRemoteMediaState(peerId, data) {
   peer.micOn = micOn;
   peer.camOn = camOn;
   renderCallGrid();
+}
+
+/* ── Демонстрация экрана ─────────────────────────────────────────────────
+ * Screen sharing uses the existing peer mesh, so it works in DMs, groups,
+ * and an already-running voice channel without a second call type.
+ */
+function screenShareSupported() {
+  return !!navigator.mediaDevices?.getDisplayMedia;
+}
+function updateScreenShareUI() {
+  const btn = $('btn-call-share-screen');
+  if (!btn) return;
+  const on = !!screenShareTrack;
+  btn.classList.toggle('active-off', on);
+  btn.classList.toggle('screen-sharing', on);
+  btn.setAttribute('aria-pressed', String(on));
+  btn.setAttribute('aria-label', on ? 'Остановить демонстрацию экрана' : 'Поделиться экраном');
+  btn.title = on ? 'Остановить демонстрацию экрана' : 'Поделиться экраном';
+  btn.disabled = !callState.active || (!screenShareSupported() && !on);
+}
+function screenTrackFrom(stream) {
+  return stream?.getVideoTracks?.().find(track => track.readyState !== 'ended') || null;
+}
+async function renegotiateAllPeers() {
+  const peers = Object.entries(callState.peers);
+  await Promise.all(peers.map(async ([peerId, peer]) => {
+    if (!peer?.pc || !isCurrentPc(peerId, peer.pc)) return;
+    try {
+      if (peer.pc.signalingState === 'stable') await sendOffer(peerId, peer.pc);
+    } catch (e) { console.warn('[call] screen renegotiation failed', peerId, e); }
+  }));
+}
+async function stopScreenShare({ silent = false } = {}) {
+  if (screenShareStopping) return;
+  screenShareStopping = true;
+  try {
+    const track = screenShareTrack;
+    screenShareTrack = null;
+    if (track) { track.onended = null; try { track.stop(); } catch (_) {} }
+    const cameraTrack = callState.localStream?.getVideoTracks?.().find(t => t !== track && t.readyState !== 'ended') || null;
+    stopStream(screenShareStream);
+    screenShareStream = null;
+    callState.video = !!cameraTrack;
+    const overlay = $('call-overlay');
+    if (overlay) { overlay.classList.toggle('voice-mode', !callState.video && callState.active); overlay.classList.toggle('video-mode', !!callState.video); }
+    // Restore camera video if the call started with one. Otherwise remove the
+    // video sender, preserving a true voice-only call after sharing ends.
+    for (const peer of Object.values(callState.peers)) {
+      const sender = peer.pc?.getSenders?.().find(x => x.track?.kind === 'video' || (!x.track && x.kind === 'video'));
+      if (sender) { try { await sender.replaceTrack(cameraTrack); } catch (_) {} }
+    }
+    renderCallGrid();
+    updateScreenShareUI();
+    broadcastMediaState();
+    await renegotiateAllPeers();
+    if (!silent) showTransientNotice(cameraTrack ? 'Демонстрация экрана остановлена' : 'Демонстрация экрана остановлена, голосовой канал продолжается');
+  } finally { screenShareStopping = false; }
+}
+async function startScreenShare() {
+  if (!callState.active || screenShareTrack) return;
+  if (!screenShareSupported()) { showTransientNotice('Демонстрация экрана недоступна в этом браузере'); return; }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 30 } }, audio: true });
+  } catch (e) {
+    if (e?.name !== 'AbortError' && e?.name !== 'NotAllowedError') showTransientNotice('Не удалось начать демонстрацию экрана');
+    return;
+  }
+  const track = screenTrackFrom(stream);
+  if (!track) { stopStream(stream); showTransientNotice('Источник экрана не найден'); return; }
+  screenShareStream = stream; screenShareTrack = track;
+  track.onended = () => { if (screenShareTrack === track) stopScreenShare({ silent: true }); };
+  for (const peer of Object.values(callState.peers)) {
+    if (!peer.pc) continue;
+    let sender = peer.pc.getSenders?.().find(x => x.track?.kind === 'video' || (!x.track && x.kind === 'video'));
+    try {
+      if (sender) await sender.replaceTrack(track);
+      else sender = peer.pc.addTrack(track, stream);
+    } catch (e) { console.warn('[call] screen track attach failed', e); }
+  }
+  callState.video = true;
+  const overlay = $('call-overlay');
+  if (overlay) { overlay.classList.remove('voice-mode'); overlay.classList.add('video-mode'); }
+  updateScreenShareUI();
+  renderCallGrid();
+  broadcastMediaState();
+  await renegotiateAllPeers();
+  showTransientNotice(callState.isGroup ? 'Экран виден всем участникам группы' : 'Демонстрация экрана началась');
+}
+async function toggleScreenShare() {
+  if (!callState.active) return;
+  if (screenShareTrack) await stopScreenShare(); else await startScreenShare();
 }
 
 /* ── Привязка звонка к чату ────────────────────────────────────────────── */
@@ -519,7 +614,7 @@ function openCallOverlay(statusText) {
   }
 
   overlay.classList.remove('detached', 'idle');
-  overlay.classList.toggle('voice-mode', !callState.video);
+  overlay.classList.toggle('voice-mode', !callState.video && !screenShareTrack);
   overlay.classList.toggle('video-mode',  callState.video);
 
   setText('call-overlay-mode', callState.video ? 'ВИДЕОКАНАЛ' : 'ГОЛОСОВОЙ КАНАЛ');
@@ -531,6 +626,7 @@ function openCallOverlay(statusText) {
   setText('call-overlay-status', statusText ?? '');
 
   resetCallControls();
+  updateScreenShareUI();
   renderCallGrid();
   syncVoiceOverlayPosition();
   syncCallDetached();
@@ -629,6 +725,13 @@ function closeCallOverlay() {
   sfx.stopRing();
 
   stopAllSpeakingMonitors();
+  const oldScreenTrack = screenShareTrack;
+  screenShareTrack = null;
+  if (oldScreenTrack) { oldScreenTrack.onended = null; try { oldScreenTrack.stop(); } catch (_) {} }
+  stopStream(screenShareStream);
+  screenShareStream = null;
+  screenShareStopping = false;
+  updateScreenShareUI();
   stopStream(callState.localStream);
   Object.values(callState.peers).forEach(closePeerConnection);
 
@@ -679,10 +782,10 @@ function renderCallGrid() {
     id:      'local',
     nick:    state.me?.nickname || 'Я',
     avatar:  state.me?.avatar  || null,
-    stream:  callState.localStream,
+    stream:  screenShareStream || callState.localStream,
     isLocal: true,
     micOn:   callState.micOn,
-    camOn:   callState.camOn,
+    camOn:   callState.camOn || !!screenShareTrack,
   }];
 
   for (const [peerId, p] of Object.entries(callState.peers)) {
@@ -1250,6 +1353,7 @@ on('btn-join-group-voice', 'click', () => {
 });
 
 on('btn-call-hangup', 'click', hangupCall);
+on('btn-call-share-screen', 'click', () => { toggleScreenShare().catch(e => console.warn('[call] screen share toggle failed', e)); });
 
 function toggleMic() {
   if (!callState.active || !callState.localStream) return;
@@ -1760,7 +1864,7 @@ Object.assign(window, {
   setText, setDisplay, showTransientNotice, authFetch, safeJson, on,
   isAnyModalOpen, updateTitleBadge, closeAllModals,
   syncVoiceOverlayPosition, hangupCall, toggleMic, toggleCam,
-  syncCallDetached, returnToCallChat, broadcastMediaState,
+  syncCallDetached, returnToCallChat, broadcastMediaState, toggleScreenShare, startScreenShare, stopScreenShare,
 });
 
 try {

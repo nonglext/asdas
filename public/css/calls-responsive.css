@@ -20,7 +20,7 @@
    Класс .detached ставит JS (см. snippet ниже). */
 
 .call-overlay {
-  position: fixed; inset: 0; z-index: var(--z-modal);
+  position: fixed; inset: 0; z-index: calc(var(--z-modal) + 20);
   display: flex; flex-direction: column;
   color: var(--text);
   background:
@@ -277,7 +277,7 @@
   left: var(--rail-w); right: auto;
   bottom: var(--user-panel-h); top: auto;
   width: var(--sidebar-w); height: auto;
-  z-index: calc(var(--z-modal) - 1);           /* ниже модалок, но выше контента */
+  z-index: calc(var(--z-modal) + 5);           /* above app chrome, below dialogs */
   display: flex; flex-direction: column; gap: 0;
   padding: 8px;
   background: var(--bg1);
