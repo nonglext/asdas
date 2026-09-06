@@ -77,6 +77,9 @@ let leaveWhenStarted  = false; // трубку положили раньше, ч
 let idleTimer         = null;  // автоскрытие контролов в видео-режиме
 let callTimerId       = null;  // таймер длительности звонка
 let callConnectedAt   = 0;
+let peerWaitTimer      = null;
+let peerWaitInterval   = null;
+let peerWaitDeadline   = 0;
 let screenShareNegotiationTimer = null;
 let screenShareStream = null;
 let screenShareTrack = null;
@@ -516,6 +519,33 @@ async function toggleScreenShare() {
   if (screenShareTrack) await stopScreenShare(); else await startScreenShare();
 }
 
+function clearPeerWait() {
+  clearTimeout(peerWaitTimer);
+  clearInterval(peerWaitInterval);
+  peerWaitTimer = null;
+  peerWaitInterval = null;
+  peerWaitDeadline = 0;
+}
+function startPeerWait() {
+  if (!callState.active || Object.keys(callState.peers).length) return;
+  clearPeerWait();
+  peerWaitDeadline = Date.now() + 60_000;
+  const update = () => {
+    if (!callState.active || Object.keys(callState.peers).length) return clearPeerWait();
+    const left = Math.max(0, peerWaitDeadline - Date.now());
+    const seconds = Math.ceil(left / 1000);
+    setText('call-overlay-status', `ждём участника · 00:${String(seconds).padStart(2, '0')}`);
+    if (!left) {
+      clearPeerWait();
+      showTransientNotice('Участник не вернулся, звонок завершён');
+      hangupCall();
+    }
+  };
+  update();
+  peerWaitInterval = setInterval(update, 1000);
+  peerWaitTimer = setTimeout(update, 60_100);
+}
+
 /* ── Привязка звонка к чату ────────────────────────────────────────────── */
 function callChatKey() {
   if (!callState.active) return null;
@@ -742,6 +772,7 @@ function closeCallOverlay() {
   }
 
   stopCallTimer();
+  clearPeerWait();
   clearTimeout(screenShareNegotiationTimer);
   screenShareNegotiationTimer = null;
   setDisplay('incoming-call-modal', 'none');
@@ -856,6 +887,15 @@ function renderCallGrid() {
   }
 
   grid.dataset.count = String(entries.length);
+  const hasRemoteVideo = entries.some(entry => !entry.isLocal && entry.stream?.getVideoTracks?.().some(track => track.readyState === 'live' && !track.muted));
+  const overlay = $('call-overlay');
+  if (overlay && callState.active) {
+    const showingScreen = !!screenShareTrack || hasRemoteVideo;
+    overlay.classList.toggle('voice-mode', !showingScreen);
+    overlay.classList.toggle('video-mode', showingScreen);
+    if (hasRemoteVideo && !screenShareTrack) setText('call-overlay-mode', 'ДЕМОНСТРАЦИЯ ЭКРАНА');
+    else if (!hasRemoteVideo && !screenShareTrack) setText('call-overlay-mode', callState.video ? 'ВИДЕОКАНАЛ' : 'ГОЛОСОВОЙ КАНАЛ');
+  }
 }
 
 /**
@@ -893,7 +933,7 @@ function createMicOffIcon() {
 }
 
 function updateCallTile(tile, { nick: nickname, avatar: avatarUrl, stream, isLocal, micOn, camOn }) {
-  const hasVideo = callState.video && camOn && !!stream &&
+  const hasVideo = camOn && !!stream &&
     stream.getVideoTracks().some(t =>
       t.enabled && t.readyState === 'live' && !(t.muted && !isLocal)
     );
@@ -909,7 +949,7 @@ function updateCallTile(tile, { nick: nickname, avatar: avatarUrl, stream, isLoc
 
   /* ── <video> ── */
   let video = tile.querySelector('video');
-  if (stream) {
+  if (hasVideo && stream) {
     if (!video) {
       video = document.createElement('video');
       video.autoplay          = true;
@@ -1192,6 +1232,7 @@ function createPeerConnection(peerId) {
       clearTimeout(callState.ringTimer);
       callState.ringTimer = null;
       sfx.stopRing();
+      clearPeerWait();
       setText('call-overlay-status', 'в звонке');
       startCallTimer();
       if (!peer.dc || peer.dc.readyState !== 'open') sendMediaState(peerId);
@@ -1726,6 +1767,7 @@ socket.on('callPeerJoined', ({ callId, peerId } = {}) => {
   callState.ringTimer = null;
   sfx.stopRing();
   sfx.join();
+  clearPeerWait();
 
   // Старое соединение недействительно — пир пришлёт свежий offer
   if (callState.peers[peerId]) teardownPeer(peerId, { render: false });
@@ -1744,13 +1786,21 @@ socket.on('callPeerLeft', ({ callId, peerId } = {}) => {
   sfx.leave();
 
   if (!callState.isGroup) {
-    showTransientNotice('Собеседник завершил звонок');
-    closeCallOverlay();
+    showTransientNotice(`${name} вышел(а). Ждём 1 минуту…`);
+    startPeerWait();
     return;
   }
   showTransientNotice(`${name} покинул(а) канал`);
+  if (!Object.keys(callState.peers).length) startPeerWait();
+});
+
+socket.on('callPeerReconnecting', ({ callId, peerId } = {}) => {
+  if (!callState.active || callId !== callState.callId || peerId === state.me?.id) return;
   if (!Object.keys(callState.peers).length) {
-    setText('call-overlay-status', 'ожидание участников…');
+    showTransientNotice('Участник отключился. Ждём 1 минуту…');
+    startPeerWait();
+  } else {
+    setText('call-overlay-status', 'участник переподключается…');
   }
 });
 
@@ -1860,7 +1910,7 @@ window.addEventListener('pagehide', () => {
 /* ── Автоскрытие контролов в видео-режиме ───────────────────────────────── */
 function pokeCallIdle() {
   const overlay = $('call-overlay');
-  if (!overlay || !callState.active || !callState.video) return;
+  if (!overlay || !callState.active || !overlay.classList.contains('video-mode')) return;
   if (overlay.classList.contains('detached')) return;
   overlay.classList.remove('idle');
   clearTimeout(idleTimer);
@@ -1903,7 +1953,7 @@ Object.assign(window, {
   setText, setDisplay, showTransientNotice, authFetch, safeJson, on,
   isAnyModalOpen, updateTitleBadge, closeAllModals,
   syncVoiceOverlayPosition, hangupCall, toggleMic, toggleCam,
-  syncCallDetached, returnToCallChat, broadcastMediaState, toggleScreenShare, startScreenShare, stopScreenShare,
+  syncCallDetached, returnToCallChat, broadcastMediaState, toggleScreenShare, startScreenShare, stopScreenShare, renderCallGrid, clearPeerWait,
 });
 
 try {

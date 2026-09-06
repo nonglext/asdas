@@ -162,6 +162,26 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
  await page.emulateMedia({reducedMotion:'reduce'});
  await check('reduced motion disables decorative transitions',async()=>assert.equal(await page.locator('.rail-btn').first().evaluate(el=>getComputedStyle(el).transitionDuration),'0s'));
  await page.emulateMedia({reducedMotion:'no-preference'});
+ await page.evaluate(()=>{
+   callState.active=true;callState.callId='screen-test';callState.isGroup=false;callState.video=false;
+   const local=new MediaStream(), remote=new MediaStream();
+   Object.defineProperty(remote,'getVideoTracks',{value:()=>[{enabled:true,readyState:'live',muted:false}]});
+   Object.defineProperty(remote,'getAudioTracks',{value:()=>[]});
+   callState.localStream=local;
+   callState.peers={bob:{stream:remote,micOn:true,camOn:true}};
+   renderCallGrid();
+ });
+ await check('remote screen share renders for an audio-only viewer',async()=>{
+   assert.equal(await page.locator('#call-overlay').evaluate(el=>el.classList.contains('voice-mode')),false);
+   assert.equal(await page.locator('#call-video-grid .call-tile[data-peer="bob"].audio-only').count(),0);
+   assert.equal(await page.locator('#call-video-grid video').count(),1);
+ });
+ await page.evaluate(()=>{__socket.fire('callPeerLeft',{callId:'screen-test',peerId:'bob'});});
+ await check('leaving peer starts a one-minute wait instead of ending immediately',async()=>{
+   assert.equal(await page.evaluate(()=>callState.active),true);
+   assert.match(await page.locator('#call-overlay-status').textContent(),/ждём участника/);
+ });
+ await page.evaluate(()=>hangupCall());
  await page.setViewportSize({width:1440,height:900});await page.evaluate(()=>{openGroupChat('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');document.activeElement?.blur()});await page.waitForTimeout(200);
  await page.screenshot({path:path.join(screenshotDir,'group-desktop.png')});
  const authPage=await browser.newPage({viewport:{width:390,height:480}});await authPage.goto(origin);await authPage.waitForLoadState('load');await authPage.click('[data-action="0"]');

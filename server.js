@@ -673,6 +673,7 @@ app.use((err, req, res, next) => {
 
 // Calls and socket state are intentionally process-local. No cluster/PM2 workers.
 const calls = new Map(), callsByChat = new Map();
+const CALL_RECONNECT_GRACE_MS = 60_000;
 const pendingEvents = new Map();
 function busyUser(uid, except) {
   for (const c of calls.values()) if (c.callId !== except && (c.participants.has(uid) || (c.type === 'dm' && (c.initiator === uid || c.targetId === uid)))) return true;
@@ -702,8 +703,19 @@ function leaveCall(uid, callId, reason = 'left') {
   clearTimeout(c.grace.get(uid)); c.grace.delete(uid); c.participants.delete(uid); c.peers.delete(uid);
   for (const s of sockets(uid)) { s.leave(`call:${callId}`); s.activeCallKeys?.delete(c.chatKey); }
   io.to(`call:${callId}`).emit('callPeerLeft', { callId, peerId: uid, reason });
-  if (!c.participants.size || c.type === 'dm') endCall(c, reason === 'left' ? 'ended' : reason);
+  if (!c.participants.size) endCall(c, reason === 'left' ? 'ended' : reason);
+  else if (c.type === 'dm') schedulePeerReturn(c, uid);
   else voiceState(c.groupId);
+}
+function schedulePeerReturn(c, uid) {
+  if (c.grace.has(uid)) return;
+  const timer = setTimeout(() => {
+    c.grace.delete(uid);
+    if (calls.get(c.callId) !== c || c.participants.has(uid) || c.peers.has(uid)) return;
+    endCall(c, 'timeout');
+  }, CALL_RECONNECT_GRACE_MS);
+  timer.unref(); c.grace.set(uid, timer);
+  io.to(`call:${c.callId}`).emit('callPeerReconnecting', { callId: c.callId, peerId: uid, graceMs: CALL_RECONNECT_GRACE_MS });
 }
 function scheduleLeave(c, uid) {
   if (c.grace.has(uid)) return;
@@ -712,9 +724,9 @@ function scheduleLeave(c, uid) {
     c.grace.delete(uid);
     if (calls.get(c.callId) !== c || c.peers.has(uid)) return;
     leaveCall(uid, c.callId, 'disconnected');
-  }, 15_000);
+  }, CALL_RECONNECT_GRACE_MS);
   timer.unref(); c.grace.set(uid, timer);
-  io.to(`call:${c.callId}`).emit('callPeerReconnecting', { callId: c.callId, peerId: uid });
+  io.to(`call:${c.callId}`).emit('callPeerReconnecting', { callId: c.callId, peerId: uid, graceMs: CALL_RECONNECT_GRACE_MS });
 }
 function attachCall(socket, c, notify = false) {
   const uid = socket.user.id, oldSid = c.peers.get(uid), already = c.participants.has(uid), recovering = c.grace.has(uid);
