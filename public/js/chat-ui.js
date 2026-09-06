@@ -84,7 +84,7 @@ function buildGroupEl(id) {
 
   renderGroupAv(el.querySelector('.group-av-slot'), g);
   el.onclick = () => openGroupChat(id);
-  el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openGroupChat(id); } };
+  el.onkeydown = e => { if (e.target === el && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openGroupChat(id); } };
   const joinButton = el.querySelector('.group-voice-channel-join');
   if (joinButton) {
     joinButton.onclick = event => {
@@ -207,6 +207,7 @@ async function openChat(id) {
   setDisplay('chat-window', 'flex');
 
   enterMobileChatView('btn-back');
+  refreshComposer(false);
   syncVoiceOverlayPosition();
 
   const box = $('messages');
@@ -392,6 +393,7 @@ async function openGroupChat(groupId) {
   updateGroupVoiceBar(groupId);
 
   enterMobileChatView('btn-back-group');
+  refreshComposer(true);
   syncVoiceOverlayPosition();
 
   const box = $('group-messages');
@@ -1120,10 +1122,8 @@ on('btn-back', 'click', goBackMobile);
 on('btn-back-group', 'click', goBackMobile);
 
 function goBackMobile() {
-  saveComposerDraft();
   state.seq.chat++;
   const prevFriend = state.activeFriend;
-  saveComposerDraft();
   state.seq.groupChat++;
   const prevGroup = state.activeGroup;
   closeActiveChat();
@@ -1155,7 +1155,7 @@ document.addEventListener('keydown', e => {
   // Ctrl/Cmd+K — фокус на поиск
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault();
-    $('search-input')?.focus();
+    if (!isAnyModalOpen()) openQuickSearch();
   }
 });
 
@@ -1212,38 +1212,88 @@ function saveComposerDraft() {
   if (state.activeFriend) composerDrafts.set('dm:' + state.activeFriend, $('msg-input')?.value || '');
   if (state.activeGroup) composerDrafts.set('group:' + state.activeGroup, $('group-msg-input')?.value || '');
 }
-async function sendComposer(group) {
+// Delivery belongs to a conversation, never to a DOM input shared by all DMs.
+function composerKey(group) {
+  const target = group ? state.activeGroup : state.activeFriend;
+  return target ? (group ? 'group:' : 'dm:') + target : null;
+}
+function refreshComposer(group) {
   const input = $(group ? 'group-msg-input' : 'msg-input');
   const button = $(group ? 'btn-group-send' : 'btn-send');
+  const busy = !!retryMessages.get(composerKey(group))?.inFlight;
+  if (input) {
+    delete input.dataset.sending;
+    input.style.height = 'auto';
+    const max = Math.min(216, window.innerHeight * .30);
+    input.style.height = Math.max(54, Math.min(input.scrollHeight, max)) + 'px';
+  }
+  if (button) {
+    button.disabled = busy;
+    if (busy) button.setAttribute('aria-busy', 'true');
+    else button.removeAttribute('aria-busy');
+  }
+}
+for (const group of [false, true]) {
+  on(group ? 'group-msg-input' : 'msg-input', 'input', () => {
+    const key = composerKey(group);
+    if (key) composerDrafts.set(key, $(group ? 'group-msg-input' : 'msg-input').value);
+    refreshComposer(group);
+  });
+}
+window.addEventListener('resize', () => {
+  if (state.activeFriend) refreshComposer(false);
+  if (state.activeGroup) refreshComposer(true);
+});
+function openQuickSearch() {
+  if (!state.me || isAnyModalOpen()) return;
+  if (window.innerWidth <= 640 && (state.activeFriend || state.activeGroup)) goBackMobile();
+  const input = $('search-input');
+  input?.focus();
+  input?.select();
+}
+on('btn-find-friend', 'click', openQuickSearch);
+// Keep the disclosure state correct after mobile backdrop/Escape handling too.
+const membersPanel = $('group-members-panel');
+if (membersPanel) {
+  const syncMembersDisclosure = () => $('btn-toggle-members')?.setAttribute('aria-expanded', String(!membersPanel.classList.contains('hidden')));
+  new MutationObserver(syncMembersDisclosure).observe(membersPanel, { attributes: true, attributeFilter: ['class'] });
+  syncMembersDisclosure();
+}
+async function sendComposer(group) {
+  const input = $(group ? 'group-msg-input' : 'msg-input');
   const target = group ? state.activeGroup : state.activeFriend;
-  if (!input || input.dataset.sending || !target || !state.me) return;
+  if (!input || !target || !state.me) return;
+  const key = (group ? 'group:' : 'dm:') + target;
+  if (retryMessages.get(key)?.inFlight) return;
   const text = input.value.trim(), raw = input.value, userId = state.me.id;
   if (!text) return;
   if (text.length > MAX_MESSAGE_LENGTH) return showTransientNotice('Сообщение не должно превышать 4000 символов');
   if (!socket.connected) return showTransientNotice('Нет соединения. Текст сохранён в поле ввода.');
-  const key = (group ? 'group:' : 'dm:') + target;
   let attempt = retryMessages.get(key);
   if (!attempt || attempt.text !== text) {
     attempt = { text, clientId: crypto.randomUUID() };
     retryMessages.set(key, attempt);
   }
   composerDrafts.set(key, raw);
-  input.dataset.sending = 'true';
-  if (button) { button.disabled = true; button.setAttribute('aria-busy', 'true'); }
+  attempt.inFlight = true;
+  refreshComposer(group);
+  // resetState clears this map. Object identity rejects late replies even if
+  // the same account signs back in before the old request finishes.
+  const ownsAttempt = () => state.me?.id === userId && retryMessages.get(key) === attempt;
   try {
     await socketRequest(group ? 'groupMessage' : 'sendMessage', {
-      ...(group ? { groupId: target } : { toId: target }), ...attempt,
+      ...(group ? { groupId: target } : { toId: target }), text: attempt.text, clientId: attempt.clientId,
     });
-    if (state.me?.id !== userId) return;
+    if (!ownsAttempt()) return;
     retryMessages.delete(key);
     if (composerDrafts.get(key) === raw) composerDrafts.delete(key);
     const current = group ? state.activeGroup : state.activeFriend;
     if (current === target && input.value === raw) input.value = '';
   } catch (e) {
-    if (state.me?.id === userId) showTransientNotice(SEND_MESSAGE_ERRORS[e.reason] || e.message);
+    if (ownsAttempt()) showTransientNotice(SEND_MESSAGE_ERRORS[e.reason] || e.message);
   } finally {
-    delete input.dataset.sending;
-    if (button) { button.disabled = false; button.removeAttribute('aria-busy'); }
+    attempt.inFlight = false;
+    refreshComposer(group);
   }
 }
 

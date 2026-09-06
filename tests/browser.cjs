@@ -130,6 +130,54 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
    assert.equal(await authPage.locator('#app-screen').isVisible(),false);
  });
  await authPage.close();
+ await page.setViewportSize({width:390,height:844});
+ await page.evaluate(()=>openChat('bob'));await page.waitForTimeout(150);
+ await page.keyboard.press('Control+k');
+ await check('mobile quick search reveals and focuses sidebar',async()=>{
+   assert.equal(await page.locator('.sidebar').isVisible(),true);
+   assert.equal(await page.evaluate(()=>document.activeElement.id),'search-input');
+ });
+ await page.setViewportSize({width:1440,height:900});
+ await page.evaluate(()=>{openChat('bob');__response={ok:true};__ackDelay=50});await page.waitForTimeout(150);
+ await page.fill('#msg-input','Первая строка');await page.keyboard.press('End');await page.keyboard.press('Shift+Enter');await page.keyboard.type('Second line');
+ await check('Shift+Enter creates a newline without sending',async()=>{
+   assert.equal(await page.inputValue('#msg-input'),'Первая строка\nSecond line');
+ });
+ await page.evaluate(()=>{__ackDelay=700});
+ await page.click('#btn-send');await page.evaluate(()=>openChat('carol'));await page.waitForTimeout(120);
+ await page.fill('#msg-input','Другому другу');
+ await check('pending delivery does not disable another conversation',async()=>{
+   assert.equal(await page.locator('#btn-send').isDisabled(),false);
+ });
+ await page.click('#btn-send');await page.waitForTimeout(850);
+ await check('independent conversations both receive acknowledgement',async()=>{
+   assert.equal(await page.inputValue('#msg-input'),'');
+   assert.ok(await page.evaluate(()=>__sent.some(x=>x.event==='sendMessage'&&x.payload.toId==='carol'&&x.payload.text==='Другому другу')));
+ });
+ await page.evaluate(()=>{openChat('bob');__ackDelay=300});await page.waitForTimeout(150);
+ await page.fill('#msg-input','Отправляемое');await page.click('#btn-send');await page.fill('#msg-input','Следующий черновик');
+ await page.waitForTimeout(400);
+ await check('typing during acknowledgement preserves the newer draft',async()=>{
+   assert.equal(await page.inputValue('#msg-input'),'Следующий черновик');
+ });
+ await page.evaluate(()=>openEditProfileModal());await page.waitForTimeout(80);
+ const modalFocus=await page.evaluate(()=>document.activeElement.id);
+ await page.keyboard.press('Control+k');
+ await check('quick search does not steal focus from a dialog',async()=>assert.equal(await page.evaluate(()=>document.activeElement.id),modalFocus));
+ await page.keyboard.press('Escape');
+ await page.evaluate(()=>openGroupChat('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'));await page.waitForTimeout(100);
+ await page.click('#btn-toggle-members');
+ await check('members button exposes actual expanded state',async()=>assert.equal(await page.locator('#btn-toggle-members').getAttribute('aria-expanded'),String(!(await page.locator('#group-members-panel').evaluate(el=>el.classList.contains('hidden'))))));
+ await page.evaluate(()=>{__ackDelay=500;openChat('bob')});await page.waitForTimeout(100);
+ await page.fill('#msg-input','Старый сеанс');await page.click('#btn-send');
+ await page.evaluate(()=>{forceLogoutToLogin();state.me={id:'alice',nickname:'Алекс'};composerDrafts.set('dm:bob','Новый сеанс');retryMessages.set('dm:bob',{text:'Новый сеанс',clientId:'new-session'});});
+ await page.waitForTimeout(600);
+ await check('old acknowledgement cannot mutate a new login with the same user ID',async()=>{
+   assert.equal(await page.evaluate(()=>retryMessages.get('dm:bob')?.clientId),'new-session');
+   assert.equal(await page.evaluate(()=>composerDrafts.get('dm:bob')),'Новый сеанс');
+ });
+ await check('no runtime errors in redesign regressions',async()=>assert.deepEqual(errors,[]));
+
  console.log(JSON.stringify({passed:tests.length,tests},null,2));
  }finally{await browser.close();await new Promise(r=>server.close(r))}
 })().catch(e=>{console.error(e);server.close();process.exitCode=1});
