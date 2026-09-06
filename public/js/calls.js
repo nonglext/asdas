@@ -214,6 +214,9 @@ async function startCall({ toId, groupId, video }) {
     showTransientNotice('Нет соединения с сервером');
     return;
   }
+  if (window.__chatappRtc?.configError) {
+    showTransientNotice('TURN не настроен: через VPN звонок может не пройти');
+  }
 
   // Если в группе уже идёт канал — присоединяемся
   if (groupId && state.groupVoiceCalls[groupId]) {
@@ -1077,7 +1080,7 @@ function createPeerConnection(peerId) {
     delete callState.peers[peerId];
   }
 
-  const pc = new RTCPeerConnection(RTC_CONFIG);
+  const pc = new RTCPeerConnection({ ...RTC_CONFIG });
   /** @type {PeerEntry} */
   const peer = {
     pc,

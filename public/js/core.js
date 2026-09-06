@@ -37,7 +37,9 @@ const RTC_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' }
-  ]
+  ],
+  iceTransportPolicy: 'all',
+  iceCandidatePoolSize: 0,
 };
 
 const CROWN_SVG = '<svg class="gm-crown" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><title>Владелец группы</title><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg>';
@@ -781,10 +783,14 @@ function configureRTC() {
       if (!res.ok) throw new Error('ICE config unavailable');
       const config = await res.json();
       if (Array.isArray(config.iceServers) && config.iceServers.length) RTC_CONFIG.iceServers = config.iceServers;
+      if (config.iceTransportPolicy === 'relay' || config.iceTransportPolicy === 'all') RTC_CONFIG.iceTransportPolicy = config.iceTransportPolicy;
+      if (Number.isInteger(config.iceCandidatePoolSize) && config.iceCandidatePoolSize >= 0 && config.iceCandidatePoolSize <= 16) RTC_CONFIG.iceCandidatePoolSize = config.iceCandidatePoolSize;
+      window.__chatappRtc = { relayConfigured: !!config.relayConfigured, policy: RTC_CONFIG.iceTransportPolicy };
     } catch (e) {
       rtcConfigAt = 0;
       if (e instanceof AuthError) throw e;
-      // STUN fallback remains available; no claim that it works through every NAT.
+      // STUN fallback remains available, but a relay is required behind some VPNs.
+      window.__chatappRtc = { relayConfigured: false, policy: RTC_CONFIG.iceTransportPolicy, configError: true };
     }
   })();
   return rtcConfigPromise;

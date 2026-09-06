@@ -435,16 +435,27 @@ route('post', '/api/logout-all', [authenticate], async (req, res) => {
 route('get', '/api/rtc-config', [authenticate], async (req, res) => {
   const iceServers = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
   const urls = (process.env.TURN_URLS || '').split(',').map(s => s.trim()).filter(Boolean);
-  if (urls.length && urls.every(url => /^turns?:[^\s]+$/i.test(url))) {
+  const validTurnUrls = urls.length && urls.every(url => /^turns?:[^\s]+$/i.test(url));
+  const hasCredentials = !!process.env.TURN_SHARED_SECRET || (!!process.env.TURN_USERNAME && !!process.env.TURN_CREDENTIAL);
+  if (validTurnUrls && hasCredentials) {
     if (process.env.TURN_SHARED_SECRET) {
+      // Short-lived credentials keep the TURN secret server-side and work with coturn's use-auth-secret.
       const username = `${Math.floor(Date.now() / 1000) + 3600}:${req.user.id}`;
       const credential = crypto.createHmac('sha1', process.env.TURN_SHARED_SECRET).update(username).digest('base64');
       iceServers.push({ urls, username, credential });
-    } else if (process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
+    } else {
       iceServers.push({ urls, username: process.env.TURN_USERNAME, credential: process.env.TURN_CREDENTIAL });
     }
   }
-  res.json({ iceServers });
+  // VPN/corporate networks often allow only HTTPS-like TCP 443. In relay mode
+  // no host/srflx candidate is used, so the call does not get stuck on a dead UDP path.
+  const relay = process.env.TURN_FORCE_RELAY === 'true' && validTurnUrls && hasCredentials;
+  res.json({
+    iceServers,
+    iceTransportPolicy: relay ? 'relay' : 'all',
+    iceCandidatePoolSize: relay ? 4 : 0,
+    relayConfigured: !!(validTurnUrls && hasCredentials),
+  });
 });
 route('get', '/api/me', [authenticate], async (req, res) => { mediaCookie(res, req.user); res.json(privateUser(req.user)); });
 route('get', '/api/friends', [authenticate], async (req, res) => {
