@@ -1,41 +1,6 @@
-<!DOCTYPE html>
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="dark"><meta name="theme-color" content="#1e1f22"><title>ChatApp</title><script src="/js/runtime-guard.js?v=1.6.0"></script><script src="/js/document-0.js?v=1.6.0"></script><link rel="stylesheet" href="/css/base.css?v=1.6.0"><link rel="stylesheet" href="/css/layout.css?v=1.6.0"><link rel="stylesheet" href="/css/chat.css?v=1.6.0"><link rel="stylesheet" href="/css/calls-responsive.css?v=1.6.0"><link rel="stylesheet" href="/css/style.css?v=1.6.0"><link rel="stylesheet" href="/css/product.css?v=1.6.0"></head><body><noscript>Для работы мессенджера нужен JavaScript.</noscript><div class="screen active" id="auth-screen">
 
-<html lang="ru">
-<head>
-<meta charset="utf-8"/>
-<meta content="width=device-width, initial-scale=1.0, viewport-fit=cover" name="viewport"/>
-<title>ChatApp</title>
-<meta content="#1e1f22" name="theme-color"/>
-<meta content="dark" name="color-scheme"/>
-<meta content="yes" name="mobile-web-app-capable"/>
-<meta content="yes" name="apple-mobile-web-app-capable"/>
-<meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"/>
-<link href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%235865f2'/%3E%3Cpath fill='%23fff' d='M18 14.5a1.5 1.5 0 0 1-1.5 1.5H8.3L5 19V7.5A1.5 1.5 0 0 1 6.5 6h10A1.5 1.5 0 0 1 18 7.5z'/%3E%3C/svg%3E" rel="icon"/>
-<script src="/js/runtime-guard.js?v=1.6.0"></script>
-<script src="/js/document-0.js?v=1.6.0"></script>
-<!-- Порядок важен: base → layout → chat → calls → адаптив/утилиты -->
-<link href="/css/base.css?v=1.6.0" rel="stylesheet"/>
-<link href="/css/layout.css?v=1.6.0" rel="stylesheet"/>
-<link href="/css/chat.css?v=1.6.0" rel="stylesheet"/>
-<link href="/css/calls-responsive.css?v=1.6.0" rel="stylesheet"/>
-<link href="/css/style.css?v=1.6.0" rel="stylesheet"/>
-<link href="/css/refined.css?v=1.6.0" rel="stylesheet"/>
-<link href="/css/discord-reference.css?v=1.6.0" rel="stylesheet"/>
-</head>
-<body>
-<noscript>
-<div style="padding:24px;text-align:center;font-family:system-ui,sans-serif;color:#dbdee1;background:#313338">
-    Для работы ChatApp нужен включённый JavaScript.
-  </div>
-</noscript>
-<!-- ═══════════════════════════════ AUTH ═══════════════════════════════ -->
-<div class="screen active" id="auth-screen">
-<div aria-hidden="true" class="auth-bg">
-<div class="auth-blob b1"></div>
-<div class="auth-blob b2"></div>
-<div class="auth-blob b3"></div>
-</div>
-<aside aria-label="О ChatApp" class="auth-story"><div class="auth-wordmark"><svg aria-hidden="true" fill="currentColor" viewbox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>ChatApp</div><h2>Свои люди.<br/>Своё место.</h2><p>Переписывайтесь, собирайтесь в группы и оставайтесь рядом. Даже на расстоянии.</p><svg aria-hidden="true" class="auth-art" fill="none" viewbox="0 0 320 180"><rect fill="oklch(33% .08 277)" height="116" rx="20" transform="rotate(-5 14 24)" width="246" x="14" y="24"></rect><rect fill="oklch(94% .015 277)" height="116" rx="16" width="246" x="34" y="36"></rect><circle cx="70" cy="70" fill="oklch(65% .18 277)" r="16"></circle><path d="M65 68h2m6 0h2m-10 7q5 4 10 0" stroke="oklch(96% .005 277)" stroke-linecap="round" stroke-width="3"></path><rect fill="oklch(39% .06 277)" height="8" rx="4" width="94" x="98" y="59"></rect><rect fill="oklch(77% .025 277)" height="6" rx="3" width="150" x="98" y="76"></rect><rect fill="oklch(77% .025 277)" height="6" rx="3" width="114" x="98" y="90"></rect><rect fill="oklch(85% .07 155)" height="23" rx="11" width="70" x="54" y="113"></rect><path d="m68 123 4 4 7-8" stroke="oklch(38% .08 155)" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"></path><circle cx="276" cy="126" fill="oklch(77% .15 155)" r="32"></circle><path d="M264 128v-7a12 12 0 0 1 24 0v7m-23-2v9m22-9v9" stroke="oklch(30% .06 155)" stroke-linecap="round" stroke-width="5"></path></svg></aside><div class="auth-box">
+<div class="auth-box">
 <div class="auth-logo">
 <div aria-hidden="true" class="auth-logo-icon">
 <svg fill="currentColor" height="24" viewbox="0 0 24 24" width="24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"></path></svg>
@@ -50,7 +15,7 @@
 <div class="tab-content active" id="tab-login" role="tabpanel">
 <div class="auth-heading">
 <h1 class="auth-title">С возвращением!</h1>
-<p class="auth-sub">Твои люди. Ваши разговоры.</p>
+
 </div>
 <div class="field">
 <label for="login-id">Ваш ID <span aria-hidden="true" class="req">*</span></label>
@@ -98,158 +63,31 @@
 </div>
 <div aria-live="assertive" class="error-msg" id="auth-error" role="alert"></div>
 </div>
-</div>
-<!-- ═══════════════════════════════ APP ═══════════════════════════════ -->
-<div class="screen" id="app-screen"><div class="app-titlebar"><svg aria-hidden="true" fill="currentColor" viewbox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg><span>ChatApp</span></div>
-<aside aria-label="Список бесед" class="sidebar">
-<!-- Рельса слева (как список серверов в Discord) -->
-<nav aria-label="Разделы" class="guild-rail">
-<button aria-label="Личные сообщения" class="rail-btn rail-home" data-action="2" data-rail="dm" title="Личные сообщения" type="button">
-<span aria-hidden="true" class="rail-pill"></span>
-<svg aria-hidden="true" fill="currentColor" height="24" viewbox="0 0 24 24" width="24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"></path></svg>
-</button>
-<div class="rail-divider" role="separator"></div>
-<button aria-label="Группы" class="rail-btn" data-action="3" data-rail="groups" title="Группы" type="button">
-<span aria-hidden="true" class="rail-pill"></span>
-<svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"></path></svg>
-</button>
-<button aria-label="Создать группу" class="rail-btn rail-add" data-action="4" title="Создать группу" type="button">
-<span aria-hidden="true" class="rail-pill"></span>
-<svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="24"><path d="M12 5v14M5 12h14"></path></svg>
-</button>
-</nav>
-<!-- Основная колонка сайдбара -->
-<div class="sidebar-inner">
-<div class="sidebar-top">
-<div class="search-box">
-<svg aria-hidden="true" class="search-icon" fill="none" height="16" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="16"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>
-<input role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-autocomplete="list" aria-controls="search-results" aria-label="Поиск пользователей" autocapitalize="off" autocomplete="off" enterkeyhint="search" id="search-input" placeholder="Найти друга по @ID" spellcheck="false" type="text"/>
-<div aria-label="Результаты поиска" class="search-drop" id="search-results" role="listbox"></div>
-</div>
-<!-- Переключатель Личные / Группы (скрыт визуально, управляется рельсой) -->
-<div class="sidebar-tabs" role="tablist">
-<button class="sidebar-tab active" data-stab="dm" role="tab" type="button">
-<svg aria-hidden="true" fill="none" height="15" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="15"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-            Личные
-          </button>
-<button class="sidebar-tab" data-stab="groups" role="tab" type="button">
-<svg aria-hidden="true" fill="none" height="15" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="15"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"></path></svg>
-            Группы
-          </button>
-<button aria-label="Создать группу" class="sidebar-tab-add" id="btn-create-group" title="Создать группу" type="button">
-<svg aria-hidden="true" fill="none" height="16" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24" width="16"><path d="M12 5v14M5 12h14"></path></svg>
-</button>
-</div>
-</div>
-<div class="sidebar-body">
-<!-- DM панель -->
-<div id="dm-panel">
-<div id="requests-section" style="display:none">
-<div class="section-label">Запросы в друзья <span aria-label="Количество запросов" class="badge" id="req-badge"></span></div>
-<div id="requests-list"></div>
-</div>
-<div class="section-label">Личные сообщения</div>
-<div id="friends-list" role="list"></div>
-</div>
-<!-- Группы панель -->
-<div id="groups-panel" style="display:none">
-<div class="section-label">
-            Мои группы
-            <button aria-label="Создать группу" class="section-add" data-action="5" title="Создать группу" type="button">
-<svg aria-hidden="true" fill="none" height="16" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24" width="16"><path d="M12 5v14M5 12h14"></path></svg>
-</button>
-</div>
-<div id="groups-list" role="list"></div>
-</div>
-</div>
-<!-- Панель пользователя внизу, как в Discord -->
-<div class="sidebar-footer">
-<div aria-label="Мой профиль" class="me-card" id="me-card" role="button" tabindex="0" title="Редактировать профиль">
-<div class="me-avatar-wrap">
-<div aria-hidden="true" class="me-avatar" id="my-avatar"></div>
-</div>
-<div class="me-info">
-<div class="me-nick" id="my-nick">—</div>
-<div class="me-id" id="my-id">—</div>
-</div>
-<button aria-label="Выйти" class="icon-btn logout-btn" data-action="6" id="btn-logout" title="Выйти" type="button">
-<svg aria-hidden="true" fill="none" height="20" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="20"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"></path></svg>
-</button>
-</div>
-</div>
-</div>
-</aside>
-<main class="chat-main">
-<!-- Плейсхолдер -->
-<div class="chat-empty" id="chat-placeholder">
-<div aria-hidden="true" class="chat-empty-icon">
-<svg fill="none" height="64" stroke="currentColor" stroke-width="1.2" viewbox="0 0 24 24" width="64"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"></path></svg>
-</div>
-<div class="chat-empty-title">Твои люди. Твоё место.</div>
-<div class="chat-empty-sub">Выбери друга слева или найди его по @ID. Для общих планов создай группу.</div>
-<div class="empty-actions"><button class="empty-start" id="btn-find-friend" type="button">Найти друзей</button><button class="empty-create" id="btn-empty-create-group" type="button">Создать группу</button></div><p class="empty-shortcut">Быстрый поиск: <kbd>Ctrl / ⌘</kbd> + <kbd>K</kbd></p></div>
-<!-- DM Chat Window -->
-<section aria-label="Личный чат" class="chat-window" id="chat-window" style="display:none">
-<div class="chat-head">
-<button aria-label="Назад к списку" class="icon-btn back-btn" id="btn-back" type="button">
-<svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="24"><path d="M15 18l-6-6 6-6"></path></svg>
-</button>
-<div aria-hidden="true" class="chat-head-avatar" id="chat-avatar"></div>
-<div class="chat-head-info" id="chat-head-click" role="button" tabindex="0" title="Открыть профиль">
-<div class="chat-head-nick" id="chat-nick">—</div>
-<div class="chat-head-status" id="chat-status">офлайн</div>
-</div>
-<div class="chat-head-actions">
-<button aria-label="Аудиозвонок" class="icon-btn" id="btn-call-audio" title="Аудиозвонок" type="button">
-<svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="24"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"></path></svg>
-</button>
-<button aria-label="Видеозвонок" class="icon-btn" id="btn-call-video" title="Видеозвонок" type="button">
-<svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="24"><path d="M23 7l-7 5 7 5V7z"></path><rect height="14" rx="2" ry="2" width="15" x="1" y="5"></rect></svg>
-</button>
-</div>
-</div>
-<div class="dm-voice-bar" id="dm-voice-bar" style="display:none" role="region" aria-label="Голосовой канал">
-<div class="dm-voice-info"><strong>Голосовой канал</strong><span id="dm-voice-status" aria-live="polite"></span></div>
-<button type="button" class="btn-primary" id="btn-rejoin-dm-voice">Вернуться в войс</button>
-</div>
-<div aria-label="Сообщения" class="messages" id="messages" role="log"></div>
-<div class="msg-bar-wrap">
-<div class="msg-bar">
-<textarea aria-label="Текст сообщения" autocomplete="off" enterkeyhint="enter" id="msg-input" maxlength="4000" placeholder="Написать сообщение…" rows="1"></textarea>
-<button aria-label="Прикрепить изображение" class="attach-btn" id="btn-attach-image" title="Прикрепить изображение" type="button"><svg aria-hidden="true" fill="none" height="22" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="22"><path d="M21 15V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14h14"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m3 17 5-5 4 4 3-3 6 6"/></svg></button><input accept="image/jpeg,image/jpg,image/png" aria-label="Выбрать изображение" class="visually-hidden-input" id="msg-image-input" type="file"><button aria-label="Отправить" class="send-btn" id="btn-send" title="Отправить" type="button">
-<svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24"><path d="M22 2L11 13"></path><path d="M22 2L15 22L11 13L2 9L22 2Z"></path></svg>
-</button>
-</div>
-<div aria-live="polite" class="attach-preview" id="msg-attach-preview"></div>
-<div aria-hidden="true" class="composer-hint"><kbd>Enter</kbd> отправить · <kbd>Shift + Enter</kbd> новая строка</div></div>
-</section>
-<!-- Group Chat Window -->
-<section aria-label="Групповой чат" class="chat-window" id="group-chat-window" style="display:none">
-<div class="chat-head">
-<button aria-label="Назад к списку" class="icon-btn back-btn" id="btn-back-group" type="button">
-<svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="24"><path d="M15 18l-6-6 6-6"></path></svg>
-</button>
-<div aria-hidden="true" class="chat-head-avatar group-av" id="group-chat-avatar"></div>
-<div class="chat-head-info" id="group-chat-head-click" role="button" tabindex="0" title="Информация о группе">
-<div class="chat-head-nick" id="group-chat-name">—</div>
-<div class="chat-head-status on" id="group-chat-members-count">0 участников</div>
-</div>
-<div class="chat-head-actions">
-<button aria-label="Групповой аудиозвонок" class="icon-btn" id="btn-group-call-audio" title="Групповой аудиозвонок" type="button">
-<svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="24"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"></path></svg>
-</button>
-<button aria-label="Групповой видеозвонок" class="icon-btn" id="btn-group-call-video" title="Групповой видеозвонок" type="button">
-<svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="24"><path d="M23 7l-7 5 7 5V7z"></path><rect height="14" rx="2" ry="2" width="15" x="1" y="5"></rect></svg>
-</button>
-<button aria-label="Информация о группе" class="icon-btn" id="btn-group-info" title="Информация о группе" type="button">
-<svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="24"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4M12 8h.01"></path></svg>
-</button>
-<button aria-controls="group-members-panel" aria-label="Показать или скрыть участников" class="icon-btn" id="btn-toggle-members" title="Показать/скрыть участников" type="button">
-<svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"></path></svg>
-</button>
-</div>
-</div>
-<div aria-live="polite" class="group-voice-bar" id="group-voice-bar" style="display:none">
+</div><div class="screen" id="app-screen"><aside class="sidebar" aria-label="Список бесед"><div class="sidebar-inner"><div class="sidebar-top">
+<div class="search-box"><input role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-autocomplete="list" aria-controls="search-results" aria-label="Найти или начать беседу по ID" id="search-input" type="text" placeholder="Найти или начать беседу" autocomplete="off" autocapitalize="off" spellcheck="false"><div class="search-drop" id="search-results" role="listbox" aria-label="Результаты поиска"></div></div>
+<nav class="sidebar-tabs" aria-label="Разделы"><button class="sidebar-tab active" data-stab="dm" type="button"><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" ><path d="M19.73 5.02a18.2 18.2 0 0 0-4.51-1.4l-.55 1.12a16.8 16.8 0 0 0-5.34 0l-.56-1.12a18.6 18.6 0 0 0-4.51 1.4C1.4 9.3.62 13.46 1.01 17.57a18.3 18.3 0 0 0 5.53 2.8l1.18-1.91a12 12 0 0 1-1.86-.9l.46-.36a13.2 13.2 0 0 0 11.36 0l.46.36c-.6.35-1.22.66-1.86.9l1.18 1.91a18.2 18.2 0 0 0 5.53-2.8c.46-4.77-.79-8.9-3.26-12.55ZM8.35 14.98c-1.11 0-2.02-1.02-2.02-2.27s.89-2.27 2.02-2.27 2.04 1.03 2.02 2.27c0 1.25-.9 2.27-2.02 2.27Zm7.3 0c-1.12 0-2.02-1.02-2.02-2.27s.89-2.27 2.02-2.27 2.04 1.03 2.02 2.27c0 1.25-.89 2.27-2.02 2.27Z"/></svg><span>Друзья</span></button><button class="sidebar-tab" data-stab="groups" type="button"><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/><circle cx="9" cy="7" r="4"/></svg><span>Группы</span></button></nav></div>
+<div class="sidebar-body"><div id="dm-panel"><div id="requests-section" style="display:none"><div class="section-label">Запросы в друзья <span class="badge" id="req-badge"></span></div><div id="requests-list"></div></div><div class="section-label">Личные сообщения</div><div id="friends-list" role="list"></div></div>
+<div id="groups-panel" style="display:none"><div class="section-label">Группы<button id="btn-create-group" type="button" class="section-add" aria-label="Создать группу" title="Создать группу" ><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M7 12h10"/></svg></button></div><div id="groups-list" role="list"></div></div></div>
+<footer class="sidebar-footer"><button class="me-card" id="me-card" type="button" title="Редактировать профиль" aria-label="Мой профиль"><span class="me-avatar-wrap"><span class="me-avatar" id="my-avatar"></span></span><span class="me-info"><span class="me-nick" id="my-nick"></span><span class="me-id" id="my-id"></span></span></button><div class="user-controls"><button id="btn-user-mic" type="button" class="icon-btn" aria-label="Выключить микрофон" title="Выключить микрофон" aria-pressed="false"><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"/><path class="control-slash" d="m3 3 18 18"/></svg></button><button id="btn-user-deafen" type="button" class="icon-btn" aria-label="Отключить звук" title="Отключить звук" aria-pressed="false"><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14v-3a9 9 0 0 1 18 0v3"/><rect x="3" y="12" width="4" height="9" rx="2"/><rect x="17" y="12" width="4" height="9" rx="2"/><path class="control-slash" d="m3 3 18 18"/></svg></button><button id="btn-logout" type="button" class="icon-btn" aria-label="Выйти" title="Выйти" ><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button></div></footer></div></aside><main class="chat-main"><section id="chat-placeholder" class="friends-page" aria-label="Друзья"><header class="friends-head"><button id="btn-friends-back" type="button" class="icon-btn friends-back" aria-label="Назад к списку" title="Назад к списку" ><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></button><div class="friends-heading"><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" ><path d="M19.73 5.02a18.2 18.2 0 0 0-4.51-1.4l-.55 1.12a16.8 16.8 0 0 0-5.34 0l-.56-1.12a18.6 18.6 0 0 0-4.51 1.4C1.4 9.3.62 13.46 1.01 17.57a18.3 18.3 0 0 0 5.53 2.8l1.18-1.91a12 12 0 0 1-1.86-.9l.46-.36a13.2 13.2 0 0 0 11.36 0l.46.36c-.6.35-1.22.66-1.86.9l1.18 1.91a18.2 18.2 0 0 0 5.53-2.8c.46-4.77-.79-8.9-3.26-12.55ZM8.35 14.98c-1.11 0-2.02-1.02-2.02-2.27s.89-2.27 2.02-2.27 2.04 1.03 2.02 2.27c0 1.25-.9 2.27-2.02 2.27Zm7.3 0c-1.12 0-2.02-1.02-2.02-2.27s.89-2.27 2.02-2.27 2.04 1.03 2.02 2.27c0 1.25-.89 2.27-2.02 2.27Z"/></svg><strong>Друзья</strong></div><span class="head-divider" aria-hidden="true"></span><div class="friends-tabs" role="tablist" aria-label="Фильтр друзей"><button id="friends-tab-online" class="friends-tab active" role="tab" aria-selected="true" aria-controls="friends-directory" data-friends-tab="online" type="button">В сети</button><button id="friends-tab-all" class="friends-tab" role="tab" aria-selected="false" aria-controls="friends-directory" data-friends-tab="all" tabindex="-1" type="button">Все</button><button id="friends-tab-pending" class="friends-tab" role="tab" aria-selected="false" aria-controls="friends-directory" data-friends-tab="pending" tabindex="-1" type="button">Ожидание<span id="pending-count"></span></button><button id="friends-tab-add" class="friends-tab add-friend-tab" role="tab" aria-selected="false" aria-controls="friends-directory" data-friends-tab="add" tabindex="-1" type="button">Добавить друга</button></div></header><div id="friends-directory" class="friends-directory" role="tabpanel" aria-labelledby="friends-tab-online"><div id="friends-add" hidden><h1>Добавить друга</h1><p>Введите ID пользователя, чтобы отправить запрос в друзья.</p><form id="add-friend-form"><label class="sr-only" for="add-friend-id">ID пользователя</label><input id="add-friend-id" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="31" placeholder="Введите @ID"><button class="btn-primary" id="btn-add-by-id" type="submit">Отправить запрос дружбы</button></form><p id="add-friend-feedback" role="status" aria-live="polite"></p></div><div id="friends-results"><h2 id="friends-count" aria-live="polite"></h2><div id="friends-rows" role="list"></div></div></div></section><section class="chat-window" id="chat-window" aria-label="Личный чат" style="display:none">
+<header class="chat-head"><button id="btn-back" type="button" class="icon-btn back-btn" aria-label="Назад к списку" title="Назад к списку" ><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
+<div id="chat-avatar" class="chat-head-avatar" aria-hidden="true"></div><div class="chat-head-info" id="chat-head-click" role="button" tabindex="0" title="Открыть профиль"><div class="chat-head-nick" id="chat-nick"></div><div class="chat-head-status" id="chat-status"></div></div>
+<div class="chat-head-actions"><button id="btn-call-audio" type="button" class="icon-btn" aria-label="Аудиозвонок" title="Аудиозвонок" ><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.58 2.81.7A2 2 0 0 1 22 16.92Z"/></svg></button><button id="btn-call-video" type="button" class="icon-btn" aria-label="Видеозвонок" title="Видеозвонок" ><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2"/><path d="m16 10 6-4v12l-6-4"/></svg></button></div></header><div aria-label="Голосовой канал" class="dm-voice-bar" id="dm-voice-bar" role="region" style="display:none">
+<div class="dm-voice-info"><strong>Голосовой канал</strong><span aria-live="polite" id="dm-voice-status"></span></div>
+<button class="btn-primary" id="btn-rejoin-dm-voice" type="button">Вернуться в войс</button>
+</div><div class="messages" id="messages" role="log" aria-label="Сообщения"></div><div class="msg-bar-wrap"><div class="msg-bar">
+<button id="btn-attach-image" type="button" class="attach-btn" aria-label="Прикрепить изображение" title="Прикрепить изображение" ><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M7 12h10"/></svg></button>
+<textarea id="msg-input" aria-label="Текст сообщения" rows="1" maxlength="4000" placeholder="Написать сообщение…" autocomplete="off"></textarea>
+<div class="composer-tools">
+<button id="btn-image-extra" type="button" class="composer-tool" aria-label="Выбрать изображение" title="Выбрать изображение" ><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m3 17 5-5 4 4 3-3 6 6"/></svg></button>
+<button type="button" class="composer-tool gif-tool" id="btn-gif" title="Прикрепить GIF (отправится как изображение)" aria-label="Прикрепить GIF (отправится как изображение)"><span aria-hidden="true">GIF</span></button>
+<button id="btn-emoji" type="button" class="composer-tool" aria-label="Выбрать эмодзи" title="Выбрать эмодзи" ><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 14s1 3 4 3 4-3 4-3M8 8h.01M16 8h.01"/></svg></button>
+<button id="btn-send" type="button" class="send-btn" aria-label="Отправить" title="Отправить" ><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4 20-7ZM22 2 11 13"/></svg></button>
+</div></div><input type="file" class="visually-hidden-input" id="msg-image-input" accept="image/jpeg,image/png,image/webp,image/gif" aria-label="Выбрать изображение">
+<input type="file" class="visually-hidden-input" id="gif-input" accept="image/gif" aria-label="Выбрать GIF">
+<div class="attach-preview" id="msg-attach-preview" aria-live="polite"></div><div class="composer-hint">Enter · отправить • Shift + Enter · новая строка</div></div></section><section class="chat-window" id="group-chat-window" aria-label="Групповой чат" style="display:none">
+<header class="chat-head"><button id="btn-back-group" type="button" class="icon-btn back-btn" aria-label="Назад к списку" title="Назад к списку" ><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
+<div id="group-chat-avatar" class="chat-head-avatar" aria-hidden="true"></div><div class="chat-head-info" id="group-chat-head-click" role="button" tabindex="0" title="Информация о группе"><div class="chat-head-nick" id="group-chat-name"></div><div class="chat-head-status" id="group-chat-members-count"></div></div>
+<div class="chat-head-actions"><button id="btn-group-call-audio" type="button" class="icon-btn" aria-label="Аудиозвонок" title="Аудиозвонок" ><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.58 2.81.7A2 2 0 0 1 22 16.92Z"/></svg></button><button id="btn-group-call-video" type="button" class="icon-btn" aria-label="Видеозвонок" title="Видеозвонок" ><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="14" height="14" rx="2"/><path d="m16 10 6-4v12l-6-4"/></svg></button><button id="btn-group-info" type="button" class="icon-btn" aria-label="Информация о группе" title="Информация о группе" ><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10h.01"/></svg></button><button id="btn-toggle-members" type="button" class="icon-btn" aria-label="Участники" title="Участники" aria-controls="group-members-panel" aria-expanded="false"><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/><circle cx="9" cy="7" r="4"/></svg></button></div></header><div aria-live="polite" class="group-voice-bar" id="group-voice-bar" style="display:none">
 <div class="group-voice-title">
 <span aria-hidden="true" class="group-voice-dot"></span>
 <b>Голосовой канал</b>
@@ -259,38 +97,24 @@
 <div class="group-voice-actions">
 <button class="group-voice-join" id="btn-join-group-voice" type="button">Присоединиться</button>
 </div>
-</div>
-<div class="group-chat-body">
-<div class="group-chat-left">
-<div aria-label="Сообщения группы" class="messages group-messages" id="group-messages" role="log"></div>
-<div class="msg-bar-wrap">
-<div class="msg-bar">
-<textarea aria-label="Текст сообщения" autocomplete="off" enterkeyhint="enter" id="group-msg-input" maxlength="4000" placeholder="Написать в группу…" rows="1"></textarea><button aria-label="Прикрепить изображение в группу" class="attach-btn" id="btn-group-attach-image" title="Прикрепить изображение в группу" type="button"><svg aria-hidden="true" fill="none" height="22" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="22"><path d="M21 15V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m3 17 5-5 4 4 3-3 6 6"/></svg></button><input accept="image/jpeg,image/jpg,image/png" aria-label="Выбрать изображение" class="visually-hidden-input" id="group-image-input" type="file">
-<button aria-label="Отправить" class="send-btn" id="btn-group-send" title="Отправить" type="button">
-<svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24"><path d="M22 2L11 13"></path><path d="M22 2L15 22L11 13L2 9L22 2Z"></path></svg>
-</button>
-</div>
-<div aria-live="polite" class="attach-preview" id="group-attach-preview"></div>
-<div aria-hidden="true" class="composer-hint"><kbd>Enter</kbd> отправить · <kbd>Shift + Enter</kbd> новая строка</div></div>
-</div>
-<!-- Правая панель участников -->
-<aside aria-label="Участники группы" class="group-members-panel" id="group-members-panel">
+</div><div class="group-chat-body"><div class="group-chat-left"><div class="messages" id="group-messages" role="log" aria-label="Сообщения"></div><div class="msg-bar-wrap"><div class="msg-bar">
+<button id="btn-group-attach-image" type="button" class="attach-btn" aria-label="Прикрепить изображение" title="Прикрепить изображение" ><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M7 12h10"/></svg></button>
+<textarea id="group-msg-input" aria-label="Текст сообщения" rows="1" maxlength="4000" placeholder="Написать сообщение…" autocomplete="off"></textarea>
+<div class="composer-tools">
+<button id="btn-group-image-extra" type="button" class="composer-tool" aria-label="Выбрать изображение" title="Выбрать изображение" ><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m3 17 5-5 4 4 3-3 6 6"/></svg></button>
+<button type="button" class="composer-tool gif-tool" id="btn-group-gif" title="Прикрепить GIF (отправится как изображение)" aria-label="Прикрепить GIF (отправится как изображение)"><span aria-hidden="true">GIF</span></button>
+<button id="btn-group-emoji" type="button" class="composer-tool" aria-label="Выбрать эмодзи" title="Выбрать эмодзи" ><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 14s1 3 4 3 4-3 4-3M8 8h.01M16 8h.01"/></svg></button>
+<button id="btn-group-send" type="button" class="send-btn" aria-label="Отправить" title="Отправить" ><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4 20-7ZM22 2 11 13"/></svg></button>
+</div></div><input type="file" class="visually-hidden-input" id="group-image-input" accept="image/jpeg,image/png,image/webp,image/gif" aria-label="Выбрать изображение">
+<input type="file" class="visually-hidden-input" id="group-gif-input" accept="image/gif" aria-label="Выбрать GIF">
+<div class="attach-preview" id="group-attach-preview" aria-live="polite"></div><div class="composer-hint">Enter · отправить • Shift + Enter · новая строка</div></div></div><aside aria-label="Участники группы" class="group-members-panel" id="group-members-panel">
 <div class="section-label">Участники — <span id="gm-count">0</span></div>
 <div id="group-members-list" role="list"></div>
 <button class="btn-invite" id="btn-invite-group" type="button">
 <svg aria-hidden="true" fill="none" height="20" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="20"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><path d="M20 8v6M23 11h-6"></path></svg>
             Добавить участников
           </button>
-</aside>
-</div>
-</section>
-</main>
-<!-- Щиток под выезжающей панелью участников (мобилка) -->
-<div aria-hidden="true" class="members-backdrop"></div>
-</div>
-<!-- ═══════════════════════════════ MODALS ═══════════════════════════════ -->
-<!-- View Profile -->
-<div aria-labelledby="profile-modal-nick" aria-modal="true" class="modal-overlay" id="profile-modal" role="dialog" style="display:none">
+</aside></div></section></main><div class="members-backdrop" aria-hidden="true"></div></div><div aria-labelledby="profile-modal-nick" aria-modal="true" class="modal-overlay" id="profile-modal" role="dialog" style="display:none">
 <div class="modal-box modal-profile">
 <button aria-label="Закрыть" class="modal-close-btn" data-action="7" type="button">
 <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24" width="18"><path d="M18 6L6 18M6 6l12 12"></path></svg>
@@ -317,7 +141,6 @@
 </div>
 </div>
 </div>
-<!-- Edit Profile -->
 <div aria-labelledby="edit-profile-title" aria-modal="true" class="modal-overlay" id="edit-profile-modal" role="dialog" style="display:none">
 <div class="modal-box">
 <button aria-label="Закрыть" class="modal-close-btn" data-action="8" type="button">
@@ -356,7 +179,6 @@
 </div>
 </div>
 </div>
-<!-- Blocked Users -->
 <div aria-labelledby="blocked-users-title" aria-modal="true" class="modal-overlay" id="blocked-users-modal" role="dialog" style="display:none">
 <div class="modal-box">
 <button aria-label="Закрыть" class="modal-close-btn" data-action="10" type="button">
@@ -366,7 +188,6 @@
 <div class="blocked-users-list" id="blocked-users-list" role="list"></div>
 </div>
 </div>
-<!-- Create Group -->
 <div aria-labelledby="create-group-title" aria-modal="true" class="modal-overlay" id="create-group-modal" role="dialog" style="display:none">
 <div class="modal-box">
 <button aria-label="Закрыть" class="modal-close-btn" data-action="11" type="button">
@@ -394,7 +215,6 @@
 </div>
 </div>
 </div>
-<!-- Group Info -->
 <div aria-labelledby="group-info-name" aria-modal="true" class="modal-overlay" id="group-info-modal" role="dialog" style="display:none">
 <div class="modal-box modal-profile">
 <button aria-label="Закрыть" class="modal-close-btn" data-action="13" type="button">
@@ -417,7 +237,6 @@
 </div>
 </div>
 </div>
-<!-- Add Members -->
 <div aria-labelledby="add-members-title" aria-modal="true" class="modal-overlay" id="add-members-modal" role="dialog" style="display:none">
 <div class="modal-box">
 <button aria-label="Закрыть" class="modal-close-btn" data-action="14" type="button">
@@ -436,7 +255,6 @@
 </div>
 </div>
 </div>
-<!-- Incoming Call -->
 <div aria-describedby="incoming-call-sub" aria-labelledby="incoming-call-nick" aria-modal="true" class="modal-overlay" id="incoming-call-modal" role="alertdialog" style="display:none">
 <div class="modal-box call-incoming-box">
 <div aria-hidden="true" class="call-incoming-avatar" id="incoming-call-avatar"></div>
@@ -452,7 +270,6 @@
 </div>
 </div>
 </div>
-<!-- Active Call Overlay -->
 <div aria-label="Активный звонок" class="call-overlay" id="call-overlay" role="region" style="display:none">
 <div class="call-overlay-top">
 <div class="call-overlay-heading">
@@ -478,24 +295,8 @@
 </button>
 </div>
 </div>
-<!-- Delete Confirm -->
 <div aria-label="Удалить сообщение?" class="delete-confirm-popup" id="delete-confirm" role="alertdialog" style="display:none">
 <span>Удалить сообщение?</span>
 <button class="btn-danger-sm" id="btn-confirm-delete" type="button">Удалить</button>
 <button class="btn-ghost-sm" data-action="16" type="button">Отмена</button>
-</div>
-<!-- ═══════════════════════════ MOBILE NAV GLUE ═══════════════════════════
-     Не требует правок chat-ui.js: следит за открытием чата и прячет сайдбар на ≤640px,
-     закрывает панель участников по тапу на щиток.
-     ═════════════════════════════════════════════════════════════════════════ -->
-<script src="/js/document-1.js?v=1.6.0"></script>
-<script src="/socket.io/socket.io.js"></script>
-
-<script defer="" src="/js/core.js?v=1.6.0"></script>
-<script defer="" src="/js/auth-ui.js?v=1.6.0"></script>
-<script defer="" src="/js/chat-ui.js?v=1.6.0"></script>
-<script defer="" src="/js/calls.js?v=1.6.0"></script>
-<script defer="" src="/js/document-actions.js?v=1.6.0"></script>
-<script defer="" src="/js/accessibility.js?v=1.6.0"></script>
-</body>
-</html>
+</div><div class="ui-tooltip" id="ui-tooltip" role="tooltip" popover="manual" hidden></div><div class="emoji-picker" id="emoji-picker" popover="auto" aria-label="Выбор эмодзи"></div><div class="friend-menu" id="friend-menu" popover="auto" role="menu" aria-label="Действия с другом"></div><script src="/socket.io/socket.io.js"></script><script defer src="/js/core.js?v=1.6.0"></script><script defer src="/js/auth-ui.js?v=1.6.0"></script><script defer src="/js/chat-ui.js?v=1.6.0"></script><script defer src="/js/calls.js?v=1.6.0"></script><script defer src="/js/product-ui.js?v=1.6.0"></script><script defer src="/js/document-actions.js?v=1.6.0"></script><script defer src="/js/accessibility.js?v=1.6.0"></script></body></html>
