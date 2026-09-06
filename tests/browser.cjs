@@ -244,6 +244,17 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
    const joined=await page.evaluate(()=>__sent.find(x=>x.event==='callJoin'&&x.payload.callId==='retained-voice'));
    assert.ok(joined);
  });
+ await page.evaluate(()=>{
+   callState.active=true;callState.callId='manual-leave-test';callState.isGroup=true;callState.groupId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+   callState.localStream={getTracks:()=>[],getAudioTracks:()=>[],getVideoTracks:()=>[]};
+   updateGroupVoiceBar('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+ });
+ await page.evaluate(()=>hangupCall());
+ await check('manual voice exit sends leave and keeps the channel rejoinable',async()=>{
+   assert.ok(await page.evaluate(()=>__sent.some(x=>x.event==='callLeave'&&x.payload.callId==='manual-leave-test')));
+   assert.equal(await page.evaluate(()=>callState.active),false);
+   assert.equal(await page.locator('#btn-join-group-voice').isDisabled(),false);
+ });
  await page.click('#btn-toggle-members');
  await check('members button exposes actual expanded state',async()=>assert.equal(await page.locator('#btn-toggle-members').getAttribute('aria-expanded'),String(!(await page.locator('#group-members-panel').evaluate(el=>el.classList.contains('hidden'))))));
  await page.evaluate(()=>{__ackDelay=500;openChat('bob')});await page.waitForTimeout(100);
