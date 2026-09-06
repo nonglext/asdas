@@ -1,87 +1,117 @@
 
 /* ============================================================================
-   Discord Reference Pass 2
-   Gray-first surfaces, screenshot-inspired proportions, no brand copy.
+   ChatApp reference layout: gray Discord-like shell
+   Visual-only layer. Existing DOM and interactions remain unchanged.
    ========================================================================== */
 :root {
-  --ref-rail: oklch(21% .008 275);
-  --ref-side: oklch(25% .009 275);
-  --ref-chat: oklch(29% .010 275);
-  --ref-chat-high: oklch(32% .011 275);
-  --ref-soft: oklch(35% .012 275);
-  --ref-hover: oklch(34% .013 275);
-  --ref-active: oklch(39% .016 275);
-  --ref-line: oklch(17% .007 275);
-  --ref-text: oklch(93% .006 275);
-  --ref-muted: oklch(73% .010 275);
-  --ref-dim: oklch(63% .012 275);
+  --ref-rail: #1b1c20;
+  --ref-side: #202126;
+  --ref-main: #26272c;
+  --ref-field: #2d2f35;
+  --ref-hover: #30323a;
+  --ref-selected: #424550;
+  --ref-line: #17181b;
+  --ref-text: #f0f1f3;
+  --ref-muted: #b2b5be;
+  --ref-dim: #858995;
+  --ref-purple: #6467f2;
+  --ref-purple-hover: #7477ff;
 }
 
-/* The sample has a narrow chrome strip above the workspace. */
+html, body { background: var(--ref-main); }
 #app-screen { padding-top: 32px; background: var(--ref-rail); }
 .app-titlebar {
-  display:flex; height:32px; background:var(--ref-rail); color:var(--ref-muted);
-  border-bottom:1px solid var(--ref-line); font-size:12px; letter-spacing:.02em;
+  display:flex; height:32px; background:var(--ref-rail); color:var(--ref-text);
+  border-bottom:1px solid var(--ref-line); font-size:12px; font-weight:600;
 }
-.app-titlebar svg { color:var(--ref-muted); }
-.sidebar { background:var(--ref-rail); }
-.guild-rail { background:var(--ref-rail); border-right:1px solid var(--ref-line); }
-.rail-btn { background:var(--ref-side); color:var(--ref-muted); }
-.rail-btn:hover, .rail-btn.active,
+.app-titlebar svg { color:#aeb2ff; }
+
+/* left rail */
+.sidebar { width: calc(58px + 222px); min-width: calc(58px + 222px); background:var(--ref-rail); }
+.guild-rail { width:58px; padding:10px 0; gap:10px; background:var(--ref-rail); border-right:1px solid var(--ref-line); }
+.rail-btn { width:40px; height:40px; border-radius:11px; background:var(--ref-side); color:var(--ref-muted); }
+.rail-btn:hover { transform:none; border-radius:11px; background:var(--ref-hover); color:var(--ref-text); }
+.rail-btn.active,
 .sidebar:has(.sidebar-tab[data-stab="dm"].active) .rail-btn[data-rail="dm"],
 .sidebar:has(.sidebar-tab[data-stab="groups"].active) .rail-btn[data-rail="groups"] {
-  background:var(--discord-brand); color:var(--ref-text);
+  background:var(--ref-purple); color:var(--ref-text); border-radius:11px;
 }
-.rail-add { color:var(--discord-success); background:var(--ref-side); border-color:var(--ref-soft); }
-.sidebar-inner { background:var(--ref-side); }
-.search-box { background:var(--ref-side); border-bottom-color:var(--ref-line); }
-#search-input { background:var(--ref-chat); color:var(--ref-text); }
-#search-input::placeholder { color:var(--ref-dim); }
-.sidebar-body { background:var(--ref-side); }
-.section-label { color:var(--ref-dim); }
-.friend-item { color:var(--ref-muted); }
+.rail-add { color:#69d391; background:transparent; border:1px dashed #555861; }
+.rail-add:hover { background:#338653; color:var(--ref-text); border-color:transparent; }
+.rail-pill { left:-9px; width:4px; border-radius:0 3px 3px 0; background:var(--ref-text); }
+.rail-divider { width:32px; height:1px; margin:0; background:#36383e; }
+
+/* second column */
+.sidebar-inner { background:var(--ref-side); border:0; border-radius:0; }
+.search-box { height:44px; padding:0 9px; background:var(--ref-side); border-bottom:1px solid var(--ref-line); }
+.search-icon { left:20px; width:15px; height:15px; color:var(--ref-dim); }
+#search-input { height:28px; padding-left:29px; border:1px solid #3c3f47; border-radius:5px; background:#1b1c20; color:var(--ref-text); font-size:12px; }
+#search-input::placeholder { color:var(--ref-muted); }
+.sidebar-tabs { display:flex; flex-direction:column; align-items:stretch; gap:2px; padding:10px 8px 4px; }
+.sidebar-tab { min-height:36px; justify-content:flex-start; padding:7px 11px; gap:10px; border-radius:5px; color:var(--ref-muted); font-size:14px; font-weight:600; }
+.sidebar-tab svg { width:17px; height:17px; color:var(--ref-muted); }
+.sidebar-tab:hover { background:var(--ref-hover); color:var(--ref-text); }
+.sidebar-tab.active { background:var(--ref-selected); color:var(--ref-text); }
+.sidebar-tab.active svg { color:var(--ref-text); }
+.sidebar-body { padding:5px 8px 8px; background:var(--ref-side); }
+.section-label { height:31px; padding:15px 8px 4px; color:var(--ref-dim); font-size:10px; letter-spacing:.08em; font-weight:700; }
+.friend-item { min-height:43px; margin:1px 0; padding:4px 8px; gap:9px; border-radius:5px; color:var(--ref-muted); }
 .friend-item:hover { background:var(--ref-hover); color:var(--ref-text); }
-.friend-item.active { background:var(--ref-active); color:var(--ref-text); }
+.friend-item.active { background:var(--ref-selected); color:var(--ref-text); }
 .friend-item.active .f-nick, .friend-item:hover .f-nick { color:var(--ref-text); }
-.f-nick { color:var(--ref-muted); }
-.f-stat, .f-sub { color:var(--ref-dim); }
-.group-voice-channel { background:var(--ref-rail); }
-.sidebar-footer { background:var(--ref-rail); border-top:1px solid var(--ref-line); }
+.f-av { width:30px; height:30px; }
+.f-nick { color:var(--ref-muted); font-size:13px; font-weight:600; }
+.f-stat, .f-sub { color:var(--ref-dim); font-size:11px; }
+.sidebar-footer { height:52px; padding:5px 8px; background:#1b1c20; border-top:1px solid var(--ref-line); }
+.me-card { min-height:42px; padding:3px; border-radius:5px; }
 .me-card:hover { background:var(--ref-hover); }
+.me-avatar-wrap { width:30px; height:30px; }
+.me-nick { font-size:12px; font-weight:700; }
+.me-id { font-size:10px; }
 
-.chat-main, .chat-window, .chat-empty, .group-chat-body { background:var(--ref-chat); }
-.chat-head { background:var(--ref-chat); border-bottom-color:var(--ref-line); }
-.chat-head-nick, .chat-empty-title { color:var(--ref-text); }
-.chat-head-status, .chat-empty-sub { color:var(--ref-muted); }
-.chat-head .icon-btn { color:var(--ref-muted); }
+/* center chat */
+.chat-main, .chat-window, .chat-empty, .group-chat-body, .messages, .group-messages { background:var(--ref-main); }
+.chat-head { height:44px; min-height:44px; padding:0 18px; gap:9px; background:var(--ref-main); border-bottom:1px solid var(--ref-line); box-shadow:none; }
+.chat-head-avatar { width:25px; height:25px; }
+.chat-head-nick { color:var(--ref-text); font-size:14px; font-weight:700; }
+.chat-head-status { color:#4bd07a; font-size:11px; }
+.chat-head-actions { margin-left:auto; gap:1px; }
+.chat-head .icon-btn { width:34px; height:34px; border-radius:4px; color:var(--ref-muted); }
 .chat-head .icon-btn:hover { color:var(--ref-text); background:var(--ref-hover); }
-.messages, .group-messages { background:var(--ref-chat); }
-.g-msg-text { color:var(--ref-text); }
-.g-msg-time, .g-msg-id { color:var(--ref-dim); }
-.msg-bar { background:var(--ref-chat-high); }
-.msg-bar:focus-within { box-shadow:0 0 0 1px var(--ref-soft); }
-#msg-input, #group-msg-input { color:var(--ref-text); }
-#msg-input::placeholder, #group-msg-input::placeholder { color:var(--ref-muted); }
-.group-members-panel { background:var(--ref-side); border-left-color:var(--ref-line); }
+.messages, .group-messages { padding:16px 0 20px; }
+.g-msg { padding:2px 32px 2px 62px; gap:13px; margin-top:14px; }
+.g-msg-av, .g-msg-av-slot { width:34px; height:34px; margin-left:-42px; }
+.g-msg-nick { font-size:14px; font-weight:700; }
+.g-msg-time { font-size:10px; color:var(--ref-dim); }
+.g-msg-text { color:var(--ref-text); font-size:14px; line-height:1.45; }
+.msg-bar-wrap { padding:0 16px 8px; }
+.msg-bar { min-height:46px; padding-left:12px; background:var(--ref-field); border:1px solid #50535c; border-radius:5px; }
+.msg-bar:focus-within { border-color:#686b78; box-shadow:none; }
+#msg-input, #group-msg-input { height:44px; min-height:44px; padding:11px 0; color:var(--ref-text); font-size:14px; }
+#msg-input::placeholder, #group-msg-input::placeholder { color:#8f94a4; }
+.attach-btn, .send-btn { width:36px; height:36px; margin-bottom:4px; color:var(--ref-muted); }
+.attach-btn:hover, .send-btn:hover:not(:disabled) { color:var(--ref-text); background:transparent; }
+.composer-hint { display:block; padding-top:3px; color:var(--ref-dim); font-size:10px; }
+
+/* profile and voice bars */
+.dm-voice-bar, .group-voice-bar { min-height:44px; padding:7px 14px; background:var(--ref-side); border-bottom:1px solid var(--ref-line); }
+.dm-voice-bar button, .group-voice-join { min-height:30px; padding:0 12px; border-radius:4px; font-size:12px; }
+.group-members-panel { background:var(--ref-side); border-left:1px solid var(--ref-line); }
+.gm-section { padding:18px 14px 7px; font-size:10px; letter-spacing:.08em; }
+.gm-item { min-height:40px; margin:1px 7px; padding:3px 7px; }
 .gm-item:hover { background:var(--ref-hover); }
-
-.dm-voice-bar, .group-voice-bar { background:var(--ref-side); border-bottom-color:var(--ref-line); }
-.group-voice-title, .dm-voice-info strong { color:var(--ref-text); }
-.group-voice-count, .dm-voice-info span { color:var(--ref-muted); }
-
-.modal-overlay { background:oklch(12% .006 275 / .78); }
-.modal-box { background:var(--ref-chat); }
-.modal-profile-header { background:var(--ref-chat); }
+.modal-box { background:var(--ref-main); }
+.modal-profile-header { background:var(--ref-main); }
 .modal-profile-body { background:var(--ref-side); }
-
 .call-overlay { background:var(--ref-rail); }
 .call-overlay-top, .call-overlay-controls { background:var(--ref-side); border-color:var(--ref-line); }
-.call-tile { background:var(--ref-chat); border-color:var(--ref-soft); }
+.call-tile { background:var(--ref-main); border-color:#44474f; }
 
-/* Keep the app usable at the compact widths shown in the reference. */
 @media (max-width:640px) {
   #app-screen { padding-top:0; }
   .app-titlebar { display:none; }
-  .sidebar { background:var(--ref-side); }
-  .guild-rail { background:var(--ref-rail); }
+  .sidebar { width:100%; min-width:100%; }
+  .guild-rail { width:52px; }
+  .rail-btn { width:38px; height:38px; }
+  .chat-head { padding:0 9px; }
 }
