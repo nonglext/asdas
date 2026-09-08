@@ -6,6 +6,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const root=path.resolve(__dirname,'../public');
 const screenshotDir=path.resolve(__dirname,'../test-results');fs.mkdirSync(screenshotDir,{recursive:true});
+const PNG=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==','base64');
 const me={id:'alice',nickname:'Алекс',friends:['bob','carol'],friendRequests:[],blockedUsers:[],status:'На связи'};
 const bob={id:'bob',nickname:'Макс',friends:['alice'],friendRequests:[],blockedUsers:[],online:true};
 const carol={...bob,id:'carol',nickname:'Саша'};
@@ -27,12 +28,13 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
  let historyDelay=0, searchDelay=0;
  const messages=Array.from({length:50},(_,i)=>({_id:`00000000-0000-0000-0000-${String(i+1).padStart(12,'0')}`,from:i%2?'alice':'bob',text:i===49?'В 19:00 созвонимся?':`Сообщение ${i+1}`,time:new Date(Date.UTC(2026,8,5,12,i)).toISOString()}));
  await page.route('**/api/**',async route=>{const u=new URL(route.request().url());let data={};
-  if(u.pathname==='/api/upload/avatar')data={success:true,avatar:'/uploads/11111111-1111-1111-1111-111111111111.webp'};
+  if(u.pathname==='/api/upload/avatar'){await page.evaluate(()=>{window.__avatarUploads=(window.__avatarUploads||0)+1});data={success:true,avatar:'/uploads/11111111-1111-1111-1111-111111111111.webp'}}
   else if(u.pathname==='/api/upload/image')data={success:true,url:'/uploads/22222222-2222-2222-2222-222222222222.webp'};
   else if(u.pathname==='/api/login'||u.pathname==='/api/register')data={user:me,token:'test-token'};
   else if(u.pathname==='/api/me')data=me;
   else if(u.pathname==='/api/groups')data=[group];
   else if(u.pathname==='/api/search'){if(searchDelay)await new Promise(r=>setTimeout(r,searchDelay));data=[{id:'david',nickname:'Даня',online:true}]}
+  else if(u.pathname==='/api/profile/update')data={success:true,user:{...me,avatar:'/uploads/11111111-1111-1111-1111-111111111111.webp'}};
   else if(u.pathname.startsWith('/api/profile/'))data=u.pathname.endsWith('bob')?bob:carol;
   else if(u.pathname.endsWith('/messages')||u.pathname.startsWith('/api/messages/')){if(historyDelay)await new Promise(r=>setTimeout(r,historyDelay));data=u.searchParams.has('before')?[{_id:'00000000-0000-0000-0000-000000000000',from:'bob',text:'Самое первое сообщение',time:'2026-09-04T12:00:00.000Z'}]:messages}
   await route.fulfill({json:data});
@@ -46,8 +48,31 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
  await page.evaluate(()=>openEditProfileModal());
  await page.setInputFiles('#avatar-input',{name:'avatar.jpg',mimeType:'image/jpeg',buffer:Buffer.alloc(6*1024*1024,7)});
  await page.waitForTimeout(120);
- await check('JPG avatar over the old 5 MB limit is accepted',async()=>assert.match(await page.locator('#transient-notice').textContent(),/Аватар обновлён/));
- await page.keyboard.press('Escape');
+ await check('choosing an avatar only previews it locally',async()=>{
+  assert.match(await page.locator('#avatar-pending-hint').textContent(),/после нажатия/);
+  assert.equal(await page.evaluate(()=>document.querySelector('#my-avatar img')),null);
+  assert.equal(await page.evaluate(()=>window.__avatarUploads||0),0);
+ });
+ await check('a decodable image shows a local blob preview before saving',async()=>{
+  await page.setInputFiles('#avatar-input',{name:'tiny.png',mimeType:'image/png',buffer:PNG});
+  await page.waitForTimeout(150);
+  assert.match(await page.evaluate(()=>document.querySelector('#edit-avatar img')?.src||''),/^blob:/);
+  assert.equal(await page.evaluate(()=>window.__avatarUploads||0),0);
+ });
+ await check('cancelling the dialog drops the chosen avatar',async()=>{
+  await page.keyboard.press('Escape');await page.waitForTimeout(80);
+  await page.evaluate(()=>openEditProfileModal());await page.waitForTimeout(80);
+  assert.equal(await page.evaluate(()=>document.querySelector('#edit-avatar img')),null);
+  assert.equal(await page.evaluate(()=>window.__avatarUploads||0),0);
+ });
+ await check('Save changes uploads the avatar and applies it everywhere',async()=>{
+  await page.setInputFiles('#avatar-input',{name:'avatar.jpg',mimeType:'image/jpeg',buffer:Buffer.alloc(6*1024*1024,7)});
+  await page.waitForTimeout(120);
+  await page.click('#btn-save-profile');
+  await page.waitForFunction(()=>document.getElementById('edit-profile-modal').style.display==='none');
+  assert.equal(await page.evaluate(()=>window.__avatarUploads),1);
+  assert.match(await page.evaluate(()=>document.querySelector('#my-avatar img')?.src||''),/11111111-1111-1111-1111-111111111111/);
+ });
  await page.evaluate(()=>openChat('bob'));await page.waitForTimeout(100);
  await page.setInputFiles('#msg-image-input',{name:'photo.png',mimeType:'image/png',buffer:Buffer.from('png')});
  await page.waitForSelector('#msg-attach-preview.show');
@@ -61,7 +86,7 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
  await page.evaluate(()=>openEditProfileModal());
  await page.setInputFiles('#avatar-input',{name:'avatar-700kb.jpg',mimeType:'image/jpeg',buffer:Buffer.alloc(700*1024,7)});
  await page.waitForTimeout(120);
- await check('700 KB JPG avatar is not rejected by the client limit',async()=>assert.match(await page.locator('#transient-notice').textContent(),/Аватар обновлён/));
+ await check('700 KB JPG avatar is not rejected by the client limit',async()=>assert.equal(await page.locator('#avatar-pending-hint').isVisible(),true));
  await page.keyboard.press('Escape');
  await page.evaluate(()=>openChat('bob'));await page.waitForTimeout(100);
  await page.evaluate(()=>{

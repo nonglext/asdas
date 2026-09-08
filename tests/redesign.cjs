@@ -49,9 +49,60 @@ test('avatar fallback: a failed image preserves the presence indicator',()=>{
 });
 test('UI: message profile controls support keyboard activation',()=>{const t=read('public/js/chat-ui.js');assert.match(t,/avEl\.tabIndex = 0/);assert.match(t,/nickEl\.tabIndex = 0/);assert.match(t,/nickEl\.addEventListener\('keydown'/)});
 test('UI: IME confirmation does not activate search results',()=>{assert.match(read('public/js/auth-ui.js'),/on\('search-input', 'keydown', e => \{\s*if \(e\.isComposing\) return/)});
-test('UI: release stylesheet preserves offline versus online status colours',()=>{const css=read('public/css/discord-reference.css');assert.match(css,/\.chat-head-status\{color:var\(--text3\)/);assert.match(css,/\.chat-head-status\.on\{color:var\(--text-positive\)/)});
-test('UI: no negative avatar margin; grouped rows share the column',()=>{assert.match(read('public/css/discord-reference.css'),/\.g-msg-av,\.g-msg-av-slot\{[^}]*margin-left:0/)});
-test('UI: obsolete appended redesign is no longer in the compatibility sheet',()=>{assert.doesNotMatch(read('public/css/refined.css'),/Discord Refactor 2\.0/)});
+const theme=read('public/css/theme.css');
+test('UI: theme keeps offline and online status visually distinct',()=>{
+ assert.match(theme,/\.chat-head-status \{[^}]*color: var\(--text3\)/);
+ assert.match(theme,/\.chat-head-status\.on \{[^}]*color: var\(--text-positive\)/);
+});
+test('UI: grouped and regular message rows share one avatar column',()=>{
+ const av=theme.match(/\.g-msg-av \{([^}]*)\}/)[1], slot=theme.match(/\.g-msg-av-slot \{([^}]*)\}/)[1];
+ assert.match(av,/width: 38px/);assert.match(slot,/width: 38px/);
+ assert.doesNotMatch(theme,/\.g-msg-av[^{]*\{[^}]*margin-left: -/);
+});
+test('UI: theme is the only sheet defining the palette',()=>{
+ assert.match(theme,/--accent:/);
+ assert.equal(read('public/css/layout.css').includes('--accent:'),false);
+ assert.equal(read('public/css/chat.css').includes('--accent:'),false);
+});
+test('UI: no coloured side-stripe accents survive on message rows',()=>{
+ assert.match(theme,/\.g-msg\.mention \{[^}]*box-shadow: none/);
+});
+test('security: avatar sources are restricted to uploads, http\(s\) and local previews',()=>{
+ const start=core.indexOf('const UPLOAD_PATH_RE'),end=core.indexOf('function renderAv(');
+ const ctx={BACKEND_URL:'https://chat.example',URL};
+ vm.runInNewContext(core.slice(start,end)+';globalThis.src=avatarSrc;',ctx);
+ assert.equal(ctx.src('/uploads/abc-123.webp'),'https://chat.example/uploads/abc-123.webp');
+ assert.equal(ctx.src('blob:https://chat.example/1234'),'blob:https://chat.example/1234');
+ for(const bad of ['javascript:alert(1)','JaVaScRiPt:alert(1)','data:image/svg+xml,<svg onload=alert(1)>',
+                   'vbscript:msgbox','/etc/passwd','/uploads/../../server.js','https://chat.example/api/me'])
+  assert.equal(ctx.src(bad),'',bad+' must not reach an img src');
+ assert.equal(ctx.src('https://cdn.example/pic.png'),'https://cdn.example/pic.png');
+});
+test('security: the chat welcome block never builds HTML from user text',()=>{
+ const chat=read('public/js/chat-ui.js');
+ const fn=chat.slice(chat.indexOf('function renderChatWelcome('),chat.indexOf('function ensureDateDivider('));
+ assert.doesNotMatch(fn,/innerHTML/);
+ assert.match(fn,/title\.textContent/);
+ assert.match(fn,/subEl\.textContent/);
+ assert.doesNotMatch(chat,/sub: `[^`]*<b>/);
+});
+test('security: voice member avatars are rendered as nodes, not injected into CSS',()=>{
+ const chat=read('public/js/chat-ui.js');
+ assert.doesNotMatch(chat,/style\.backgroundImage/);
+ assert.match(chat,/renderAv\(avatar, nick, member\?\.avatar \|\| null\)/);
+});
+test('profile: choosing an avatar only previews it; upload happens on save',()=>{
+ const chat=read('public/js/chat-ui.js');
+ const change=chat.slice(chat.indexOf("on('avatar-input', 'change'"),chat.indexOf("on('btn-avatar-remove'"));
+ assert.doesNotMatch(change,/authFetch|upload\/avatar/);
+ assert.match(change,/URL\.createObjectURL/);
+ const save=chat.slice(chat.indexOf("on('btn-save-profile', 'click'"));
+ assert.match(save,/if \(pendingAvatar\.file\) nextAvatar = await uploadPendingAvatar\(\)/);
+ assert.match(chat,/function discardPendingAvatar/);
+ assert.match(chat,/revokeObjectURL/);
+ assert.match(read('public/js/core.js'),/window\.discardPendingAvatar\?\.\(\)/);
+ assert.match(read('public/index.html'),/id="avatar-pending-hint"/);
+});
 test('release: all cache-busted local assets match package version',()=>{const version=JSON.parse(read('package.json')).version;const html=read('public/index.html');for(const m of html.matchAll(/(?:href|src)="\/(?:css|js)\/[^"?]+\?v=([^"&]+)/g))assert.equal(m[1],version);assert.ok(read('public/js/app.js').includes(`const VERSION = '${version}'`))});
 test('release: initial search combobox has a declared collapsed state',()=>{assert.match(read('public/index.html'),/role="combobox" aria-expanded="false"/)});
 function modalHarness(){

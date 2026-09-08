@@ -1,8 +1,8 @@
 {
   "name": "chatapp",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "private": true,
-  "description": "Discord-style direct messages and groups, integrated with the existing ChatApp backend",
+  "description": "Discord-inspired chat UI with resilient session storage and accessible conversation controls",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -10,8 +10,7 @@
     "check": "node scripts/check.cjs",
     "test": "node --test test.js tests/voice.cjs tests/audit.cjs tests/redesign.cjs",
     "audit:prod": "npm audit --omit=dev",
-    "test:e2e": "node tests/product-browser.cjs && node tests/product-edge.cjs",
-    "test:e2e:legacy": "node tests/browser.cjs"
+    "test:e2e": "node tests/browser.cjs"
   },
   "engines": {
     "node": ">=24 <25"
@@ -37,7 +36,6 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.10",
-    "playwright": "^1.58.0",
-    "axe-core": "^4.12.1"
+    "playwright": "^1.58.0"
   }
 }
