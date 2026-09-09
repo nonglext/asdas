@@ -4439,6 +4439,11 @@ let shutdownPromise;
 let exitCode = 0;
 
 async function acquireInstanceLock() {
+  if (boolEnv('SKIP_INSTANCE_LOCK', false)) {
+    logger.warn('SKIP_INSTANCE_LOCK=true — instance lock disabled (test mode)');
+    return;
+  }
+
   // Must connect directly to PostgreSQL or a session-pooling proxy.
   // Transaction-mode PgBouncer is not supported for this session lock.
   instanceConnection = new PgClient({
@@ -4450,6 +4455,7 @@ async function acquireInstanceLock() {
     keepAlive: true,
     keepAliveInitialDelayMillis: 10_000
   });
+  ...
 
   instanceConnection.on('error', error => {
     logger.error('Instance lock connection failed', {
