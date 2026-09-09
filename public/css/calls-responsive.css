@@ -1,0 +1,1363 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Calls — fullscreen / voice-mode / detached
+   Использует базовые токены из base.css.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --call-bg: #1e1f22;
+  --call-tile: #2b2d31;
+  --call-tile-2: #383a40;
+  --call-radius: 8px;
+
+  --call-pill: rgba(17, 18, 20, 0.82);
+  --call-ctrl: #2b2d31;
+  --call-ctrl-h: #404249;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Основной оверлей
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.call-overlay {
+  position: fixed;
+  inset: 0;
+
+  /*
+   * Выше обычного интерфейса, но ниже диалогов и уведомлений.
+   * Предполагается размещение оверлея вне родителя с transform/filter.
+   */
+  z-index: calc(var(--z-dropdown, 100) + 100);
+
+  display: flex;
+  flex-direction: column;
+
+  min-width: 0;
+  min-height: 0;
+  max-height: 100vh;
+  max-height: 100dvh;
+
+  overflow: hidden;
+  isolation: isolate;
+  overscroll-behavior: contain;
+
+  background:
+    radial-gradient(
+      ellipse 75% 55% at 50% 0%,
+      rgba(88, 101, 242, 0.1),
+      transparent 75%
+    ),
+    var(--call-bg);
+
+  color: var(--text, #dbdee1);
+  user-select: none;
+}
+
+.call-overlay[hidden] {
+  display: none !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Шапка
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.call-overlay-top {
+  position: relative;
+  z-index: 2;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+
+  min-width: 0;
+  padding:
+    calc(20px + env(safe-area-inset-top, 0px))
+    max(20px, env(safe-area-inset-right, 0px))
+    8px
+    max(20px, env(safe-area-inset-left, 0px));
+
+  background: linear-gradient(
+    to bottom,
+    rgba(17, 18, 20, 0.4),
+    transparent
+  );
+
+  text-align: center;
+
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+
+.call-overlay-heading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+
+  max-width: 100%;
+  padding: 5px 10px;
+
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+
+  color: var(--text2, #b5bac1);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+
+  overflow-wrap: anywhere;
+}
+
+.call-live-dot {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+
+  width: 8px;
+  height: 8px;
+
+  border-radius: 50%;
+  background: var(--dc-green, #23a559);
+}
+
+.call-live-dot::after {
+  content: "";
+
+  position: absolute;
+  inset: -4px;
+
+  border: 2px solid var(--dc-green, #23a559);
+  border-radius: inherit;
+
+  pointer-events: none;
+  animation: call-live-ring 2s ease-out infinite;
+}
+
+@keyframes call-live-ring {
+  0% {
+    transform: scale(0.65);
+    opacity: 0.55;
+  }
+
+  100% {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+}
+
+.call-overlay-title {
+  max-width: 100%;
+  margin-top: 8px;
+
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  color: var(--text-h, #f2f3f5);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.call-overlay-status {
+  max-width: 100%;
+  margin-top: 4px;
+
+  color: var(--text3, #949ba4);
+  font-size: 13px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+
+  overflow-wrap: anywhere;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Сетка участников
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.call-video-grid {
+  display: grid;
+  flex: 1 1 0;
+
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(min(100%, 300px), 1fr)
+  );
+  grid-auto-rows: max-content;
+
+  /*
+   * safe center сохраняет центрирование, но не выталкивает
+   * верхние строки за доступную область при переполнении.
+   */
+  align-content: start;
+  align-content: safe center;
+  justify-content: center;
+  align-items: center;
+
+  gap: 12px;
+
+  width: 100%;
+  max-width: 1440px;
+  min-width: 0;
+  min-height: 0;
+  margin: 0 auto;
+
+  padding:
+    12px
+    max(16px, env(safe-area-inset-right, 0px))
+    12px
+    max(16px, env(safe-area-inset-left, 0px));
+
+  overflow: auto;
+  overscroll-behavior: contain;
+  scroll-padding: 12px;
+}
+
+/* Один участник — крупный тайл. */
+.call-overlay:not(.voice-mode):not(.detached)
+  .call-video-grid:has(> .call-tile:only-child) {
+  grid-template-columns: minmax(0, 960px);
+}
+
+/* Два участника — рядом на широком экране. */
+.call-overlay:not(.voice-mode):not(.detached)
+  .call-video-grid:has(> .call-tile:nth-child(2):last-child) {
+  grid-template-columns: repeat(2, minmax(0, 640px));
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Тайл участника
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.call-tile {
+  position: relative;
+  isolation: isolate;
+  container-type: inline-size;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 100%;
+  min-width: 0;
+  min-height: 140px;
+  aspect-ratio: 16 / 9;
+
+  overflow: hidden;
+
+  border-radius: var(--call-radius);
+  background:
+    radial-gradient(
+      ellipse at 50% 30%,
+      var(--call-tile-2),
+      var(--call-tile) 80%
+    );
+
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+/*
+ * Отдельный верхний слой рамки.
+ * Inset box-shadow самого контейнера мог перекрываться видео.
+ */
+.call-tile::before {
+  content: "";
+
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+
+  border: 2px solid transparent;
+  border-radius: inherit;
+
+  pointer-events: none;
+
+  transition: border-color 0.15s ease;
+}
+
+.call-tile.speaking::before {
+  border-color: var(--dc-green, #23a559);
+}
+
+.call-tile video {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+
+  display: block;
+  width: 100%;
+  height: 100%;
+
+  border-radius: inherit;
+  background: #000;
+  object-fit: cover;
+}
+
+/* Сохраняет существующее поведение локальной камеры. */
+.call-tile.local video {
+  transform: scaleX(-1);
+}
+
+.call-tile.audio-only video {
+  display: none;
+}
+
+/* Затемнение под подписями поверх видео. */
+.call-tile:not(.audio-only)::after {
+  content: "";
+
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 1;
+
+  height: 42%;
+
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.65),
+    transparent
+  );
+
+  pointer-events: none;
+}
+
+/* ── Аватар ── */
+
+.call-tile-avatar {
+  position: relative;
+  z-index: 1;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+
+  /* Fallback для браузеров без container query units. */
+  width: 80px;
+  height: 80px;
+  font-size: 28px;
+
+  width: clamp(64px, 18cqw, 96px);
+  height: clamp(64px, 18cqw, 96px);
+  font-size: clamp(22px, 5cqw, 32px);
+
+  border-radius: 50%;
+  background: var(
+    --neutral-avatar-gradient,
+    linear-gradient(135deg, #5865f2, #4752c4)
+  );
+
+  color: #fff;
+  font-weight: 600;
+  line-height: 1;
+  text-align: center;
+  overflow-wrap: anywhere;
+
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+
+  transition:
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.call-tile-avatar img {
+  position: absolute;
+  inset: 0;
+
+  width: 100%;
+  height: 100%;
+
+  border-radius: inherit;
+  object-fit: cover;
+}
+
+.call-tile.speaking .call-tile-avatar {
+  box-shadow:
+    0 0 0 3px var(--dc-green, #23a559),
+    0 6px 20px rgba(0, 0, 0, 0.28);
+
+  transform: scale(1.025);
+}
+
+.call-tile:not(.audio-only) .call-tile-avatar {
+  display: none;
+}
+
+/* ── Имя участника ── */
+
+.call-tile-nick {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 2;
+
+  /*
+   * Блочный формат позволяет text-overflow работать
+   * и с обычным текстовым узлом, без дополнительной HTML-обёртки.
+   */
+  display: block;
+
+  max-width: calc(100% - 56px);
+  min-width: 0;
+  padding: 5px 8px;
+
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  border-radius: 4px;
+  background: var(--call-pill);
+  color: #fff;
+
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.call-tile.local .call-tile-nick::after {
+  content: "вы";
+
+  display: inline;
+  margin-left: 6px;
+
+  color: #b5bac1;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+/* ── Выключенный микрофон ── */
+
+.call-tile-mic-off {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 2;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 28px;
+  height: 28px;
+
+  border-radius: 4px;
+  background: var(--call-pill);
+  color: var(--text-danger, #fa777c);
+}
+
+.call-tile-mic-off svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Панель управления
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.call-overlay-controls {
+  position: relative;
+  z-index: 4;
+
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  min-width: 0;
+  margin:
+    8px
+    auto
+    calc(20px + env(safe-area-inset-bottom, 0px));
+  padding: 10px 12px;
+
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 30px;
+
+  background: rgba(17, 18, 20, 0.96);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+
+.call-overlay-controls .call-round-btn {
+  position: relative;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+
+  width: 48px;
+  height: 48px;
+  padding: 0;
+
+  border: 0;
+  border-radius: 50%;
+
+  background: var(--call-ctrl);
+  color: #fff;
+
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    opacity 0.15s ease,
+    transform 0.12s ease;
+}
+
+.call-overlay-controls .call-round-btn svg {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+
+  pointer-events: none;
+}
+
+.call-overlay-controls .call-round-btn:focus-visible {
+  outline: 2px solid var(--focus, #00a8fc);
+  outline-offset: 3px;
+}
+
+/* Выключенный микрофон / камера. */
+.call-overlay-controls .call-round-btn.active-off {
+  background: #f2f3f5;
+  color: #1e1f22;
+}
+
+/* Завершение звонка. */
+.call-overlay-controls .call-round-btn.call-decline {
+  width: 68px;
+  margin-left: 4px;
+
+  border-radius: 999px;
+  background: var(--dc-red, #da373c);
+  color: #fff;
+}
+
+@media (hover: hover) {
+  .call-overlay-controls
+    .call-round-btn:where(:not(:disabled):not([aria-disabled="true"])):hover {
+    background: var(--call-ctrl-h);
+  }
+
+  .call-overlay-controls
+    .call-round-btn.active-off:where(:not(:disabled):not([aria-disabled="true"])):hover {
+    background: #dbdee1;
+  }
+
+  .call-overlay-controls
+    .call-round-btn.call-decline:where(:not(:disabled):not([aria-disabled="true"])):hover {
+    background: var(--dc-red-h, #a12828);
+  }
+}
+
+.call-overlay-controls
+  .call-round-btn:where(:not(:disabled):not([aria-disabled="true"])):active {
+  transform: scale(0.96);
+}
+
+.call-overlay-controls
+  .call-round-btn:is(:disabled, [aria-disabled="true"]) {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Размытие — улучшение поверх непрозрачного fallback. */
+@supports (
+  (backdrop-filter: blur(8px)) or
+  (-webkit-backdrop-filter: blur(8px))
+) {
+  .call-tile-nick,
+  .call-tile-mic-off {
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+  }
+
+  .call-overlay-controls {
+    background: rgba(17, 18, 20, 0.88);
+
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
+}
+
+/* ── Автоскрытие ── */
+
+/*
+ * Только устройства с точным указателем.
+ * При фокусе внутри оверлея управление не скрывается.
+ * На сенсорных устройствах контролы остаются видимыми.
+ */
+@media (hover: hover) and (pointer: fine) {
+  .call-overlay.idle:not(.voice-mode):not(.detached):not(:focus-within)
+    .call-overlay-top {
+    opacity: 0;
+    transform: translateY(-8px);
+    pointer-events: none;
+  }
+
+  .call-overlay.idle:not(.voice-mode):not(.detached):not(:focus-within)
+    .call-overlay-controls {
+    opacity: 0;
+    transform: translateY(8px);
+    pointer-events: none;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Voice mode — компактная полоса над чатом
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.call-overlay.voice-mode {
+  top: var(--call-top, var(--header-h, 48px));
+  right: 0;
+  bottom: auto;
+  left: var(
+    --call-left,
+    calc(var(--rail-w, 72px) + var(--sidebar-w, 240px))
+  );
+
+  width: auto;
+  height: 208px;
+  max-height: calc(
+    100vh - var(--call-top, var(--header-h, 48px))
+  );
+  max-height: calc(
+    100dvh - var(--call-top, var(--header-h, 48px))
+  );
+
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+
+  background:
+    radial-gradient(
+      ellipse 80% 100% at 50% 0%,
+      rgba(88, 101, 242, 0.08),
+      transparent 75%
+    ),
+    var(--call-bg);
+
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+}
+
+.call-overlay.voice-mode .call-overlay-top {
+  display: none;
+}
+
+.call-overlay.voice-mode .call-video-grid {
+  /*
+   * Один горизонтальный ряд вместо скрытых дополнительных строк.
+   * Все участники доступны прокруткой.
+   */
+  grid-template-columns: none;
+  grid-template-rows: 80px;
+  grid-auto-flow: column;
+  grid-auto-columns: 80px;
+  grid-auto-rows: 80px;
+
+  align-content: start;
+  align-items: center;
+  justify-content: start;
+  justify-content: safe center;
+
+  gap: 24px;
+
+  max-width: 100%;
+  padding: 16px 24px 30px;
+
+  overflow: auto;
+  scroll-padding: 24px;
+}
+
+.call-overlay.voice-mode .call-tile {
+  container-type: normal;
+
+  width: 80px;
+  height: 80px;
+  min-height: 80px;
+  aspect-ratio: 1;
+
+  overflow: visible;
+
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+}
+
+.call-overlay.voice-mode .call-tile video,
+.call-overlay.voice-mode .call-tile::after {
+  display: none;
+}
+
+.call-overlay.voice-mode .call-tile-avatar {
+  display: flex;
+
+  width: 72px;
+  height: 72px;
+
+  font-size: 24px;
+
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  transform: none;
+}
+
+/* Кольцо речи без постоянного пульсирования и тяжёлого свечения. */
+.call-overlay.voice-mode .call-tile::before {
+  inset: 0;
+  z-index: 2;
+
+  border: 3px solid var(--dc-green, #23a559);
+  border-radius: 50%;
+
+  opacity: 0;
+  transform: scale(0.94);
+
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
+}
+
+.call-overlay.voice-mode .call-tile.speaking::before {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.call-overlay.voice-mode .call-tile.speaking .call-tile-avatar {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  transform: none;
+}
+
+.call-overlay.voice-mode .call-tile-nick {
+  left: 50%;
+  bottom: -23px;
+  z-index: 4;
+
+  width: max-content;
+  max-width: 100px;
+  padding: 2px 6px;
+
+  border-radius: 4px;
+  background: rgba(17, 18, 20, 0.9);
+
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+
+  transform: translateX(-50%);
+
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.call-overlay.voice-mode .call-tile.local .call-tile-nick::after {
+  display: none;
+}
+
+.call-overlay.voice-mode .call-tile-mic-off {
+  right: -1px;
+  bottom: -1px;
+  z-index: 4;
+
+  box-sizing: content-box;
+  width: 16px;
+  height: 16px;
+
+  border: 3px solid var(--call-bg);
+  border-radius: 50%;
+
+  background: var(--dc-red, #da373c);
+  color: #fff;
+
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.call-overlay.voice-mode .call-tile-mic-off svg {
+  width: 10px;
+  height: 10px;
+}
+
+/*
+ * Панель находится в потоке, а не поверх сетки.
+ * Это исключает перекрытие участников и подписей.
+ */
+.call-overlay.voice-mode .call-overlay-controls {
+  position: relative;
+  inset: auto;
+
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  gap: 6px;
+
+  max-width: calc(100% - 24px);
+  margin: 0 auto 12px;
+  padding: 6px 8px;
+
+  overflow-x: auto;
+  overscroll-behavior: contain;
+
+  border-radius: 26px;
+  background: #232428;
+  box-shadow: none;
+
+  transform: none;
+
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.call-overlay.voice-mode .call-overlay-controls .call-round-btn {
+  width: 38px;
+  height: 38px;
+}
+
+.call-overlay.voice-mode .call-overlay-controls .call-round-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.call-overlay.voice-mode
+  .call-overlay-controls
+  .call-round-btn.call-decline {
+  width: 52px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Адаптив: fullscreen и voice mode
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 640px) {
+  .call-overlay-top {
+    padding-top: calc(14px + env(safe-area-inset-top, 0px));
+    padding-bottom: 6px;
+  }
+
+  .call-overlay-title {
+    font-size: 18px;
+  }
+
+  .call-overlay-status {
+    font-size: 12px;
+  }
+
+  .call-video-grid {
+    gap: 8px;
+
+    padding:
+      8px
+      max(10px, env(safe-area-inset-right, 0px))
+      8px
+      max(10px, env(safe-area-inset-left, 0px));
+  }
+
+  .call-overlay:not(.voice-mode):not(.detached)
+    .call-video-grid:has(> .call-tile:nth-child(2):last-child) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .call-tile {
+    min-height: 120px;
+  }
+
+  .call-tile-nick {
+    left: 8px;
+    bottom: 8px;
+
+    max-width: calc(100% - 52px);
+    font-size: 12px;
+  }
+
+  .call-tile-mic-off {
+    right: 8px;
+    bottom: 8px;
+  }
+
+  .call-overlay-controls {
+    gap: 8px;
+    padding: 8px 10px;
+    margin-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .call-overlay-controls .call-round-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .call-overlay-controls .call-round-btn.call-decline {
+    width: 60px;
+  }
+
+  .call-overlay.voice-mode {
+    top: var(--call-top, var(--header-h, 48px));
+    right: 0;
+    left: 0;
+
+    width: auto;
+    height: 184px;
+  }
+
+  .call-overlay.voice-mode .call-video-grid {
+    grid-template-rows: 56px;
+    grid-auto-columns: 56px;
+    grid-auto-rows: 56px;
+
+    gap: 24px;
+    padding: 14px 20px 30px;
+
+    scroll-padding: 20px;
+  }
+
+  .call-overlay.voice-mode .call-tile {
+    width: 56px;
+    height: 56px;
+    min-height: 56px;
+  }
+
+  .call-overlay.voice-mode .call-tile-avatar {
+    width: 50px;
+    height: 50px;
+    font-size: 18px;
+  }
+
+  .call-overlay.voice-mode .call-tile-nick {
+    bottom: -22px;
+
+    max-width: 76px;
+    padding: 2px 4px;
+
+    font-size: 11px;
+  }
+
+  .call-overlay.voice-mode .call-overlay-controls {
+    margin-bottom: 10px;
+    padding: 5px 6px;
+    gap: 5px;
+  }
+
+  .call-overlay.voice-mode .call-overlay-controls .call-round-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .call-overlay.voice-mode
+    .call-overlay-controls
+    .call-round-btn.call-decline {
+    width: 52px;
+  }
+}
+
+/* Низкие окна / горизонтальный телефон. */
+@media (max-height: 500px) {
+  .call-overlay:not(.voice-mode):not(.detached) .call-overlay-top {
+    padding-top: calc(8px + env(safe-area-inset-top, 0px));
+    padding-bottom: 4px;
+  }
+
+  .call-overlay:not(.voice-mode):not(.detached) .call-overlay-heading {
+    padding: 2px 8px;
+    font-size: 10px;
+    line-height: 14px;
+  }
+
+  .call-overlay:not(.voice-mode):not(.detached) .call-overlay-title {
+    margin-top: 4px;
+    font-size: 16px;
+  }
+
+  .call-overlay:not(.voice-mode):not(.detached) .call-overlay-status {
+    margin-top: 2px;
+    font-size: 12px;
+  }
+
+  .call-overlay:not(.voice-mode):not(.detached) .call-video-grid {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  .call-overlay:not(.voice-mode):not(.detached) .call-overlay-controls {
+    margin-top: 4px;
+    margin-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    padding: 6px 8px;
+  }
+
+  .call-overlay:not(.voice-mode):not(.detached)
+    .call-overlay-controls
+    .call-round-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .call-overlay:not(.voice-mode):not(.detached)
+    .call-overlay-controls
+    .call-round-btn.call-decline {
+    width: 56px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Detached — подключение при открытом другом чате
+   Правила идут после voice-mode и его адаптива намеренно.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.call-overlay.detached {
+  inset: auto;
+
+  top: auto;
+  right: auto;
+  bottom: var(--user-panel-h, 52px);
+  left: var(--rail-w, 72px);
+
+  z-index: calc(var(--z-dropdown, 100) + 10);
+
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+
+  width: var(--sidebar-w, 240px);
+  max-width: calc(100vw - var(--rail-w, 72px));
+  height: auto;
+
+  max-height: calc(100vh - var(--user-panel-h, 52px));
+  max-height: calc(100dvh - var(--user-panel-h, 52px));
+
+  padding: 8px;
+  overflow: auto;
+
+  border: 0;
+  border-top: 1px solid var(--divider, #3f4147);
+  border-radius: 0;
+
+  background: var(--panel-user, #232428);
+  box-shadow: none;
+
+  /* Сохраняется существующее поведение клика по карточке. */
+  cursor: pointer;
+}
+
+/* ── Шапка карточки ── */
+
+.call-overlay.detached .call-overlay-top {
+  position: relative;
+
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  justify-items: start;
+
+  min-width: 0;
+  padding: 2px 4px 8px;
+
+  background: none;
+
+  text-align: left;
+
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.call-overlay.detached .call-overlay-heading {
+  justify-content: flex-start;
+  gap: 7px;
+
+  max-width: 100%;
+  padding: 0;
+
+  border: 0;
+  border-radius: 0;
+  background: none;
+
+  color: var(--text-positive, #2dc770);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 18px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.call-overlay.detached .call-live-dot {
+  width: 7px;
+  height: 7px;
+}
+
+/* В компактной карточке постоянная пульсация не нужна. */
+.call-overlay.detached .call-live-dot::after {
+  display: none;
+}
+
+.call-overlay.detached .call-overlay-title {
+  width: 100%;
+  max-width: 100%;
+  margin-top: 3px;
+
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  color: var(--text2, #b5bac1);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.call-overlay.detached .call-overlay-status {
+  margin-top: 2px;
+
+  color: var(--text3, #949ba4);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+@media (hover: hover) {
+  .call-overlay.detached .call-overlay-title:hover {
+    color: var(--text, #dbdee1);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+}
+
+.call-overlay.detached .call-video-grid {
+  display: none;
+}
+
+/* ── Компактные контролы ── */
+
+.call-overlay.detached .call-overlay-controls {
+  position: static;
+  inset: auto;
+
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 2px;
+
+  overflow: visible;
+
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  cursor: default;
+
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.call-overlay.detached .call-overlay-controls .call-round-btn {
+  width: 32px;
+  height: 32px;
+
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text2, #b5bac1);
+}
+
+.call-overlay.detached .call-overlay-controls .call-round-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.call-overlay.detached .call-overlay-controls .call-round-btn.active-off {
+  background: transparent;
+  color: var(--text2, #b5bac1);
+}
+
+/* Косая черта выключенного микрофона / камеры. */
+.call-overlay.detached
+  .call-overlay-controls
+  .call-round-btn.active-off::after {
+  content: "";
+
+  position: absolute;
+  top: 50%;
+  left: 50%;
+
+  width: 2px;
+  height: 24px;
+
+  border-radius: 1px;
+  background: var(--text-danger, #fa777c);
+
+  transform: translate(-50%, -50%) rotate(45deg);
+
+  pointer-events: none;
+}
+
+.call-overlay.detached
+  .call-overlay-controls
+  .call-round-btn.call-decline {
+  width: 32px;
+  margin-left: 4px;
+
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text2, #b5bac1);
+}
+
+@media (hover: hover) {
+  .call-overlay.detached
+    .call-overlay-controls
+    .call-round-btn:where(:not(:disabled):not([aria-disabled="true"])):hover {
+    background: var(--hover, rgba(78, 80, 88, 0.3));
+    color: var(--text, #dbdee1);
+  }
+
+  .call-overlay.detached
+    .call-overlay-controls
+    .call-round-btn.active-off:where(:not(:disabled):not([aria-disabled="true"])):hover {
+    background: var(--hover, rgba(78, 80, 88, 0.3));
+    color: var(--text, #dbdee1);
+  }
+
+  .call-overlay.detached
+    .call-overlay-controls
+    .call-round-btn.call-decline:where(:not(:disabled):not([aria-disabled="true"])):hover {
+    background: var(--red-bg2, rgba(242, 63, 67, 0.24));
+    color: var(--text-danger, #fa777c);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Detached на мобильном экране
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 640px) {
+  .call-overlay.detached {
+    top: auto;
+    right: max(8px, env(safe-area-inset-right, 0px));
+    bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    left: max(8px, env(safe-area-inset-left, 0px));
+
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+
+    width: auto;
+    max-width: none;
+    height: auto;
+
+    max-height: calc(
+      100vh - 16px - env(safe-area-inset-bottom, 0px)
+    );
+    max-height: calc(
+      100dvh - 16px - env(safe-area-inset-bottom, 0px)
+    );
+
+    padding: 10px 8px 10px 12px;
+
+    border: 1px solid var(--divider, #3f4147);
+    border-radius: 8px;
+
+    box-shadow:
+      0 4px 16px rgba(0, 0, 0, 0.24),
+      0 1px 3px rgba(0, 0, 0, 0.16);
+  }
+
+  .call-overlay.detached .call-overlay-top {
+    flex: 1 1 140px;
+
+    min-width: 0;
+    padding: 0;
+  }
+
+  .call-overlay.detached .call-overlay-heading {
+    font-size: 13px;
+    line-height: 18px;
+  }
+
+  .call-overlay.detached .call-overlay-status {
+    display: none;
+  }
+
+  .call-overlay.detached .call-overlay-controls {
+    flex: 0 1 auto;
+
+    width: auto;
+    max-width: 100%;
+    gap: 4px;
+  }
+
+  .call-overlay.detached .call-overlay-controls .call-round-btn,
+  .call-overlay.detached
+    .call-overlay-controls
+    .call-round-btn.call-decline {
+    width: 36px;
+    height: 36px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Сенсорное управление
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (pointer: coarse) {
+  .call-overlay.voice-mode .call-overlay-controls .call-round-btn,
+  .call-overlay.detached .call-overlay-controls .call-round-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .call-overlay.voice-mode
+    .call-overlay-controls
+    .call-round-btn.call-decline {
+    width: 56px;
+  }
+
+  .call-overlay.detached
+    .call-overlay-controls
+    .call-round-btn.call-decline {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Уменьшение движения
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  .call-overlay,
+  .call-overlay *,
+  .call-overlay::before,
+  .call-overlay::after,
+  .call-overlay *::before,
+  .call-overlay *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+
+  .call-live-dot::after {
+    display: none;
+  }
+
+  .call-tile.speaking .call-tile-avatar,
+  .call-overlay-controls
+    .call-round-btn:where(:not(:disabled):not([aria-disabled="true"])):active {
+    transform: none;
+  }
+}
