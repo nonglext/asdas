@@ -4455,7 +4455,6 @@ async function acquireInstanceLock() {
     keepAlive: true,
     keepAliveInitialDelayMillis: 10_000
   });
-  ...
 
   instanceConnection.on('error', error => {
     logger.error('Instance lock connection failed', {
