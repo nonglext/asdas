@@ -1,436 +1,1021 @@
 /* ============================================================================
- * CALLS (WebRTC: DM 1:1 + Group mesh)
- * ============================================================================
- * Изменения v2:
- *  - Исправлен race condition: callStarting сбрасывается во всех ветках
- *  - createPeerConnection проверяет состояние существующего pc
- *  - offerToParticipants дедуплицирует участников (уже было, улучшена читаемость)
- *  - XSS: innerHTML заменён на безопасное создание SVG-элементов
- *  - cssEsc fallback усилен
- *  - speakingMonitors инициализируется явно
- *  - Все публичные обработчики сокета валидируют типы входных данных
- *  - Таймауты очищаются при повторных вызовах
- *  - Добавлен AbortController-паттерн для acquireLocalStream
- *  - watchActiveChat восстанавливает значение при ошибке defineProperty
- * ==========================================================================*/
+ * CALLS — WebRTC DM + group mesh
+ *
+ * Зависимости из core.js / UI:
+ *   state, callState, socket, sfx, speakingMonitors
+ *   RTC_CONFIG, RAW_AUDIO_CONSTRAINTS, CALL_RING_TIMEOUT_MS
+ *   configureRTC, $, on, whenDomReady, setText, setDisplay
+ *   showTransientNotice, renderAv, renderGroupAv, memberName
+ *   updateGroupVoiceBar, renderGroupsList, openChat, openGroupChat
+ *
+ * Этот файл ЗАМЕНЯЕТ предыдущую реализацию, а не подключается рядом с ней.
+ * ========================================================================== */
 
 'use strict';
 
 /* ── Константы ─────────────────────────────────────────────────────────── */
-// CALL_RING_TIMEOUT_MS is shared from core.js.
+
 const ICE_RESTART_TIMEOUT_MS = 12_000;
-const IDLE_HIDE_MS           = 3_000;
+const CALL_START_ACK_TIMEOUT_MS = 20_000;
+const CALL_JOIN_ACK_TIMEOUT_MS = 20_000;
+const CALL_SOCKET_GRACE_MS = 16_000;
+const IDLE_HIDE_MS = 3_000;
+
+const MAX_PENDING_ICE = 256;
+const MAX_SIGNAL_SDP_LENGTH = 1_000_000;
+const MAX_STATE_MESSAGE_LENGTH = 4096;
+const AUDIO_MAX_BITRATE = 128_000;
+
+const SPEAKING_THRESHOLD_ON = 0.06;
+const SPEAKING_THRESHOLD_OFF = 0.035;
 
 const CALL_VIDEO_CONSTRAINTS = Object.freeze({
-  width:     { ideal: 1280 },
-  height:    { ideal: 720 },
+  width: { ideal: 1280 },
+  height: { ideal: 720 },
   frameRate: { ideal: 30, max: 30 },
   facingMode: 'user',
 });
 
-/* ── Вспомогательные утилиты ───────────────────────────────────────────── */
+/* ── Локальное состояние ───────────────────────────────────────────────── */
 
-/**
- * Безопасный CSS-эскейп идентификатора для querySelector.
- * Используем нативный CSS.escape везде где доступен; иначе — полный эскейп
- * всех не-ASCII и опасных символов, а не только кавычек.
- */
-const cssEsc = (() => {
-  if (typeof window !== 'undefined' && window.CSS?.escape) {
-    return s => CSS.escape(String(s));
-  }
-  // Полный fallback: эскейпим всё, что не [A-Za-z0-9_-]
-  return s => String(s).replace(/[^A-Za-z0-9_-]/g, c => {
-    const code = c.codePointAt(0);
-    return code === 0 ? '\uFFFD' : `\\${code.toString(16)} `;
-  });
-})();
+let callStarting = false;
+let pendingMediaOperation = null;
+let mediaOperationSequence = 0;
+let callSessionSequence = 0;
 
-/** Безопасный поиск плитки участника. */
-function findCallTile(id) {
-  if (!id) return null;
-  return document.querySelector(`.call-tile[data-peer="${cssEsc(id)}"]`);
+let pendingStartRequestId = null;
+let pendingJoinRequestId = null;
+let requestSequence = 0;
+
+let startAckTimer = null;
+let joinAckTimer = null;
+let callReconnectTimer = null;
+
+let idleTimer = null;
+let callTimerId = null;
+let callConnectedAt = 0;
+let overlaySyncRaf = null;
+let gridRenderRaf = null;
+
+let screenShareStream = null;
+let screenShareTrack = null;
+let screenShareStarting = false;
+let screenShareStopping = false;
+let screenShareSequence = 0;
+
+let audioCtx = null;
+
+callState.peers ||= Object.create(null);
+state.dmVoiceCalls ||= Object.create(null);
+state.groupVoiceCalls ||= Object.create(null);
+state.voiceRejoin ||= Object.create(null);
+
+/* speakingMonitors объявляется в core.js — здесь не переобъявляем. */
+
+/* ── Общие утилиты ─────────────────────────────────────────────────────── */
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-/** Останавливает все треки потока, не бросая исключений. */
+function isId(value) {
+  return typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 512;
+}
+
+function uniqueIds(value) {
+  return Array.isArray(value)
+    ? [...new Set(value.filter(isId))]
+    : [];
+}
+
+function newCallRequestId(prefix) {
+  const uuid = window.crypto?.randomUUID?.();
+  return uuid
+    ? `${prefix}-${uuid}`
+    : `${prefix}-${Date.now()}-${++requestSequence}`;
+}
+
 function stopStream(stream) {
-  if (!stream) return;
-  stream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
+  if (!stream || typeof stream.getTracks !== 'function') return;
+
+  for (const track of stream.getTracks()) {
+    try {
+      track.stop();
+    } catch (_) {}
+  }
 }
 
-/** Занят ли клиент: активный звонок, входящий на экране или идёт запрос устройств. */
-function callBusy() {
-  return callState.active || !!callState.pendingIncoming || callStarting;
+function isLiveTrack(track) {
+  return !!track && track.readyState === 'live';
+}
+
+function localCameraTrack() {
+  return callState.localStream
+    ?.getVideoTracks()
+    .find(isLiveTrack) || null;
 }
 
 function hasLocalVideo() {
-  return !!callState.localStream &&
-    callState.localStream.getVideoTracks().some(t => t.readyState !== 'ended');
+  return !!localCameraTrack();
 }
 
-/* ── Состояние ─────────────────────────────────────────────────────────── */
-// speakingMonitors is shared from core.js; do not redeclare with var.
+function currentOutgoingVideoTrack() {
+  return isLiveTrack(screenShareTrack)
+    ? screenShareTrack
+    : localCameraTrack();
+}
 
-let callStarting      = false; // идёт getUserMedia для исходящего/принимаемого звонка
-// Correlate delayed server replies so a cancelled start cannot occupy the voice room.
-let pendingStartRequestId = null;
-let startRequestSequence = 0;
-let idleTimer         = null;  // автоскрытие контролов в видео-режиме
-let callTimerId       = null;  // таймер длительности звонка
-let callConnectedAt   = 0;
-let peerWaitTimer      = null;
-let peerWaitInterval   = null;
-let peerWaitDeadline   = 0;
-let screenShareNegotiationTimer = null;
-let screenShareStream = null;
-let screenShareTrack = null;
-let screenShareStopping = false;
+function callBusy() {
+  return !!(
+    callState.active ||
+    callState.pendingIncoming ||
+    callStarting
+  );
+}
 
-/* ── Имена/аватары участников ──────────────────────────────────────────── */
 function callPeerName(peerId) {
   if (!peerId) return '';
-  if (callState.isGroup) return memberName(state.groups[callState.groupId], peerId);
-  const f = state.friends[peerId];
-  return f?.nickname
-    || (peerId === callState.peerFriendId ? callState.peerFriendName : null)
-    || peerId;
+
+  if (callState.isGroup) {
+    const group = state.groups[callState.groupId];
+    return group ? memberName(group, peerId) : peerId;
+  }
+
+  return state.friends[peerId]?.nickname ||
+    (peerId === callState.peerFriendId
+      ? callState.peerFriendName
+      : null) ||
+    peerId;
 }
 
 function callPeerAvatar(peerId) {
   if (!peerId) return null;
+
   if (callState.isGroup) {
-    const g = state.groups[callState.groupId];
-    return g?.members?.find(m => m.id === peerId)?.avatar
-      ?? state.friends[peerId]?.avatar
-      ?? null;
+    const group = state.groups[callState.groupId];
+    return group?.members?.find(member => member.id === peerId)?.avatar ??
+      state.friends[peerId]?.avatar ??
+      null;
   }
+
   return state.friends[peerId]?.avatar ?? null;
 }
 
-/* ── Сообщения об ошибках устройств ────────────────────────────────────── */
-function mediaErrorMessage(e) {
-  switch (e?.name) {
+/*
+ * Не подставляем ID в CSS-селектор: это одновременно убирает необходимость
+ * в CSS.escape fallback и корректно работает с произвольными строковыми ID.
+ */
+function findCallTile(id, root = $('call-video-grid')) {
+  if (!root) return null;
+
+  for (const tile of root.querySelectorAll('.call-tile')) {
+    if (tile.dataset.peer === String(id)) return tile;
+  }
+
+  return null;
+}
+
+function safeCallSound(method, ...args) {
+  try {
+    const result = sfx?.[method]?.(...args);
+    if (result?.catch) result.catch(() => {});
+  } catch (_) {}
+}
+
+function emitCall(event, payload) {
+  if (!socket.connected) return false;
+  socket.emit(event, payload);
+  return true;
+}
+
+function currentSessionMatches(session) {
+  return callState.active && callSessionSequence === session;
+}
+
+function captureCallSession() {
+  return callSessionSequence;
+}
+
+function scheduleCallGrid() {
+  if (gridRenderRaf !== null) return;
+
+  gridRenderRaf = requestAnimationFrame(() => {
+    gridRenderRaf = null;
+    renderCallGrid();
+  });
+}
+
+/*
+ * Socket.IO не ожидает Promise обработчика. Обёртка ловит как синхронные
+ * исключения, так и отклонённые Promise.
+ */
+function onCallSocket(event, handler) {
+  socket.on(event, payload => {
+    if (!isRecord(payload)) return;
+
+    try {
+      Promise.resolve(handler(payload)).catch(error => {
+        console.warn(`[call] ${event} failed`, error);
+      });
+    } catch (error) {
+      console.warn(`[call] ${event} failed`, error);
+    }
+  });
+}
+
+/* ── Захват устройств с логической отменой ─────────────────────────────── */
+
+function abortError() {
+  return new DOMException('Operation cancelled', 'AbortError');
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw abortError();
+}
+
+/*
+ * getUserMedia/getDisplayMedia не принимают AbortSignal как универсальный
+ * браузерный механизм отмены.
+ *
+ * Мы отменяем ожидание, а если разрешение придёт позднее — сразу останавливаем
+ * полученные треки. Сам браузерный диалог программно закрыть нельзя.
+ */
+function acquireAbortableMedia(factory, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError());
+      return;
+    }
+
+    let settled = false;
+
+    const cleanup = () => {
+      signal?.removeEventListener('abort', onAbort);
+    };
+
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(abortError());
+    };
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+
+    let request;
+
+    try {
+      request = factory();
+    } catch (error) {
+      settled = true;
+      cleanup();
+      reject(error);
+      return;
+    }
+
+    Promise.resolve(request).then(
+      stream => {
+        if (settled || signal?.aborted) {
+          stopStream(stream);
+          return;
+        }
+
+        settled = true;
+        cleanup();
+        resolve(stream);
+      },
+      error => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+function mediaErrorMessage(error) {
+  switch (error?.name) {
     case 'NotSupportedError':
       return 'Звонки недоступны: нужен HTTPS и современный браузер';
+
     case 'NotAllowedError':
     case 'SecurityError':
-      return 'Доступ к микрофону запрещён. Разрешите его в настройках браузера';
+      return 'Доступ к устройствам запрещён. Проверьте разрешения браузера';
+
     case 'NotFoundError':
     case 'DevicesNotFoundError':
       return 'Микрофон не найден';
+
     case 'NotReadableError':
     case 'TrackStartError':
-      return 'Микрофон занят другим приложением';
+      return 'Устройство занято или недоступно';
+
     case 'OverconstrainedError':
       return 'Устройство не поддерживает требуемые параметры';
+
     default:
-      return 'Не удалось получить доступ к камере/микрофону';
+      return 'Не удалось получить доступ к камере или микрофону';
   }
 }
 
-/* ── Захват локального потока ──────────────────────────────────────────── */
+async function acquireLocalStream(video, { signal } = {}) {
+  throwIfAborted(signal);
 
-/**
- * Захватывает локальный медиапоток.
- * При недоступной камере автоматически деградирует до аудио.
- *
- * @param {boolean} video — запрашивать ли видео
- * @returns {Promise<MediaStream>}
- */
-async function acquireLocalStream(video) {
   await configureRTC();
+
+  throwIfAborted(signal);
+
   if (!navigator.mediaDevices?.getUserMedia) {
-    const err = Object.assign(new Error('getUserMedia is not available'), { name: 'NotSupportedError' });
-    throw err;
+    throw Object.assign(
+      new Error('getUserMedia is unavailable'),
+      { name: 'NotSupportedError' },
+    );
   }
+
+  const getStream = withVideo => acquireAbortableMedia(
+    () => navigator.mediaDevices.getUserMedia({
+      audio: RAW_AUDIO_CONSTRAINTS,
+      video: withVideo ? CALL_VIDEO_CONSTRAINTS : false,
+    }),
+    signal,
+  );
 
   let stream;
+
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: RAW_AUDIO_CONSTRAINTS,
-      video: video ? CALL_VIDEO_CONSTRAINTS : false,
-    });
-  } catch (e) {
-    if (!video) throw e;
-    // Камера недоступна — пробуем только аудио
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: RAW_AUDIO_CONSTRAINTS,
-        video: false,
-      });
-    } catch (e2) {
-      // Если и микрофон запрещён — сообщаем именно об этом
-      throw (e2?.name === 'NotAllowedError' ? e2 : e);
+    stream = await getStream(!!video);
+  } catch (error) {
+    if (error?.name === 'AbortError' || !video) throw error;
+
+    throwIfAborted(signal);
+
+    // При проблемах с камерой пробуем сохранить возможность аудиозвонка.
+    stream = await getStream(false);
+
+    if (!signal?.aborted) {
+      showTransientNotice('Камера недоступна — звонок без видео');
     }
-    showTransientNotice('Камера недоступна — звонок без видео');
   }
 
-  // Пробуем применить «сырые» аудиоограничения явно (браузер мог проигнорировать)
-  for (const track of stream.getAudioTracks()) {
-    const settings = typeof track.getSettings === 'function' ? track.getSettings() : {};
-    if (settings.echoCancellation || settings.noiseSuppression || settings.autoGainControl) {
-      try { await track.applyConstraints(RAW_AUDIO_CONSTRAINTS); } catch (_) {}
-      const after = typeof track.getSettings === 'function' ? track.getSettings() : {};
-      if (after.echoCancellation || after.noiseSuppression || after.autoGainControl) {
-        console.warn('[call] browser ignored raw mic constraints', after);
-      }
-    }
+  if (signal?.aborted) {
+    stopStream(stream);
+    throw abortError();
+  }
+
+  if (!stream.getAudioTracks().some(isLiveTrack)) {
+    stopStream(stream);
+    throw Object.assign(
+      new Error('No live microphone track'),
+      { name: 'NotFoundError' },
+    );
   }
 
   return stream;
 }
 
-/* ── Инициализация сессии звонка ───────────────────────────────────────── */
+function beginMediaOperation(kind, incomingCallId = null) {
+  if (pendingMediaOperation) return null;
+
+  const operation = {
+    id: ++mediaOperationSequence,
+    kind,
+    incomingCallId,
+    controller: new AbortController(),
+    userId: state.me?.id,
+    revision: state.sessionRevision,
+  };
+
+  pendingMediaOperation = operation;
+  callStarting = true;
+
+  return operation;
+}
+
+function isCurrentMediaOperation(operation) {
+  return pendingMediaOperation === operation &&
+    !operation.controller.signal.aborted &&
+    !!state.me &&
+    state.me.id === operation.userId &&
+    state.sessionRevision === operation.revision;
+}
+
+function finishMediaOperation(operation) {
+  if (pendingMediaOperation !== operation) return;
+
+  pendingMediaOperation = null;
+  callStarting = false;
+  updateDmVoiceBar();
+}
+
+function cancelMediaOperation() {
+  const operation = pendingMediaOperation;
+
+  pendingMediaOperation = null;
+  callStarting = false;
+
+  operation?.controller.abort();
+}
+
+/* ── Инициализация звонка ──────────────────────────────────────────────── */
+
+function clearCallAckTimers() {
+  clearTimeout(startAckTimer);
+  clearTimeout(joinAckTimer);
+  startAckTimer = null;
+  joinAckTimer = null;
+}
+
 function beginCallSession({
-  stream, callId = null, chatKey = null,
-  isGroup, groupId = null,
-  peerFriendId = null, peerFriendName = null,
-  video,
+  stream,
+  callId = null,
+  chatKey = null,
+  isGroup = false,
+  groupId = null,
+  peerFriendId = null,
+  peerFriendName = null,
 }) {
-  // Очищаем таймеры ДО присвоения нового состояния
+  clearCallAckTimers();
+
   clearTimeout(callState.ringTimer);
   clearTimeout(callState.incomingTimer);
-  callState.ringTimer    = null;
+
+  callState.ringTimer = null;
   callState.incomingTimer = null;
+
   pendingStartRequestId = null;
+  pendingJoinRequestId = null;
 
-  callState.localStream   = stream;
-  callState.callId        = callId;
-  callState.chatKey       = chatKey;
-  callState.isGroup       = !!isGroup;
-  callState.groupId       = groupId;
-  callState.peerFriendId  = peerFriendId;
+  callSessionSequence++;
+
+  callState.localStream = stream;
+  callState.callId = callId;
+  callState.chatKey = chatKey;
+
+  callState.isGroup = !!isGroup;
+  callState.groupId = groupId;
+  callState.peerFriendId = peerFriendId;
   callState.peerFriendName = peerFriendName;
-  callState.video         = !!video;
-  callState.micOn         = true;
-  callState.camOn         = true;
-  callState.peers         = Object.create(null);
+
+  callState.video = stream.getVideoTracks().some(isLiveTrack);
+  callState.micOn = true;
+  callState.camOn = callState.video;
+
+  callState.peers = Object.create(null);
   callState.pendingIncoming = null;
-}
 
-/* ── Исходящий звонок ──────────────────────────────────────────────────── */
-async function startCall({ toId, groupId, video }) {
-  if (!toId && !groupId) return;
-  if (callBusy()) {
-    showTransientNotice('Уже есть активный звонок');
-    return;
-  }
-  if (!socket.connected) {
-    showTransientNotice('Нет соединения с сервером');
-    return;
-  }
-  if (window.__chatappRtc?.configError) {
-    showTransientNotice('TURN не настроен: через VPN голос и демонстрация могут зависнуть');
-  }
+  setDisplay('incoming-call-modal', 'none');
+  safeCallSound('stopRing');
 
-  if (toId && state.dmVoiceCalls[toId]) {
-    await startExistingCall(state.dmVoiceCalls[toId], null, toId);
-    return;
-  }
+  const session = captureCallSession();
 
-  // Если в группе уже идёт канал — присоединяемся
-  if (groupId && state.groupVoiceCalls[groupId]) {
-    joinExistingGroupVoice(groupId);
-    return;
-  }
+  for (const track of stream.getTracks()) {
+    track.addEventListener('ended', () => {
+      if (!currentSessionMatches(session)) return;
 
-  callStarting = true;
-  const mediaRevision = state.sessionRevision;
-  const mediaUser = state.me?.id;
-  let stream;
-  try {
-    stream = await acquireLocalStream(!!video);
-  } catch (e) {
-    callStarting = false;
-    showTransientNotice(mediaErrorMessage(e));
-    return;
-  }
-  // Сбрасываем флаг сразу после получения потока
-  callStarting = false;
-  if (!state.me || state.me.id !== mediaUser || state.sessionRevision !== mediaRevision) { stopStream(stream); return; }
-
-  // Пока ждали — ситуация могла измениться
-  if (callState.active || callState.pendingIncoming) {
-    stopStream(stream);
-    showTransientNotice('Уже есть активный звонок');
-    return;
-  }
-  if (!socket.connected) {
-    stopStream(stream);
-    showTransientNotice('Нет соединения с сервером');
-    return;
-  }
-
-  beginCallSession({
-    stream,
-    isGroup: !!groupId,
-    groupId:        groupId || null,
-    peerFriendId:   toId || null,
-    peerFriendName: toId ? (state.friends[toId]?.nickname || toId) : null,
-    video:          !!video,
-  });
-
-  openCallOverlay('вызов…');
-  pendingStartRequestId = `start-${Date.now()}-${++startRequestSequence}`;
-  socket.emit('callStart', {
-    requestId: pendingStartRequestId,
-    toId:    toId    || undefined,
-    groupId: groupId || undefined,
-    video:   !!video,
-  });
-
-  if (!groupId) {
-    sfx.startRing(true);
-    callState.ringTimer = setTimeout(() => {
-      if (callState.active && !Object.keys(callState.peers).length) {
-        showTransientNotice('Нет ответа');
-        hangupCall();
+      if (track.kind === 'audio') {
+        callState.micOn = stream.getAudioTracks().some(isLiveTrack);
+        if (!callState.micOn) {
+          showTransientNotice('Микрофон отключён или недоступен');
+        }
+      } else {
+        callState.camOn = !!localCameraTrack() && callState.camOn;
       }
-    }, CALL_RING_TIMEOUT_MS);
+
+      refreshCallMediaUI();
+      broadcastMediaState();
+    });
   }
 }
 
-/* ── Присоединение к существующему групповому каналу ───────────────────── */
-function joinExistingGroupVoice(groupId) {
-  const call = state.groupVoiceCalls[groupId];
-  if (!call) return;
+function armOutgoingRingTimeout() {
+  clearTimeout(callState.ringTimer);
+
+  const session = captureCallSession();
+
+  callState.ringTimer = setTimeout(() => {
+    callState.ringTimer = null;
+
+    if (!currentSessionMatches(session)) return;
+    if (Object.keys(callState.peers).length) return;
+
+    showTransientNotice('Нет ответа');
+    hangupCall();
+  }, CALL_RING_TIMEOUT_MS);
+}
+
+function stopOutgoingRing() {
+  clearTimeout(callState.ringTimer);
+  callState.ringTimer = null;
+  safeCallSound('stopRing');
+}
+
+function requestCallJoin({ rejoin = false } = {}) {
+  if (!callState.active || !isId(callState.callId)) return;
+
+  clearTimeout(joinAckTimer);
+
+  const session = captureCallSession();
+  const callId = callState.callId;
+  const requestId = newCallRequestId('join');
+
+  pendingJoinRequestId = requestId;
+
+  emitCall('callJoin', { callId, requestId, rejoin });
+
+  joinAckTimer = setTimeout(() => {
+    if (!currentSessionMatches(session)) return;
+    if (pendingJoinRequestId !== requestId) return;
+
+    showTransientNotice('Сервер не подтвердил подключение к звонку');
+    hangupCall();
+  }, CALL_JOIN_ACK_TIMEOUT_MS);
+}
+
+async function startCall({ toId, groupId, video = false } = {}) {
+  if ((!isId(toId) && !isId(groupId)) || (toId && groupId)) return;
+
+  if (!state.me) return;
+
   if (callBusy()) {
     showTransientNotice('Уже есть активный звонок');
     return;
   }
-  startExistingCall(call, groupId);
-}
 
-async function startExistingCall(call, groupId, peerId = null) {
   if (!socket.connected) {
     showTransientNotice('Нет соединения с сервером');
     return;
   }
 
-  callStarting = true;
-  const mediaRevision = state.sessionRevision;
-  const mediaUser = state.me?.id;
-  let stream;
+  const existing = groupId
+    ? state.groupVoiceCalls[groupId]
+    : state.dmVoiceCalls[toId];
+
+  if (existing?.callId) {
+    await startExistingCall(existing, groupId || null, toId || null);
+    return;
+  }
+
+  const operation = beginMediaOperation('start');
+  if (!operation) return;
+
+  let stream = null;
+
   try {
-    stream = await acquireLocalStream(!!call.video);
-  } catch (e) {
-    callStarting = false;
-    showTransientNotice(mediaErrorMessage(e));
-    return;
-  }
-  callStarting = false;
-  if (!state.me || state.me.id !== mediaUser || state.sessionRevision !== mediaRevision) { stopStream(stream); return; }
+    stream = await acquireLocalStream(!!video, {
+      signal: operation.controller.signal,
+    });
 
-  // Канал могли закрыть, пока запрашивали доступ
-  if (callState.active || callState.pendingIncoming) {
+    if (!isCurrentMediaOperation(operation)) return;
+    if (callState.active || callState.pendingIncoming) return;
+
+    if (!socket.connected) {
+      showTransientNotice('Нет соединения с сервером');
+      return;
+    }
+
+    if (!$('call-overlay')) {
+      throw new Error('#call-overlay not found');
+    }
+
+    beginCallSession({
+      stream,
+      isGroup: !!groupId,
+      groupId: groupId || null,
+      peerFriendId: toId || null,
+      peerFriendName: toId
+        ? state.friends[toId]?.nickname || toId
+        : null,
+    });
+
+    // Владение потоком передано callState.
+    stream = null;
+
+    openCallOverlay('вызов…');
+
+    const session = captureCallSession();
+    const requestId = newCallRequestId('start');
+
+    pendingStartRequestId = requestId;
+
+    emitCall('callStart', {
+      requestId,
+      toId: toId || undefined,
+      groupId: groupId || undefined,
+      video: hasLocalVideo(),
+    });
+
+    startAckTimer = setTimeout(() => {
+      if (!currentSessionMatches(session)) return;
+      if (pendingStartRequestId !== requestId) return;
+
+      showTransientNotice('Сервер не подтвердил начало звонка');
+      hangupCall();
+    }, CALL_START_ACK_TIMEOUT_MS);
+
+    if (!groupId) {
+      safeCallSound('startRing', true);
+      armOutgoingRingTimeout();
+    }
+  } catch (error) {
+    if (error?.name !== 'AbortError' && isCurrentMediaOperation(operation)) {
+      console.warn('[call] start failed', error);
+      showTransientNotice(mediaErrorMessage(error));
+    }
+  } finally {
     stopStream(stream);
+    finishMediaOperation(operation);
+  }
+}
+
+function joinExistingGroupVoice(groupId) {
+  if (!isId(groupId)) return;
+
+  const room = state.groupVoiceCalls[groupId];
+  if (!room) return;
+
+  return startExistingCall(room, groupId);
+}
+
+async function startExistingCall(room, groupId = null, peerId = null) {
+  if (!isRecord(room) || !isId(room.callId)) return;
+  if ((!isId(groupId) && !isId(peerId)) || (groupId && peerId)) return;
+
+  if (callBusy()) {
+    showTransientNotice('Уже есть активный звонок');
     return;
   }
-  const current = groupId ? state.groupVoiceCalls[groupId] : state.dmVoiceCalls[peerId];
-  if (current?.callId !== call.callId) {
-    stopStream(stream);
-    showTransientNotice('Голосовой канал уже завершён');
-    return;
-  }
-  if (!socket.connected) {
-    stopStream(stream);
+
+  if (!socket.connected || !state.me) {
     showTransientNotice('Нет соединения с сервером');
     return;
   }
 
-  beginCallSession({ stream, callId: call.callId, isGroup: !!groupId, groupId,
-    peerFriendId: peerId, peerFriendName: peerId ? (state.friends[peerId]?.nickname || peerId) : null,
-    video: call.video });
-  openCallOverlay('соединение…');
-  socket.emit('callJoin', { callId: call.callId });
-  sfx.join();
-}
+  const operation = beginMediaOperation('join');
+  if (!operation) return;
 
-/* ── Discord-style group voice rejoin cache ───────────────────────────── */
-// Compatibility helpers: server state is authoritative, never resurrect an ended call.
-function rememberGroupVoice(groupId, callId, video = false) {
-  if (!groupId || !callId) return;
-  state.voiceRejoin[groupId] = { callId, video: !!video };
-  if (!state.groupVoiceCalls[groupId] || state.groupVoiceCalls[groupId].callId !== callId) {
-    state.groupVoiceCalls[groupId] = { callId, video: !!video, participants: [] };
+  const expectedCallId = room.callId;
+  let stream = null;
+
+  try {
+    stream = await acquireLocalStream(!!room.video, {
+      signal: operation.controller.signal,
+    });
+
+    if (!isCurrentMediaOperation(operation)) return;
+    if (callState.active || callState.pendingIncoming) return;
+
+    const currentRoom = groupId
+      ? state.groupVoiceCalls[groupId]
+      : state.dmVoiceCalls[peerId];
+
+    if (currentRoom?.callId !== expectedCallId) {
+      showTransientNotice('Голосовой канал уже завершён');
+      return;
+    }
+
+    if (!socket.connected) {
+      showTransientNotice('Нет соединения с сервером');
+      return;
+    }
+
+    if (!$('call-overlay')) {
+      throw new Error('#call-overlay not found');
+    }
+
+    beginCallSession({
+      stream,
+      callId: expectedCallId,
+      isGroup: !!groupId,
+      groupId,
+      peerFriendId: peerId,
+      peerFriendName: peerId
+        ? state.friends[peerId]?.nickname || peerId
+        : null,
+    });
+
+    stream = null;
+
+    openCallOverlay('соединение…');
+    requestCallJoin();
+    safeCallSound('join');
+  } catch (error) {
+    if (error?.name !== 'AbortError' && isCurrentMediaOperation(operation)) {
+      showTransientNotice(mediaErrorMessage(error));
+    }
+  } finally {
+    stopStream(stream);
+    finishMediaOperation(operation);
   }
 }
+
+/* ── Кэш группового канала ─────────────────────────────────────────────── */
+
+/*
+ * Кэш не создаёт новую комнату: состояние комнат подтверждает сервер.
+ */
+function rememberGroupVoice(groupId, callId, video = false) {
+  if (!isId(groupId) || !isId(callId)) return;
+  if (state.groupVoiceCalls[groupId]?.callId !== callId) return;
+
+  clearTimeout(state.voiceRejoin[groupId]?.timer);
+
+  state.voiceRejoin[groupId] = {
+    callId,
+    video: !!video,
+  };
+}
+
 function clearGroupVoiceRejoin(groupId, callId = null) {
   const entry = state.voiceRejoin[groupId];
   if (!entry || (callId && entry.callId !== callId)) return;
+
   clearTimeout(entry.timer);
   delete state.voiceRejoin[groupId];
 }
+
 function restoreGroupVoiceRejoin(groupId) {
   return state.groupVoiceCalls[groupId] || null;
 }
-window.rememberGroupVoice = rememberGroupVoice;
-window.clearGroupVoiceRejoin = clearGroupVoiceRejoin;
-window.restoreGroupVoiceRejoin = restoreGroupVoiceRejoin;
 
-/* ── Завершение звонка ─────────────────────────────────────────────────── */
-function hangupCall() {
-  if (!callState.active) return;
-  const leavingGroupId = callState.isGroup ? callState.groupId : null;
-  const leavingCallId = callState.callId;
-  if (leavingGroupId && leavingCallId && state.groups[leavingGroupId]) rememberGroupVoice(leavingGroupId, leavingCallId, callState.video);
-  if (callState.callId) {
-    socket.emit('callLeave', { callId: callState.callId });
-  } else {
-    pendingStartRequestId = null;
+/* ── Завершение и очистка ──────────────────────────────────────────────── */
+
+function releaseMediaElements(root) {
+  if (!root) return;
+
+  for (const element of root.querySelectorAll('video, audio')) {
+    try {
+      element.pause();
+      element.srcObject = null;
+    } catch (_) {}
   }
-  // Immediately remove our own badge, but keep everybody else in the channel.
-  const room = leavingGroupId ? state.groupVoiceCalls[leavingGroupId] : state.dmVoiceCalls[callState.peerFriendId];
-  if (room?.callId === leavingCallId) room.participants = room.participants.filter(id => id !== state.me?.id);
-  sfx.leave();
+}
+
+function closePeerConnection(peer) {
+  if (!peer) return;
+
+  clearTimeout(peer.restartTimer);
+  clearTimeout(peer.disconnectTimer);
+
+  if (peer.stream) {
+    for (const track of peer.stream.getTracks()) {
+      track.onmute = null;
+      track.onunmute = null;
+      track.onended = null;
+    }
+  }
+
+  try {
+    if (peer.dc) {
+      peer.dc.onopen = null;
+      peer.dc.onmessage = null;
+      peer.dc.onerror = null;
+      peer.dc.onclose = null;
+      peer.dc.close();
+    }
+  } catch (_) {}
+
+  try {
+    const pc = peer.pc;
+
+    pc.onicecandidate = null;
+    pc.ontrack = null;
+    pc.onnegotiationneeded = null;
+    pc.onsignalingstatechange = null;
+    pc.onconnectionstatechange = null;
+    pc.oniceconnectionstatechange = null;
+
+    pc.close();
+  } catch (_) {}
+
+  stopStream(peer.stream);
+}
+
+function closeCallOverlay() {
+  // Инвалидация выполняется ДО любой очистки и последующих await.
+  callSessionSequence++;
+  screenShareSequence++;
+
+  cancelMediaOperation();
+  clearCallAckTimers();
+
+  clearTimeout(callReconnectTimer);
+  callReconnectTimer = null;
+
+  clearTimeout(idleTimer);
+  idleTimer = null;
+
+  if (gridRenderRaf !== null) {
+    cancelAnimationFrame(gridRenderRaf);
+    gridRenderRaf = null;
+  }
+
+  stopCallTimer();
+  clearPeerWait();
+
+  clearTimeout(callState.incomingTimer);
+  callState.incomingTimer = null;
+
+  stopOutgoingRing();
+  stopAllSpeakingMonitors();
+
+  pendingStartRequestId = null;
+  pendingJoinRequestId = null;
+
+  const previousGroupId = callState.isGroup ? callState.groupId : null;
+
+  const oldScreenTrack = screenShareTrack;
+  screenShareTrack = null;
+
+  if (oldScreenTrack) oldScreenTrack.onended = null;
+
+  stopStream(screenShareStream);
+  screenShareStream = null;
+  screenShareStarting = false;
+  screenShareStopping = false;
+
+  stopStream(callState.localStream);
+  Object.values(callState.peers).forEach(closePeerConnection);
+
+  callState.active = false;
+  callState.callId = null;
+  callState.chatKey = null;
+  callState.isGroup = false;
+  callState.groupId = null;
+  callState.peerFriendId = null;
+  callState.peerFriendName = null;
+  callState.video = false;
+  callState.localStream = null;
+  callState.micOn = true;
+  callState.camOn = false;
+  callState.peers = Object.create(null);
+  callState.pendingIncoming = null;
+
+  const overlay = $('call-overlay');
+
+  if (overlay) {
+    overlay.style.display = 'none';
+    overlay.classList.remove('voice-mode', 'video-mode', 'idle', 'detached');
+    overlay.style.removeProperty('--call-left');
+    overlay.style.removeProperty('--call-top');
+    overlay.title = '';
+  }
+
+  setDisplay('incoming-call-modal', 'none');
+
+  const grid = $('call-video-grid');
+
+  if (grid) {
+    releaseMediaElements(grid);
+    grid.replaceChildren();
+    delete grid.dataset.count;
+  }
+
+  resetCallControls();
+  updateScreenShareUI();
+  updateDmVoiceBar();
+
+  updateGroupVoiceBar(state.activeGroup || previousGroupId);
+  renderGroupsList();
+}
+
+function hangupCall() {
+  if (!callState.active) {
+    if (callStarting) {
+      cancelMediaOperation();
+      if (callState.pendingIncoming) dismissIncomingCall();
+      updateDmVoiceBar();
+    }
+    return;
+  }
+
+  const callId = callState.callId;
+  const groupId = callState.isGroup ? callState.groupId : null;
+  const peerId = callState.peerFriendId;
+
+  if (groupId && callId) {
+    rememberGroupVoice(groupId, callId, callState.video);
+  }
+
+  if (isId(callId)) {
+    emitCall('callLeave', { callId });
+  }
+
+  const room = groupId
+    ? state.groupVoiceCalls[groupId]
+    : state.dmVoiceCalls[peerId];
+
+  if (room?.callId === callId) {
+    room.participants = uniqueIds(room.participants)
+      .filter(id => id !== state.me?.id);
+  }
+
+  safeCallSound('leave');
   closeCallOverlay();
 }
 
-/* ── Контролы (мик, камера) ────────────────────────────────────────────── */
+/* ── Кнопки микрофона / камеры ─────────────────────────────────────────── */
+
 function resetCallControls() {
   const mic = $('btn-call-toggle-mic');
+
   if (mic) {
     mic.classList.toggle('active-off', !callState.micOn);
-    mic.title = callState.micOn ? 'Выключить микрофон' : 'Включить микрофон';
+    mic.title = callState.micOn
+      ? 'Выключить микрофон'
+      : 'Включить микрофон';
+
     mic.setAttribute('aria-label', mic.title);
     mic.setAttribute('aria-pressed', String(!callState.micOn));
+    mic.disabled = !callState.active ||
+      !callState.localStream?.getAudioTracks().some(isLiveTrack);
   }
 
   const cam = $('btn-call-toggle-cam');
+
   if (cam) {
     cam.classList.toggle('active-off', !callState.camOn);
-    cam.title = callState.camOn ? 'Выключить камеру' : 'Включить камеру';
+    cam.title = callState.camOn
+      ? 'Выключить камеру'
+      : 'Включить камеру';
+
     cam.setAttribute('aria-label', cam.title);
     cam.setAttribute('aria-pressed', String(!callState.camOn));
-    cam.disabled = !hasLocalVideo();
+    cam.disabled = !callState.active || !hasLocalVideo();
   }
 }
 
-/* ── Состояние мик/камеры — рассылка пирам ─────────────────────────────
- * WebRTC не сообщает удалённой стороне об изменении track.enabled, поэтому
- * рассылаем состояние сами: по DataChannel (negotiated id=0), а как fallback
- * — через сигналинговый сервер.
- * ────────────────────────────────────────────────────────────────────── */
+function toggleMic() {
+  if (!callState.active || !callState.localStream) return;
+
+  const tracks = callState.localStream.getAudioTracks().filter(isLiveTrack);
+
+  if (!tracks.length) {
+    showTransientNotice('Микрофон недоступен');
+    return;
+  }
+
+  callState.micOn = !callState.micOn;
+
+  for (const track of tracks) track.enabled = callState.micOn;
+
+  resetCallControls();
+  renderCallGrid();
+  broadcastMediaState();
+
+  showTransientNotice(
+    callState.micOn ? 'Микрофон включён' : 'Микрофон выключен',
+  );
+}
+
+function toggleCam() {
+  if (!callState.active || !hasLocalVideo()) {
+    showTransientNotice('В этом звонке нет доступной камеры');
+    return;
+  }
+
+  callState.camOn = !callState.camOn;
+
+  for (const track of callState.localStream.getVideoTracks()) {
+    track.enabled = callState.camOn;
+  }
+
+  refreshCallMediaUI();
+  broadcastMediaState();
+}
+
+/* ── Состояние медиа ───────────────────────────────────────────────────── */
+
 function mediaStatePayload() {
-  return { type: 'state', micOn: !!callState.micOn, camOn: !!callState.camOn, screenOn: !!screenShareTrack };
+  return {
+    type: 'state',
+    micOn: !!callState.micOn,
+    camOn: !!callState.camOn && hasLocalVideo(),
+    screenOn: isLiveTrack(screenShareTrack),
+  };
 }
 
 function sendMediaState(peerId) {
   const peer = callState.peers[peerId];
+
   if (!peer || !callState.active) return;
 
-  const payload = JSON.stringify(mediaStatePayload());
-  let sent = false;
+  const data = mediaStatePayload();
 
   if (peer.dc?.readyState === 'open') {
-    try { peer.dc.send(payload); sent = true; } catch (_) {}
+    try {
+      peer.dc.send(JSON.stringify(data));
+      return;
+    } catch (_) {}
   }
 
-  if (!sent && callState.callId && socket.connected) {
-    socket.emit('callSignal', {
+  if (isId(callState.callId)) {
+    emitCall('callSignal', {
       callId: callState.callId,
       to: peerId,
-      data: mediaStatePayload(), // объект, не строка
+      data,
     });
   }
 }
@@ -441,159 +1026,350 @@ function broadcastMediaState() {
 
 function applyRemoteMediaState(peerId, data) {
   const peer = callState.peers[peerId];
-  if (!peer || !data || typeof data !== 'object') return;
 
-  const micOn = data.micOn !== false;
-  const camOn = data.camOn !== false;
+  if (!peer || !isRecord(data)) return;
+  if (typeof data.micOn !== 'boolean') return;
+  if (typeof data.camOn !== 'boolean') return;
+  if (data.screenOn !== undefined && typeof data.screenOn !== 'boolean') return;
+
   const screenOn = data.screenOn === true;
-  if (peer.micOn === micOn && peer.camOn === camOn && peer.screenOn === screenOn) return;
+
+  if (
+    peer.micOn === data.micOn &&
+    peer.camOn === data.camOn &&
+    peer.screenOn === screenOn
+  ) {
+    return;
+  }
+
+  peer.micOn = data.micOn;
+  peer.camOn = data.camOn;
   peer.screenOn = screenOn;
 
-  peer.micOn = micOn;
-  peer.camOn = camOn;
-  renderCallGrid();
+  scheduleCallGrid();
 }
 
-/* ── Демонстрация экрана ─────────────────────────────────────────────────
- * Screen sharing uses the existing peer mesh, so it works in DMs, groups,
- * and an already-running voice channel without a second call type.
- */
+/* ── Демонстрация экрана ───────────────────────────────────────────────── */
+
 function screenShareSupported() {
   return !!navigator.mediaDevices?.getDisplayMedia;
 }
+
 function updateScreenShareUI() {
-  const btn = $('btn-call-share-screen');
-  if (!btn) return;
-  const on = !!screenShareTrack;
-  btn.classList.toggle('active-off', on);
-  btn.classList.toggle('screen-sharing', on);
-  btn.setAttribute('aria-pressed', String(on));
-  btn.setAttribute('aria-label', on ? 'Остановить демонстрацию экрана' : 'Поделиться экраном');
-  btn.title = on ? 'Остановить демонстрацию экрана' : 'Поделиться экраном';
-  btn.disabled = !callState.active || (!screenShareSupported() && !on);
+  const button = $('btn-call-share-screen');
+  if (!button) return;
+
+  const enabled = isLiveTrack(screenShareTrack);
+  const busy = screenShareStarting || screenShareStopping;
+
+  button.classList.toggle('active-off', enabled);
+  button.classList.toggle('screen-sharing', enabled);
+
+  button.setAttribute('aria-pressed', String(enabled));
+  button.setAttribute('aria-busy', String(busy));
+
+  button.title = enabled
+    ? 'Остановить демонстрацию экрана'
+    : 'Поделиться экраном';
+
+  button.setAttribute('aria-label', button.title);
+
+  button.disabled = !callState.active ||
+    busy ||
+    (!screenShareSupported() && !enabled);
 }
-function screenTrackFrom(stream) {
-  return stream?.getVideoTracks?.().find(track => track.readyState !== 'ended') || null;
-}
-async function renegotiateAllPeers() {
-  const peers = Object.entries(callState.peers);
-  clearTimeout(screenShareNegotiationTimer);
-  if (screenShareTrack && peers.length) {
-    screenShareNegotiationTimer = setTimeout(() => {
-      screenShareNegotiationTimer = null;
-      const waiting = Object.entries(callState.peers).filter(([, peer]) => {
-        const state = peer.pc?.connectionState || peer.pc?.iceConnectionState;
-        return state !== 'connected';
-      });
-      if (waiting.length && screenShareTrack) {
-        showTransientNotice(window.__chatappRtc?.relayConfigured
-          ? 'Демонстрация не подключилась. Проверьте TURN и порт TCP/TLS 443.'
-          : 'Демонстрация не подключилась: на сервере не настроен TURN.');
+
+/*
+ * Ссылка на videoSender хранится явно.
+ * После replaceTrack(null) у sender нет track, а свойства sender.kind
+ * в стандартном RTCRtpSender вообще нет.
+ */
+async function setPeerVideoTrack(peerId, track, stream) {
+  const peer = callState.peers[peerId];
+  if (!peer) return;
+
+  await enqueuePeerOperation(peerId, peer, async () => {
+    if (!isCurrentPc(peerId, peer.pc)) return;
+
+    if (peer.videoSender) {
+      try {
+        await peer.videoSender.replaceTrack(track);
+        return;
+      } catch (error) {
+        if (!isCurrentPc(peerId, peer.pc)) return;
+
+        /*
+         * replaceTrack может отказать, если замена требует renegotiation.
+         * В таком случае удаляем старую отправку и добавляем новую.
+         */
+        if (error?.name !== 'InvalidModificationError') throw error;
+
+        try {
+          peer.pc.removeTrack(peer.videoSender);
+        } catch (_) {}
+
+        peer.videoSender = null;
       }
-      for (const [peerId, peer] of waiting) handlePeerFailed(peerId, peer.pc);
-    }, 12_000);
-  }
-  await Promise.all(peers.map(async ([peerId, peer]) => {
-    if (!peer?.pc || !isCurrentPc(peerId, peer.pc)) return;
-    try {
-      if (peer.pc.signalingState === 'stable') await sendOffer(peerId, peer.pc);
-    } catch (e) { console.warn('[call] screen renegotiation failed', peerId, e); }
-  }));
-  if (screenShareTrack && peers.every(([, peer]) => (peer.pc?.connectionState || peer.pc?.iceConnectionState) === 'connected')) {
-    clearTimeout(screenShareNegotiationTimer);
-    screenShareNegotiationTimer = null;
-  }
-}
-async function stopScreenShare({ silent = false } = {}) {
-  if (screenShareStopping) return;
-  screenShareStopping = true;
-  try {
-    const track = screenShareTrack;
-    screenShareTrack = null;
-    if (track) { track.onended = null; try { track.stop(); } catch (_) {} }
-    const cameraTrack = callState.localStream?.getVideoTracks?.().find(t => t !== track && t.readyState !== 'ended') || null;
-    stopStream(screenShareStream);
-    screenShareStream = null;
-    callState.video = !!cameraTrack;
-    const overlay = $('call-overlay');
-    if (overlay) { overlay.classList.toggle('voice-mode', !callState.video && callState.active); overlay.classList.toggle('video-mode', !!callState.video); }
-    // Restore camera video if the call started with one. Otherwise remove the
-    // video sender, preserving a true voice-only call after sharing ends.
-    for (const peer of Object.values(callState.peers)) {
-      const sender = peer.pc?.getSenders?.().find(x => x.track?.kind === 'video' || (!x.track && x.kind === 'video'));
-      if (sender) { try { await sender.replaceTrack(cameraTrack); } catch (_) {} }
     }
-    renderCallGrid();
-    updateScreenShareUI();
-    broadcastMediaState();
-    await renegotiateAllPeers();
-    if (!silent) showTransientNotice(cameraTrack ? 'Демонстрация экрана остановлена' : 'Демонстрация экрана остановлена, голосовой канал продолжается');
-  } finally { screenShareStopping = false; }
+
+    if (track) {
+      peer.videoSender = stream
+        ? peer.pc.addTrack(track, stream)
+        : peer.pc.addTrack(track);
+
+      requestPeerNegotiation(peerId, peer);
+    }
+  });
 }
+
+async function synchronizeOutgoingVideo(session) {
+  if (!currentSessionMatches(session)) return;
+
+  const track = currentOutgoingVideoTrack();
+  const stream = track === screenShareTrack
+    ? screenShareStream
+    : callState.localStream;
+
+  const results = await Promise.allSettled(
+    Object.keys(callState.peers).map(peerId =>
+      setPeerVideoTrack(peerId, track, stream),
+    ),
+  );
+
+  if (!currentSessionMatches(session)) return;
+
+  const failures = results.filter(result => result.status === 'rejected');
+
+  if (failures.length) {
+    console.warn('[call] video update failed', failures);
+    showTransientNotice('Не всем участникам удалось обновить видеопоток');
+  }
+}
+
 async function startScreenShare() {
-  if (!callState.active || screenShareTrack) return;
-  if (!screenShareSupported()) { showTransientNotice('Демонстрация экрана недоступна в этом браузере'); return; }
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 30 } }, audio: false });
-  } catch (e) {
-    if (e?.name !== 'AbortError' && e?.name !== 'NotAllowedError') showTransientNotice('Не удалось начать демонстрацию экрана');
+  if (
+    !callState.active ||
+    screenShareTrack ||
+    screenShareStarting ||
+    screenShareStopping
+  ) {
     return;
   }
-  const track = screenTrackFrom(stream);
-  if (!track) { stopStream(stream); showTransientNotice('Источник экрана не найден'); return; }
-  screenShareStream = stream; screenShareTrack = track;
-  track.onended = () => { if (screenShareTrack === track) stopScreenShare({ silent: true }); };
-  for (const peer of Object.values(callState.peers)) {
-    if (!peer.pc) continue;
-    let sender = peer.pc.getSenders?.().find(x => x.track?.kind === 'video' || (!x.track && x.kind === 'video'));
-    try {
-      if (sender) await sender.replaceTrack(track);
-      else sender = peer.pc.addTrack(track, stream);
-    } catch (e) { console.warn('[call] screen track attach failed', e); }
+
+  if (!screenShareSupported()) {
+    showTransientNotice('Демонстрация экрана недоступна в этом браузере');
+    return;
   }
-  callState.video = true;
-  const overlay = $('call-overlay');
-  if (overlay) { overlay.classList.remove('voice-mode'); overlay.classList.add('video-mode'); }
+
+  const session = captureCallSession();
+  const operation = ++screenShareSequence;
+
+  screenShareStarting = true;
   updateScreenShareUI();
-  renderCallGrid();
-  broadcastMediaState();
-  await renegotiateAllPeers();
-  showTransientNotice(callState.isGroup ? 'Экран виден всем участникам группы' : 'Демонстрация экрана началась');
+
+  let stream = null;
+
+  try {
+    /*
+     * Вызов идёт непосредственно из пользовательского действия:
+     * перед getDisplayMedia нет await, теряющего user activation.
+     */
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      video: {
+        frameRate: { ideal: 30, max: 30 },
+      },
+      audio: false,
+    });
+
+    if (
+      !currentSessionMatches(session) ||
+      operation !== screenShareSequence
+    ) {
+      return;
+    }
+
+    const track = stream.getVideoTracks().find(isLiveTrack);
+
+    if (!track) {
+      showTransientNotice('Источник экрана не найден');
+      return;
+    }
+
+    screenShareStream = stream;
+    screenShareTrack = track;
+    stream = null;
+
+    track.onended = () => {
+      if (
+        currentSessionMatches(session) &&
+        screenShareTrack === track
+      ) {
+        stopScreenShare({ silent: true }).catch(error => {
+          console.warn('[call] screen stop failed', error);
+        });
+      }
+    };
+
+    refreshCallMediaUI();
+    broadcastMediaState();
+
+    await synchronizeOutgoingVideo(session);
+
+    if (
+      !currentSessionMatches(session) ||
+      operation !== screenShareSequence ||
+      screenShareTrack !== track
+    ) {
+      return;
+    }
+
+    showTransientNotice('Демонстрация экрана включена');
+  } catch (error) {
+    if (
+      currentSessionMatches(session) &&
+      operation === screenShareSequence &&
+      !['AbortError', 'NotAllowedError'].includes(error?.name)
+    ) {
+      console.warn('[call] screen capture failed', error);
+      showTransientNotice('Не удалось начать демонстрацию экрана');
+    }
+  } finally {
+    stopStream(stream);
+
+    if (operation === screenShareSequence) {
+      screenShareStarting = false;
+      updateScreenShareUI();
+    }
+  }
 }
+
+async function stopScreenShare({ silent = false } = {}) {
+  if (screenShareStopping) return;
+  if (!screenShareTrack && !screenShareStream) return;
+
+  const session = captureCallSession();
+  const operation = ++screenShareSequence;
+
+  screenShareStarting = false;
+  screenShareStopping = true;
+
+  const oldTrack = screenShareTrack;
+  const oldStream = screenShareStream;
+
+  screenShareTrack = null;
+  screenShareStream = null;
+
+  if (oldTrack) oldTrack.onended = null;
+  stopStream(oldStream);
+
+  try {
+    refreshCallMediaUI();
+    broadcastMediaState();
+
+    await synchronizeOutgoingVideo(session);
+
+    if (!currentSessionMatches(session)) return;
+    if (operation !== screenShareSequence) return;
+
+    if (!silent) {
+      showTransientNotice('Демонстрация остановлена, звонок продолжается');
+    }
+  } finally {
+    if (operation === screenShareSequence) {
+      screenShareStopping = false;
+      updateScreenShareUI();
+    }
+  }
+}
+
 async function toggleScreenShare() {
-  if (!callState.active) return;
-  if (screenShareTrack) await stopScreenShare(); else await startScreenShare();
+  if (!callState.active || screenShareStarting || screenShareStopping) return;
+
+  if (screenShareTrack) {
+    await stopScreenShare();
+  } else {
+    await startScreenShare();
+  }
 }
 
-function clearPeerWait() {
-  clearTimeout(peerWaitTimer);
-  clearInterval(peerWaitInterval);
-  peerWaitTimer = null;
-  peerWaitInterval = null;
-  peerWaitDeadline = 0;
-}
-function startPeerWait() {
-  clearPeerWait();
-  if (!callState.active || Object.keys(callState.peers).length) return;
-  clearTimeout(callState.ringTimer);
-  callState.ringTimer = null;
-  sfx.stopRing();
-  setText('call-overlay-status', 'ожидание участников · можно оставаться в войсе');
+async function renegotiateAllPeers() {
+  await Promise.allSettled(
+    Object.entries(callState.peers).map(([peerId, peer]) =>
+      sendOffer(peerId, peer.pc),
+    ),
+  );
 }
 
-/* ── Привязка звонка к чату ────────────────────────────────────────────── */
+/* ── Привязка оверлея к чату ───────────────────────────────────────────── */
+
 function callChatKey() {
   if (!callState.active) return null;
+
   return callState.isGroup
     ? `group:${callState.groupId}`
     : `dm:${callState.peerFriendId}`;
 }
 
 function openChatKey() {
-  if (state.activeGroup  != null) return `group:${state.activeGroup}`;
+  if (state.activeGroup != null) return `group:${state.activeGroup}`;
   if (state.activeFriend != null) return `dm:${state.activeFriend}`;
+
   return null;
+}
+
+function updateCallVisualMode() {
+  const overlay = $('call-overlay');
+  if (!overlay || !callState.active) return;
+
+  const localScreen = isLiveTrack(screenShareTrack);
+  const localCamera = !!localCameraTrack() && callState.camOn;
+
+  let remoteVideo = false;
+  let remoteScreen = false;
+
+  for (const peer of Object.values(callState.peers)) {
+    const liveVideo = peer.stream?.getVideoTracks().some(track =>
+      track.readyState === 'live' && !track.muted,
+    );
+
+    if (!liveVideo) continue;
+
+    if (peer.screenOn) remoteScreen = true;
+    if (peer.screenOn || peer.camOn) remoteVideo = true;
+  }
+
+  const screenVisible = localScreen || remoteScreen;
+  const videoVisible = screenVisible || localCamera || remoteVideo;
+
+  // video описывает локальную отправку, а не только вид оверлея.
+  callState.video = localScreen || !!localCameraTrack();
+
+  overlay.classList.toggle('voice-mode', !videoVisible);
+  overlay.classList.toggle('video-mode', videoVisible);
+
+  const detached = overlay.classList.contains('detached');
+
+  setText(
+    'call-overlay-mode',
+    screenVisible
+      ? (detached ? 'Демонстрация экрана' : 'ДЕМОНСТРАЦИЯ ЭКРАНА')
+      : videoVisible
+        ? (detached ? 'Видеоподключение' : 'ВИДЕОКАНАЛ')
+        : (detached ? 'Голосовое подключение' : 'ГОЛОСОВОЙ КАНАЛ'),
+  );
+
+  if (!videoVisible || detached) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+    overlay.classList.remove('idle');
+  }
+}
+
+function refreshCallMediaUI() {
+  resetCallControls();
+  updateScreenShareUI();
+  renderCallGrid();
+  updateCallVisualMode();
 }
 
 function syncCallDetached() {
@@ -601,298 +1377,402 @@ function syncCallDetached() {
   if (!overlay || !callState.active) return;
 
   const detached = callChatKey() !== openChatKey();
-  if (overlay.classList.contains('detached') === detached) return;
 
   overlay.classList.toggle('detached', detached);
   overlay.title = detached ? 'Вернуться к звонку' : '';
 
-  setText('call-overlay-mode', detached
-    ? (callState.video ? 'Видеоподключение' : 'Голосовое подключение')
-    : (callState.video ? 'ВИДЕОКАНАЛ' : 'ГОЛОСОВОЙ КАНАЛ'));
-
-  if (detached) {
-    overlay.classList.remove('idle');
-    clearTimeout(idleTimer);
-  }
+  updateCallVisualMode();
 }
 
 function returnToCallChat() {
   if (!callState.active) return;
+
   try {
     if (callState.isGroup) {
-      if (typeof openGroupChat === 'function') openGroupChat(callState.groupId);
-    } else {
-      if (typeof openChat === 'function') openChat(callState.peerFriendId);
+      if (typeof openGroupChat === 'function') {
+        openGroupChat(callState.groupId);
+      }
+    } else if (typeof openChat === 'function') {
+      openChat(callState.peerFriendId);
     }
-  } catch (e) {
-    console.warn('[call] returnToCallChat failed', e);
+  } catch (error) {
+    console.warn('[call] cannot open call chat', error);
   }
-}
-
-/* ── Клик по свёрнутой карточке ────────────────────────────────────────── */
-whenDomReady(() => {
-  const overlay = $('call-overlay');
-  if (!overlay) return;
-  overlay.addEventListener('click', e => {
-    if (!overlay.classList.contains('detached')) return;
-    if (e.target.closest('button, a, input, [role="button"]')) return;
-    returnToCallChat();
-  });
-});
-
-/* ── Наблюдение за сменой активного чата ───────────────────────────────── */
-(function watchActiveChat() {
-  for (const key of ['activeFriend', 'activeGroup']) {
-    const desc = Object.getOwnPropertyDescriptor(state, key);
-    if (!desc) continue;
-    if (desc.get || desc.set) continue; // уже обёрнуто
-
-    let value = state[key];
-    try {
-      Object.defineProperty(state, key, {
-        configurable: true,
-        enumerable: true,
-        get() { return value; },
-        set(v) {
-          value = v;
-          scheduleOverlaySync();
-        },
-      });
-    } catch (e) {
-      console.warn('[call] cannot watch state.' + key, e);
-      // Оставляем value как есть — ничего не ломаем
-    }
-  }
-})();
-
-/* ── Таймер длительности звонка ─────────────────────────────────────────── */
-function fmtDuration(totalSec) {
-  const h  = Math.floor(totalSec / 3600);
-  const m  = Math.floor((totalSec % 3600) / 60);
-  const s  = totalSec % 60;
-  const mm = String(m).padStart(2, '0');
-  const ss = String(s).padStart(2, '0');
-  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
-}
-
-function startCallTimer() {
-  if (callTimerId) return;
-  callConnectedAt = Date.now();
-  callTimerId = setInterval(() => {
-    if (!callState.active) { stopCallTimer(); return; }
-    const st = $('call-overlay-status');
-    if (!st) return;
-    // Не перезаписываем статус «переподключение…» и т.п.
-    if (!/^в звонке/.test(st.textContent ?? '')) return;
-    st.textContent = `в звонке · ${fmtDuration(Math.floor((Date.now() - callConnectedAt) / 1000))}`;
-  }, 1000);
-}
-
-function stopCallTimer() {
-  clearInterval(callTimerId);
-  callTimerId      = null;
-  callConnectedAt  = 0;
-}
-
-/* ── Оверлей звонка ─────────────────────────────────────────────────────── */
-function openCallOverlay(statusText) {
-  callState.active = true;
-  const overlay = $('call-overlay');
-  if (!overlay) {
-    console.warn('[call] #call-overlay not found');
-    return;
-  }
-
-  overlay.classList.remove('detached', 'idle');
-  overlay.classList.toggle('voice-mode', !callState.video && !screenShareTrack);
-  overlay.classList.toggle('video-mode',  callState.video);
-
-  setText('call-overlay-mode', callState.video ? 'ВИДЕОКАНАЛ' : 'ГОЛОСОВОЙ КАНАЛ');
-  overlay.style.display = 'flex';
-
-  setText('call-overlay-title', callState.isGroup
-    ? (state.groups[callState.groupId]?.name || 'Групповой звонок')
-    : callPeerName(callState.peerFriendId));
-  setText('call-overlay-status', statusText ?? '');
-
-  resetCallControls();
-  updateScreenShareUI();
-  renderCallGrid();
-  syncVoiceOverlayPosition();
-  syncCallDetached();
-
-  updateDmVoiceBar();
-  if (callState.isGroup) {
-    rememberGroupVoice(callState.groupId, callState.callId, callState.video);
-  }
-  updateGroupVoiceBar(state.activeGroup);
-  renderGroupsList();
 }
 
 function syncVoiceOverlayPosition() {
   const overlay = $('call-overlay');
+  if (!overlay || !callState.active) return;
+
   const sidebar = document.querySelector('.sidebar');
-  if (!overlay || !sidebar || overlay.style.display === 'none') return;
 
   const chatWindow = [...document.querySelectorAll('.chat-window')]
-    .find(el => {
-      const r = el.getBoundingClientRect();
-      return getComputedStyle(el).display !== 'none' && r.height > 0;
+    .find(element => {
+      const rect = element.getBoundingClientRect();
+      return getComputedStyle(element).display !== 'none' && rect.height > 0;
     });
-  const chatHead = chatWindow?.querySelector('.chat-head');
-  const top = chatHead ? chatHead.getBoundingClientRect().bottom : 0;
+
+  const header = chatWindow?.querySelector('.chat-head');
+  const top = header?.getBoundingClientRect().bottom || 0;
+
   overlay.style.setProperty('--call-top', `${Math.max(0, top)}px`);
 
-  if (window.innerWidth <= 640) {
+  if (window.innerWidth <= 640 || !sidebar) {
     overlay.style.setProperty('--call-left', '0px');
     return;
   }
 
   const rect = sidebar.getBoundingClientRect();
-  const sidebarVisible = rect.width > 0 && !sidebar.classList.contains('hidden');
-  overlay.style.setProperty('--call-left', sidebarVisible ? `${rect.right}px` : '0px');
+  const visible = rect.width > 0 &&
+    getComputedStyle(sidebar).display !== 'none' &&
+    !sidebar.classList.contains('hidden');
+
+  overlay.style.setProperty('--call-left', visible ? `${rect.right}px` : '0px');
 }
 
-let overlaySyncRaf = null;
 function scheduleOverlaySync() {
-  if (overlaySyncRaf) return;
+  if (overlaySyncRaf !== null) return;
+
   overlaySyncRaf = requestAnimationFrame(() => {
     overlaySyncRaf = null;
+
     updateDmVoiceBar();
+
     if (!callState.active) return;
+
     syncVoiceOverlayPosition();
     syncCallDetached();
   });
 }
 
-window.addEventListener('resize',            scheduleOverlaySync, { passive: true });
-window.addEventListener('orientationchange', scheduleOverlaySync, { passive: true });
+(function watchActiveChat() {
+  for (const key of ['activeFriend', 'activeGroup']) {
+    const descriptor = Object.getOwnPropertyDescriptor(state, key);
 
-whenDomReady(() => {
-  const sidebar = document.querySelector('.sidebar');
-  if (sidebar && 'MutationObserver' in window) {
-    new MutationObserver(scheduleOverlaySync)
-      .observe(sidebar, { attributes: true, attributeFilter: ['class', 'style'] });
-  }
-});
-
-/* ── Закрытие оверлея и очистка всего состояния ────────────────────────── */
-function closePeerConnection(p) {
-  if (!p) return;
-  clearTimeout(p.restartTimer);
-  clearTimeout(p.disconnectTimer);
-  try {
-    if (p.dc) {
-      p.dc.onopen    = null;
-      p.dc.onmessage = null;
-      p.dc.close();
+    if (
+      !descriptor ||
+      !descriptor.configurable ||
+      descriptor.get ||
+      descriptor.set ||
+      descriptor.writable === false
+    ) {
+      continue;
     }
-  } catch (_) {}
-  try {
-    const { pc } = p;
-    pc.onicecandidate          = null;
-    pc.ontrack                 = null;
-    pc.onconnectionstatechange = null;
-    pc.oniceconnectionstatechange = null;
-    pc.close();
-  } catch (_) {}
+
+    let value = descriptor.value;
+
+    try {
+      Object.defineProperty(state, key, {
+        configurable: descriptor.configurable,
+        enumerable: descriptor.enumerable,
+        get() {
+          return value;
+        },
+        set(next) {
+          if (Object.is(next, value)) return;
+          value = next;
+          scheduleOverlaySync();
+        },
+      });
+    } catch (error) {
+      // defineProperty атомарен: при ошибке старое свойство сохраняется.
+      console.warn(`[call] cannot watch state.${key}`, error);
+    }
+  }
+})();
+
+/* ── Таймер и статус ───────────────────────────────────────────────────── */
+
+function fmtDuration(totalSeconds) {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+
+  const mm = String(minutes).padStart(2, '0');
+  const ss = String(remainder).padStart(2, '0');
+
+  return hours ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
-function closeCallOverlay() {
+function startCallTimer() {
+  if (callTimerId !== null) return;
+
+  callConnectedAt = Date.now();
+
+  callTimerId = setInterval(() => {
+    if (!callState.active) {
+      stopCallTimer();
+      return;
+    }
+
+    const status = $('call-overlay-status');
+    if (!status || !/^в звонке/.test(status.textContent || '')) return;
+
+    status.textContent =
+      `в звонке · ${fmtDuration((Date.now() - callConnectedAt) / 1000)}`;
+  }, 1000);
+}
+
+function stopCallTimer() {
+  clearInterval(callTimerId);
+  callTimerId = null;
+  callConnectedAt = 0;
+}
+
+// Совместимость с внешними UI-хуками.
+function clearPeerWait() {}
+
+function startPeerWait() {
+  if (!callState.active || Object.keys(callState.peers).length) return;
+
+  stopOutgoingRing();
+  setText('call-overlay-status', 'ожидание участников · можно оставаться в войсе');
+}
+
+function openCallOverlay(statusText = '') {
+  callState.active = true;
+
   const overlay = $('call-overlay');
-  if (overlay) {
-    overlay.style.display = 'none';
-    overlay.classList.remove('voice-mode', 'video-mode', 'idle', 'detached');
-    overlay.title = '';
-    clearTimeout(idleTimer);
-    idleTimer = null;
-    overlay.style.removeProperty('--call-left');
-    overlay.style.removeProperty('--call-top');
+
+  if (!overlay) {
+    console.error('[call] #call-overlay not found');
+    closeCallOverlay();
+    return;
   }
 
-  stopCallTimer();
-  clearPeerWait();
-  clearTimeout(screenShareNegotiationTimer);
-  screenShareNegotiationTimer = null;
-  setDisplay('incoming-call-modal', 'none');
-  clearTimeout(callState.ringTimer);
-  clearTimeout(callState.incomingTimer);
-  callState.ringTimer    = null;
-  callState.incomingTimer = null;
-  sfx.stopRing();
+  overlay.classList.remove('detached', 'idle');
+  overlay.style.display = 'flex';
 
-  stopAllSpeakingMonitors();
-  const oldScreenTrack = screenShareTrack;
-  screenShareTrack = null;
-  if (oldScreenTrack) { oldScreenTrack.onended = null; try { oldScreenTrack.stop(); } catch (_) {} }
-  stopStream(screenShareStream);
-  screenShareStream = null;
-  screenShareStopping = false;
-  updateScreenShareUI();
-  stopStream(callState.localStream);
-  Object.values(callState.peers).forEach(closePeerConnection);
+  setText(
+    'call-overlay-title',
+    callState.isGroup
+      ? state.groups[callState.groupId]?.name || 'Групповой звонок'
+      : callPeerName(callState.peerFriendId),
+  );
 
-  const wasGroupId = callState.isGroup ? callState.groupId : null;
+  setText('call-overlay-status', statusText);
 
-  // Сбрасываем всё состояние
-  callState.active        = false;
-  callState.callId        = null;
-  callState.chatKey       = null;
-  callState.isGroup       = false;
-  callState.groupId       = null;
-  callState.peerFriendId  = null;
-  callState.peerFriendName = null;
-  callState.video         = false;
-  callState.localStream   = null;
-  callState.micOn         = true;
-  callState.camOn         = true;
-  callState.peers         = Object.create(null);
-  callState.pendingIncoming = null;
+  refreshCallMediaUI();
+  syncVoiceOverlayPosition();
+  syncCallDetached();
 
-  // Invalidate a pending start; its delayed reply will be explicitly left.
-  pendingStartRequestId = null;
-
-  const grid = $('call-video-grid');
-  if (grid) {
-    grid.querySelectorAll('video').forEach(v => {
-      try { v.srcObject = null; } catch (_) {}
-    });
-    grid.innerHTML = '';
-    delete grid.dataset.count;
-  }
-
-  resetCallControls();
   updateDmVoiceBar();
-
-  updateGroupVoiceBar(state.activeGroup || wasGroupId);
+  updateGroupVoiceBar(state.activeGroup);
   renderGroupsList();
 }
 
-/* ── Сетка участников ───────────────────────────────────────────────────── */
+/* ── Сетка участников ──────────────────────────────────────────────────── */
+
+function createMicOffIcon() {
+  const namespace = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(namespace, 'svg');
+
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+
+  const path = document.createElementNS(namespace, 'path');
+
+  path.setAttribute(
+    'd',
+    'M9 5a3 3 0 0 1 6 0v4M9 9v3a3 3 0 0 0 5.1 2.1' +
+    'M5 10v2a7 7 0 0 0 12 4.9M19 10v2a7 7 0 0 1-.5 2.6' +
+    'M12 19v3M8 22h8M2 2l20 20',
+  );
+
+  svg.appendChild(path);
+  return svg;
+}
+
+function tryPlayCallMedia(element) {
+  try {
+    const result = element.play();
+
+    if (result?.then) {
+      result.then(
+        () => {
+          delete element.dataset.playPending;
+        },
+        () => {
+          if (element.srcObject) element.dataset.playPending = '1';
+        },
+      );
+    }
+  } catch (_) {
+    element.dataset.playPending = '1';
+  }
+}
+
+function updateCallTile(tile, entry) {
+  const {
+    nick,
+    avatar,
+    stream,
+    isLocal,
+    micOn,
+    camOn,
+    screenOn,
+  } = entry;
+
+  const hasVideo = !!stream &&
+    (screenOn || camOn) &&
+    stream.getVideoTracks().some(track =>
+      track.enabled &&
+      track.readyState === 'live' &&
+      (isLocal || !track.muted),
+    );
+
+  const speaking = micOn && tile.classList.contains('speaking');
+
+  tile.className = [
+    'call-tile',
+    isLocal ? 'local' : '',
+    !hasVideo ? 'audio-only' : '',
+    !micOn ? 'muted' : '',
+    speaking ? 'speaking' : '',
+    screenOn ? 'screen-sharing' : '',
+  ].filter(Boolean).join(' ');
+
+  let video = tile.querySelector('video');
+
+  if (hasVideo) {
+    if (!video) {
+      video = document.createElement('video');
+      video.autoplay = true;
+      video.playsInline = true;
+      video.muted = true;
+      video.disablePictureInPicture = true;
+      video.setAttribute('playsinline', '');
+
+      tile.prepend(video);
+    }
+
+    video.muted = true;
+
+    if (video.srcObject !== stream) {
+      video.srcObject = stream;
+      tryPlayCallMedia(video);
+    } else if (video.paused) {
+      tryPlayCallMedia(video);
+    }
+  } else if (video) {
+    try {
+      video.pause();
+      video.srcObject = null;
+    } catch (_) {}
+
+    video.remove();
+  }
+
+  const hasAudio = !isLocal &&
+    !!stream &&
+    stream.getAudioTracks().some(isLiveTrack);
+
+  let audio = tile.querySelector('audio.call-tile-audio');
+
+  if (hasAudio) {
+    if (!audio) {
+      audio = document.createElement('audio');
+      audio.className = 'call-tile-audio';
+      audio.autoplay = true;
+      audio.setAttribute('playsinline', '');
+
+      tile.prepend(audio);
+    }
+
+    audio.setAttribute('aria-label', `Аудио ${nick}`);
+    audio.muted = false;
+    audio.volume = 1;
+
+    if (audio.srcObject !== stream) {
+      audio.srcObject = stream;
+      tryPlayCallMedia(audio);
+    } else if (audio.paused) {
+      tryPlayCallMedia(audio);
+    }
+  } else if (audio) {
+    try {
+      audio.pause();
+      audio.srcObject = null;
+    } catch (_) {}
+
+    audio.remove();
+  }
+
+  let avatarWrap = tile.querySelector('.call-tile-avatar');
+
+  if (!avatarWrap) {
+    avatarWrap = document.createElement('div');
+    avatarWrap.className = 'call-tile-avatar';
+    tile.appendChild(avatarWrap);
+  }
+
+  const avatarKey = JSON.stringify([nick, avatar ?? null]);
+
+  if (avatarWrap.dataset.key !== avatarKey) {
+    renderAv(avatarWrap, nick, avatar);
+    avatarWrap.dataset.key = avatarKey;
+  }
+
+  let label = tile.querySelector('.call-tile-nick');
+
+  if (!label) {
+    label = document.createElement('div');
+    label.className = 'call-tile-nick';
+    tile.appendChild(label);
+  }
+
+  label.textContent = nick;
+
+  let badge = tile.querySelector('.call-tile-mic-off');
+
+  if (!micOn && !badge) {
+    badge = document.createElement('div');
+    badge.className = 'call-tile-mic-off';
+    badge.title = 'Микрофон выключен';
+    badge.setAttribute('aria-label', badge.title);
+    badge.appendChild(createMicOffIcon());
+
+    tile.insertBefore(badge, label);
+  } else if (micOn && badge) {
+    badge.remove();
+  }
+}
+
 function renderCallGrid() {
   const grid = $('call-video-grid');
   if (!grid || !callState.active) return;
 
-  /** @type {Array<{id:string, nick:string, avatar:string|null, stream:MediaStream|null, isLocal:boolean, micOn:boolean, camOn:boolean}>} */
   const entries = [{
-    id:      'local',
-    nick:    state.me?.nickname || 'Я',
-    avatar:  state.me?.avatar  || null,
-    stream:  screenShareStream || callState.localStream,
+    // Отдельное пространство ID не конфликтует с пользовательским ID "local".
+    id: 'local',
+    nick: state.me?.nickname || 'Я',
+    avatar: state.me?.avatar || null,
+    stream: screenShareStream || callState.localStream,
+    monitorStream: callState.localStream,
     isLocal: true,
-    micOn:   callState.micOn,
-    camOn:   callState.camOn || !!screenShareTrack,
+    micOn: !!callState.micOn,
+    camOn: !!callState.camOn,
+    screenOn: isLiveTrack(screenShareTrack),
   }];
 
-  for (const [peerId, p] of Object.entries(callState.peers)) {
+  for (const [peerId, peer] of Object.entries(callState.peers)) {
     entries.push({
-      id:      peerId,
-      nick:    callPeerName(peerId),
-      avatar:  callPeerAvatar(peerId),
-      stream:  p.stream,
+      id: `peer:${peerId}`,
+      peerId,
+      nick: callPeerName(peerId),
+      avatar: callPeerAvatar(peerId),
+      stream: peer.stream,
+      monitorStream: peer.stream,
       isLocal: false,
-      micOn:   p.micOn !== false,
-      camOn:   p.camOn !== false,
+      micOn: peer.micOn,
+      camOn: peer.camOn,
+      screenOn: peer.screenOn,
     });
   }
 
@@ -900,1212 +1780,1903 @@ function renderCallGrid() {
 
   for (const entry of entries) {
     seen.add(entry.id);
-    let tile = grid.querySelector(`.call-tile[data-peer="${cssEsc(entry.id)}"]`);
+
+    let tile = findCallTile(entry.id, grid);
+
     if (!tile) {
       tile = document.createElement('div');
       tile.className = 'call-tile';
       tile.dataset.peer = entry.id;
       grid.appendChild(tile);
     }
+
     updateCallTile(tile, entry);
-    ensureSpeakingMonitor(entry.id, entry.isLocal ? callState.localStream : entry.stream);
+    ensureSpeakingMonitor(entry.id, entry.monitorStream);
   }
 
-  // Удаляем плитки ушедших участников
-  grid.querySelectorAll('.call-tile').forEach(t => {
-    if (seen.has(t.dataset.peer)) return;
-    const v = t.querySelector('video');
-    if (v) { try { v.srcObject = null; } catch (_) {} }
-    t.remove();
-  });
+  for (const tile of grid.querySelectorAll('.call-tile')) {
+    if (seen.has(tile.dataset.peer)) continue;
 
-  // Останавливаем мониторы для ушедших
+    releaseMediaElements(tile);
+    tile.remove();
+  }
+
   for (const id of Object.keys(speakingMonitors)) {
     if (!seen.has(id)) stopSpeakingMonitor(id);
   }
 
   grid.dataset.count = String(entries.length);
-  const hasRemoteVideo = entries.some(entry => !entry.isLocal && entry.stream?.getVideoTracks?.().some(track => track.readyState === 'live' && !track.muted));
-  const overlay = $('call-overlay');
-  if (overlay && callState.active) {
-    const showingScreen = !!screenShareTrack || hasRemoteVideo;
-    overlay.classList.toggle('voice-mode', !showingScreen);
-    overlay.classList.toggle('video-mode', showingScreen);
-    if (hasRemoteVideo && !screenShareTrack) setText('call-overlay-mode', 'ДЕМОНСТРАЦИЯ ЭКРАНА');
-    else if (!hasRemoteVideo && !screenShareTrack) setText('call-overlay-mode', callState.video ? 'ВИДЕОКАНАЛ' : 'ГОЛОСОВОЙ КАНАЛ');
-  }
+  updateCallVisualMode();
 }
 
-/**
- * Создаёт SVG-иконку «микрофон выключен» без innerHTML.
- * Все атрибуты задаются через setAttribute — XSS невозможен.
- */
-function createMicOffIcon() {
-  const ns  = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(ns, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('fill', 'currentColor');
-  svg.setAttribute('aria-hidden', 'true');
-
-  // Линия перечёркивания
-  const line = document.createElementNS(ns, 'line');
-  line.setAttribute('x1', '1'); line.setAttribute('y1', '1');
-  line.setAttribute('x2', '23'); line.setAttribute('y2', '23');
-  line.setAttribute('stroke', 'currentColor');
-  line.setAttribute('stroke-width', '2');
-
-  // Контур микрофона
-  const path = document.createElementNS(ns, 'path');
-  path.setAttribute('d', [
-    'M12 1a4 4 0 0 1 4 4v6',
-    'a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4z',
-    'M19 10a7 7 0 0 1-3.5 6.06',
-    'M5 10a7 7 0 0 0 9.9 6.4',
-    'M12 19v4',
-    'M8 23h8',
-  ].join(' '));
-
-  svg.appendChild(path);
-  svg.appendChild(line);
-  return svg;
-}
-
-function updateCallTile(tile, { nick: nickname, avatar: avatarUrl, stream, isLocal, micOn, camOn }) {
-  const hasVideo = camOn && !!stream &&
-    stream.getVideoTracks().some(t =>
-      t.enabled && t.readyState === 'live' && !(t.muted && !isLocal)
-    );
-  const speaking = tile.classList.contains('speaking') && micOn;
-
-  tile.className = [
-    'call-tile',
-    isLocal   ? 'local'      : '',
-    !hasVideo ? 'audio-only' : '',
-    !micOn    ? 'muted'      : '',
-    speaking  ? 'speaking'   : '',
-  ].filter(Boolean).join(' ');
-
-  /* ── Медиа-вывод ──
-   * Разделение видео и звука:
-   * Видео-элемент отвечает за отображение экрана или камеры (muted, чтобы не вызывать конфликтов воспроизведения и эха).
-   * Аудио-элемент отвечает за воспроизведение голоса удалённого собеседника ВСЕГДА, даже когда включена демонстрация экрана!
-   */
-  let video = tile.querySelector('video');
-  if (hasVideo && stream) {
-    if (!video) {
-      video = document.createElement('video');
-      video.autoplay = true;
-      video.playsInline = true;
-      video.setAttribute('playsinline', '');
-      video.disablePictureInPicture = true;
-      tile.prepend(video);
-    }
-    video.muted = true; // Видео всегда muted, так как весь удалённый звук идёт через audio.call-tile-audio
-    if (video.srcObject !== stream) video.srcObject = stream;
-    video.play?.().catch(() => {});
-  } else if (video) {
-    try { video.pause?.(); video.srcObject = null; } catch (_) {}
-    video.remove();
-  }
-
-  const hasRemoteAudio = !isLocal && !!stream && stream.getAudioTracks().some(t => t.readyState !== 'ended');
-  let audio = tile.querySelector('audio.call-tile-audio');
-  if (hasRemoteAudio) {
-    if (!audio) {
-      audio = document.createElement('audio');
-      audio.className = 'call-tile-audio';
-      audio.autoplay = true;
-      audio.setAttribute('autoplay', '');
-      audio.setAttribute('playsinline', '');
-      audio.setAttribute('aria-label', `Аудио ${nickname}`);
-      tile.prepend(audio);
-    }
-    audio.muted = false;
-    audio.volume = 1;
-    if (audio.srcObject !== stream) audio.srcObject = stream;
-    audio.play?.().catch(() => {
-      audio.dataset.playPending = '1';
-    });
-  } else if (audio) {
-    try { audio.pause?.(); audio.srcObject = null; } catch (_) {}
-    audio.remove();
-  }
-
-  /* ── Аватар ── */
-  let avWrap = tile.querySelector('.call-tile-avatar');
-  if (!avWrap) {
-    avWrap = document.createElement('div');
-    avWrap.className = 'call-tile-avatar';
-    tile.appendChild(avWrap);
-  }
-  const avKey = `${nickname}|${avatarUrl ?? ''}`;
-  if (avWrap.dataset.key !== avKey) {
-    renderAv(avWrap, nickname, avatarUrl);
-    avWrap.dataset.key = avKey;
-  }
-
-  /* ── Никнейм ── */
-  let label = tile.querySelector('.call-tile-nick');
-  if (!label) {
-    label = document.createElement('div');
-    label.className = 'call-tile-nick';
-    tile.appendChild(label);
-  }
-  // textContent — безопасно, никаких innerHTML
-  label.textContent = nickname;
-
-  /* ── Бейдж выключенного микрофона (без innerHTML) ── */
-  let badge = tile.querySelector('.call-tile-mic-off');
-  if (!micOn) {
-    if (!badge) {
-      badge = document.createElement('div');
-      badge.className = 'call-tile-mic-off';
-      badge.title     = 'Микрофон выключен';
-      badge.setAttribute('aria-label', 'Микрофон выключен');
-      badge.appendChild(createMicOffIcon());
-      tile.insertBefore(badge, label);
-    }
-  } else if (badge) {
-    badge.remove();
-  }
-}
-
-/* ── Индикатор «говорит» (Web Audio) ───────────────────────────────────── */
-const SPEAKING_THRESHOLD_ON  = 0.06;
-const SPEAKING_THRESHOLD_OFF = 0.035;
-let audioCtx = null;
+/* ── Web Audio: индикатор речи ─────────────────────────────────────────── */
 
 function getAudioCtx() {
   if (audioCtx && audioCtx.state !== 'closed') {
-    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => {});
+    }
+
     return audioCtx;
   }
+
   try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    audioCtx = AC ? new AC() : null;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    audioCtx = AudioContextClass ? new AudioContextClass() : null;
   } catch (_) {
     audioCtx = null;
   }
+
   return audioCtx;
 }
 
-function setSpeakingUI(id, isSpeaking) {
-  const tile = findCallTile(id);
-  if (tile) tile.classList.toggle('speaking', isSpeaking);
+function setSpeakingUI(id, speaking) {
+  findCallTile(id)?.classList.toggle('speaking', speaking);
 }
 
 function stopSpeakingMonitor(id) {
-  const mon = speakingMonitors[id];
-  if (!mon) return;
-  cancelAnimationFrame(mon.raf);
-  try { mon.source.disconnect();  } catch (_) {}
-  try { mon.analyser.disconnect(); } catch (_) {}
+  const monitor = speakingMonitors[id];
+  if (!monitor) return;
+
+  cancelAnimationFrame(monitor.raf);
+
+  try {
+    monitor.source.disconnect();
+  } catch (_) {}
+
+  try {
+    monitor.analyser.disconnect();
+  } catch (_) {}
+
   delete speakingMonitors[id];
   setSpeakingUI(id, false);
 }
 
 function stopAllSpeakingMonitors() {
   Object.keys(speakingMonitors).forEach(stopSpeakingMonitor);
-  if (audioCtx) {
-    try { audioCtx.close(); } catch (_) {}
-    audioCtx = null;
+
+  const previousContext = audioCtx;
+  audioCtx = null;
+
+  if (previousContext && previousContext.state !== 'closed') {
+    try {
+      previousContext.close().catch(() => {});
+    } catch (_) {}
   }
 }
 
 function startSpeakingMonitor(id, stream) {
-  if (!stream?.getAudioTracks().length) return;
-  const ctx = getAudioCtx();
-  if (!ctx) return;
+  const track = stream?.getAudioTracks().find(isLiveTrack);
+  if (!track) return;
+
+  const context = getAudioCtx();
+  if (!context) return;
 
   let source;
+  let analyser;
+
   try {
-    source = ctx.createMediaStreamSource(stream);
+    // Один конкретный живой трек: нет зависимости от порядка треков в stream.
+    source = context.createMediaStreamSource(new MediaStream([track]));
+    analyser = context.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.65;
+    source.connect(analyser);
   } catch (_) {
+    try {
+      source?.disconnect();
+    } catch (_) {}
     return;
   }
 
-  const analyser = ctx.createAnalyser();
-  analyser.fftSize               = 512;
-  analyser.smoothingTimeConstant = 0.65;
-  source.connect(analyser);
+  const data = new Uint8Array(analyser.fftSize);
 
-  const data = new Uint8Array(analyser.frequencyBinCount);
-  const mon  = { analyser, data, source, stream, raf: null };
-  speakingMonitors[id] = mon;
+  const monitor = {
+    source,
+    analyser,
+    data,
+    stream,
+    track,
+    raf: null,
+  };
+
+  speakingMonitors[id] = monitor;
 
   let wasSpeaking = false;
 
-  (function tick() {
-    if (speakingMonitors[id] !== mon) return; // монитор заменён — останавливаемся
+  const tick = () => {
+    if (speakingMonitors[id] !== monitor) return;
 
+    const peerId = id.startsWith('peer:') ? id.slice(5) : null;
     const muted = id === 'local'
       ? !callState.micOn
-      : callState.peers[id]?.micOn === false;
+      : !callState.peers[peerId] || callState.peers[peerId].micOn === false;
 
-    if (muted) {
-      if (wasSpeaking) { wasSpeaking = false; setSpeakingUI(id, false); }
-      mon.raf = requestAnimationFrame(tick);
-      return;
+    let speaking = false;
+
+    if (!muted && track.readyState === 'live' && !document.hidden) {
+      analyser.getByteTimeDomainData(data);
+
+      let sum = 0;
+
+      for (const value of data) {
+        const normalized = (value - 128) / 128;
+        sum += normalized * normalized;
+      }
+
+      const rms = Math.sqrt(sum / data.length);
+
+      speaking = rms > (
+        wasSpeaking ? SPEAKING_THRESHOLD_OFF : SPEAKING_THRESHOLD_ON
+      );
     }
 
-    analyser.getByteTimeDomainData(data);
-    let sumSq = 0;
-    for (let i = 0; i < data.length; i++) {
-      const v = (data[i] - 128) / 128;
-      sumSq += v * v;
+    if (speaking !== wasSpeaking) {
+      wasSpeaking = speaking;
+      setSpeakingUI(id, speaking);
     }
-    const rms        = Math.sqrt(sumSq / data.length);
-    const isSpeaking = wasSpeaking
-      ? rms > SPEAKING_THRESHOLD_OFF
-      : rms > SPEAKING_THRESHOLD_ON;
 
-    if (isSpeaking !== wasSpeaking) {
-      wasSpeaking = isSpeaking;
-      setSpeakingUI(id, isSpeaking);
-    }
-    mon.raf = requestAnimationFrame(tick);
-  })();
+    monitor.raf = requestAnimationFrame(tick);
+  };
+
+  tick();
 }
 
 function ensureSpeakingMonitor(id, stream) {
   const existing = speakingMonitors[id];
-  if (!stream?.getAudioTracks().length) {
+  const track = stream?.getAudioTracks().find(isLiveTrack);
+
+  if (!track) {
     if (existing) stopSpeakingMonitor(id);
     return;
   }
-  if (existing?.stream === stream) return;
+
+  if (existing?.track === track) return;
+
   if (existing) stopSpeakingMonitor(id);
+
   startSpeakingMonitor(id, stream);
 }
 
-/* ── Peer connections ──────────────────────────────────────────────────── */
+/* ── WebRTC и последовательные переговоры ──────────────────────────────── */
 
-/** Проверяет, что pc — актуальный PeerConnection для данного пира. */
 function isCurrentPc(peerId, pc) {
   const peer = callState.peers[peerId];
-  return !!peer && peer.pc === pc && callState.active;
+
+  return !!peer &&
+    peer.pc === pc &&
+    callState.active &&
+    peer.session === callSessionSequence &&
+    pc.signalingState !== 'closed';
 }
 
-/** «Вежливая» сторона (perfect negotiation) — с бо́льшим id. */
 function isPolite(peerId) {
-  return String(state.me?.id ?? '') > String(peerId);
+  return String(state.me?.id || '') > String(peerId);
 }
 
-/**
- * Создаёт или возвращает существующий PeerConnection.
- * Если существующий pc закрыт/failed — пересоздаёт.
- */
-function createPeerConnection(peerId) {
-  const existingPeer = callState.peers[peerId];
-
-  // Переиспользуем только живой pc
-  if (existingPeer?.pc) {
-    const st = existingPeer.pc.connectionState ?? existingPeer.pc.iceConnectionState;
-    if (st !== 'closed' && st !== 'failed') return existingPeer.pc;
-    // Старый pc умер — закрываем и пересоздаём
-    closePeerConnection(existingPeer);
-    delete callState.peers[peerId];
-  }
-
-  const pc = new RTCPeerConnection({ ...RTC_CONFIG });
-  /** @type {PeerEntry} */
-  const peer = {
-    pc,
-    dc:                null,
-    stream:            null,
-    pendingCandidates: [],
-    makingOffer:       false,
-    iceRestarted:      false,
-    restartTimer:      null,
-    disconnectTimer:   null,
-    micOn:             true,
-    camOn:             true,
-  };
-  callState.peers[peerId] = peer;
-
-  // Добавляем треки локального потока
-  if (callState.localStream) {
-    for (const track of callState.localStream.getTracks()) {
-      try { pc.addTrack(track, callState.localStream); } catch (e) {
-        console.warn('[call] addTrack failed', peerId, e);
-      }
-    }
-  }
-
-  // DataChannel для состояния мик/камеры (negotiated id=0 — не вызывает renegotiation)
-  try {
-    const dc = pc.createDataChannel('state', { negotiated: true, id: 0, ordered: true });
-    peer.dc  = dc;
-    dc.onopen = () => {
-      if (isCurrentPc(peerId, pc)) sendMediaState(peerId);
-    };
-    dc.onmessage = e => {
-      if (!isCurrentPc(peerId, pc)) return;
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg?.type === 'state') applyRemoteMediaState(peerId, msg);
-      } catch (_) {}
-    };
-  } catch (e) {
-    console.warn('[call] DataChannel unavailable, falling back to signaling', e);
-  }
-
-  pc.onicecandidate = e => {
-    if (e.candidate && callState.callId && isCurrentPc(peerId, pc)) {
-      socket.emit('callSignal', {
-        callId: callState.callId,
-        to:     peerId,
-        data:   { type: 'ice', candidate: e.candidate.toJSON?.() ?? e.candidate },
-      });
-    }
-  };
-
-  pc.ontrack = e => {
-    if (!isCurrentPc(peerId, pc)) return;
-    if (!peer.stream) {
-      peer.stream = e.streams?.[0] || new MediaStream();
-    }
-    if (e.track && !peer.stream.getTracks().includes(e.track)) {
-      peer.stream.addTrack(e.track);
-    }
-    if (e.streams?.[0]) {
-      for (const t of e.streams[0].getTracks()) {
-        if (!peer.stream.getTracks().includes(t)) {
-          peer.stream.addTrack(t);
-        }
-      }
-    }
-    e.track.onmute   = () => renderCallGrid();
-    e.track.onunmute = () => renderCallGrid();
-    e.track.onended  = () => renderCallGrid();
-    renderCallGrid();
-  };
-
-  // Fallback для браузеров без connectionState
-  pc.oniceconnectionstatechange = () => {
-    if (!isCurrentPc(peerId, pc)) return;
-    if (pc.iceConnectionState === 'failed' && !('connectionState' in pc)) {
-      handlePeerFailed(peerId, pc);
-    }
-  };
-
-  pc.onconnectionstatechange = () => {
-    if (!isCurrentPc(peerId, pc)) return;
-    const st = pc.connectionState;
-
-    if (st === 'connected') {
-      clearTimeout(peer.restartTimer);
-      clearTimeout(peer.disconnectTimer);
-      peer.restartTimer = null;
-      peer.disconnectTimer = null;
-      peer.iceRestarted = false;
-      clearTimeout(callState.ringTimer);
-      callState.ringTimer = null;
-      sfx.stopRing();
-      clearPeerWait();
-      setText('call-overlay-status', 'в звонке');
-      startCallTimer();
-      if (!peer.dc || peer.dc.readyState !== 'open') sendMediaState(peerId);
-    } else if (st === 'disconnected') {
-      setText('call-overlay-status', 'переподключение через relay…');
-      clearTimeout(peer.disconnectTimer);
-      peer.disconnectTimer = setTimeout(() => {
-        if (!isCurrentPc(peerId, pc)) return;
-        const current = pc.connectionState || pc.iceConnectionState;
-        if (current === 'connected') return;
-        handlePeerFailed(peerId, pc);
-      }, 2_500);
-    } else if (st === 'failed') {
-      handlePeerFailed(peerId, pc);
-    }
-  };
-
-  return pc;
+function peerConnectionStatus(pc) {
+  return pc.connectionState || pc.iceConnectionState;
 }
 
-
-/** Максимизация качества аудио в SDP (Opus: битрейт до 510 кбит/с, стерео, 48kHz, отключен DTX). */
-function maximizeAudioQualitySDP(sdp) {
-  if (!sdp) return sdp;
-  let lines = sdp.split('\r\n');
-  let opusPayloadType = null;
-
-  for (const line of lines) {
-    const match = line.match(/^a=rtpmap:(\d+)\s+opus\/48000/i);
-    if (match) {
-      opusPayloadType = match[1];
-      break;
-    }
-  }
-
-  if (opusPayloadType) {
-    const fmtpPrefix = `a=fmtp:${opusPayloadType} `;
-    let fmtpFound = false;
-    lines = lines.map(line => {
-      if (line.startsWith(fmtpPrefix)) {
-        fmtpFound = true;
-        let params = line.slice(fmtpPrefix.length).split(';');
-        let pMap = new Map();
-        for (const p of params) {
-          const [k, v] = p.trim().split('=');
-          if (k) pMap.set(k.toLowerCase(), v || '1');
-        }
-        pMap.set('maxaveragebitrate', '510000');
-        pMap.set('stereo', '1');
-        pMap.set('sprop-stereo', '1');
-        pMap.set('maxplaybackrate', '48000');
-        pMap.set('cbr', '1');
-        pMap.set('useinbandfec', '0');
-        pMap.set('usedtx', '0');
-        return fmtpPrefix + Array.from(pMap.entries()).map(([k, v]) => `${k}=${v}`).join(';');
-      }
-      return line;
-    });
-
-    if (!fmtpFound) {
-      const idx = lines.findIndex(l => l.startsWith(`a=rtpmap:${opusPayloadType}`));
-      if (idx !== -1) {
-        lines.splice(idx + 1, 0, `${fmtpPrefix}maxaveragebitrate=510000;stereo=1;sprop-stereo=1;maxplaybackrate=48000;cbr=1;useinbandfec=0;usedtx=0`);
-      }
-    }
-  }
-
-  return lines.join('\r\n');
+function peerIsConnected(pc) {
+  return ['connected', 'completed'].includes(peerConnectionStatus(pc));
 }
 
-/** Применение максимального битрейта (510 kbps) ко всем аудио-сендерам PeerConnection */
-async function applyMaxAudioBitrate(pc) {
-  if (!pc || typeof pc.getSenders !== 'function') return;
+function enqueuePeerOperation(peerId, peer, operation) {
+  const task = peer.queue.then(async () => {
+    if (!isCurrentPc(peerId, peer.pc)) return;
+    return operation();
+  });
+
+  // Очередь остаётся пригодной для следующей операции после ошибки.
+  peer.queue = task.catch(error => {
+    if (isCurrentPc(peerId, peer.pc)) {
+      console.warn('[call] peer operation failed', peerId, error);
+    }
+  });
+
+  return task;
+}
+
+async function applyAudioBitrate(pc) {
+  if (pc.signalingState === 'closed') return;
+
   for (const sender of pc.getSenders()) {
-    if (sender.track && sender.track.kind === 'audio') {
-      try {
-        const params = sender.getParameters();
-        if (!params.encodings || !params.encodings.length) {
-          params.encodings = [{}];
-        }
-        for (const enc of params.encodings) {
-          enc.maxBitrate = 510000; // 510 kbps (максимум для Opus)
-          enc.priority = 'high';
-          enc.networkPriority = 'high';
-        }
-        await sender.setParameters(params);
-      } catch (err) {
-        // Некоторые браузеры могут ограничивать setParameters до завершения negotiation
+    if (sender.track?.kind !== 'audio') continue;
+
+    try {
+      const parameters = sender.getParameters();
+
+      // Не создаём encodings вручную: некоторые браузеры запрещают их изменение.
+      if (!parameters.encodings?.length) continue;
+
+      for (const encoding of parameters.encodings) {
+        encoding.maxBitrate = AUDIO_MAX_BITRATE;
       }
+
+      await sender.setParameters(parameters);
+    } catch (_) {
+      // Ограничение битрейта — оптимизация, а не условие работы звонка.
     }
   }
+}
+
+function requestPeerNegotiation(peerId, peer, { iceRestart = false } = {}) {
+  if (!isCurrentPc(peerId, peer.pc)) return;
+
+  peer.needsNegotiation = true;
+  peer.needsIceRestart ||= iceRestart;
+
+  pumpPeerNegotiation(peerId, peer);
+}
+
+function pumpPeerNegotiation(peerId, peer) {
+  if (!isCurrentPc(peerId, peer.pc)) return;
+  if (peer.offerQueued || !peer.needsNegotiation) return;
+  if (!socket.connected || !isId(callState.callId)) return;
+  if (peer.pc.signalingState !== 'stable') return;
+
+  peer.offerQueued = true;
+
+  enqueuePeerOperation(peerId, peer, async () => {
+    if (!socket.connected || !isId(callState.callId)) return;
+    if (peer.pc.signalingState !== 'stable') return;
+    if (!peer.needsNegotiation) return;
+
+    const pc = peer.pc;
+    const callId = callState.callId;
+    const iceRestart = peer.needsIceRestart;
+
+    peer.needsNegotiation = false;
+    peer.needsIceRestart = false;
+    peer.makingOffer = true;
+
+    try {
+      const offer = await pc.createOffer(
+        iceRestart ? { iceRestart: true } : undefined,
+      );
+
+      if (!isCurrentPc(peerId, pc)) return;
+
+      await pc.setLocalDescription(offer);
+
+      if (!isCurrentPc(peerId, pc)) return;
+      if (callState.callId !== callId) return;
+
+      const description = pc.localDescription;
+
+      emitCall('callSignal', {
+        callId,
+        to: peerId,
+        data: {
+          type: 'offer',
+          sdp: {
+            type: description.type,
+            sdp: description.sdp,
+          },
+        },
+      });
+
+      await applyAudioBitrate(pc);
+    } finally {
+      peer.makingOffer = false;
+    }
+  }).catch(error => {
+    if (isCurrentPc(peerId, peer.pc)) {
+      console.warn('[call] offer failed', peerId, error);
+    }
+  }).finally(() => {
+    peer.offerQueued = false;
+
+    if (
+      isCurrentPc(peerId, peer.pc) &&
+      peer.needsNegotiation &&
+      peer.pc.signalingState === 'stable'
+    ) {
+      pumpPeerNegotiation(peerId, peer);
+    }
+  });
 }
 
 async function sendOffer(peerId, pc, options = {}) {
   const peer = callState.peers[peerId];
+
   if (!peer || peer.pc !== pc) return;
 
-  peer.makingOffer = true;
-  try {
-    const offer = await pc.createOffer(options);
+  requestPeerNegotiation(peerId, peer, {
+    iceRestart: options.iceRestart === true,
+  });
+
+  await peer.queue;
+}
+
+function createPeerConnection(peerId) {
+  if (!isId(peerId) || peerId === state.me?.id || !callState.active) return null;
+
+  const existing = callState.peers[peerId];
+
+  /*
+   * failed не означает closed: оставляем PC для ICE restart.
+   * Иначе приходящий restart-offer мог бы уничтожить восстанавливаемый PC.
+   */
+  if (existing && existing.pc.signalingState !== 'closed') {
+    return existing.pc;
+  }
+
+  if (existing) {
+    closePeerConnection(existing);
+    stopSpeakingMonitor(`peer:${peerId}`);
+    delete callState.peers[peerId];
+  }
+
+  const pc = new RTCPeerConnection({ ...RTC_CONFIG });
+
+  const peer = {
+    pc,
+    session: captureCallSession(),
+    queue: Promise.resolve(),
+
+    dc: null,
+    stream: new MediaStream(),
+    videoSender: null,
+
+    pendingCandidates: [],
+    makingOffer: false,
+    ignoreOffer: false,
+    offerQueued: false,
+    needsNegotiation: false,
+    needsIceRestart: false,
+
+    iceRestarted: false,
+    restartTimer: null,
+    disconnectTimer: null,
+
+    micOn: true,
+    camOn: true,
+    screenOn: false,
+    lastConnectionState: null,
+  };
+
+  callState.peers[peerId] = peer;
+
+  pc.onnegotiationneeded = () => {
+    requestPeerNegotiation(peerId, peer);
+  };
+
+  pc.onsignalingstatechange = () => {
     if (!isCurrentPc(peerId, pc)) return;
-    const modifiedOffer = new RTCSessionDescription({
-      type: offer.type,
-      sdp: maximizeAudioQualitySDP(offer.sdp)
-    });
-    await pc.setLocalDescription(modifiedOffer);
-    await applyMaxAudioBitrate(pc);
-    const ld = pc.localDescription;
-    socket.emit('callSignal', {
-      callId: callState.callId,
-      to:     peerId,
-      data:   { type: 'offer', sdp: { type: ld.type, sdp: ld.sdp } },
-    });
-  } catch (e) {
-    console.warn('[call] sendOffer failed', peerId, e);
-    throw e;
-  } finally {
-    peer.makingOffer = false;
-  }
-}
 
-async function handlePeerFailed(peerId, pc) {
-  const peer = callState.peers[peerId];
-  if (!peer || peer.pc !== pc || !callState.active) return;
-
-  if (!peer.iceRestarted) {
-    peer.iceRestarted = true;
-    setText('call-overlay-status', 'переподключение…');
-    clearTimeout(peer.restartTimer);
-    peer.restartTimer = setTimeout(() => {
-      if (isCurrentPc(peerId, pc) && pc.connectionState !== 'connected') giveUpPeer(peerId);
-    }, ICE_RESTART_TIMEOUT_MS);
-
-    // ICE-restart инициирует «невежливая» сторона
-    if (!isPolite(peerId) && typeof pc.restartIce === 'function') {
-      try {
-        pc.restartIce();
-        await sendOffer(peerId, pc, { iceRestart: true });
-      } catch (e) {
-        console.warn('[call] ICE restart failed', peerId, e);
-        giveUpPeer(peerId);
-      }
+    if (pc.signalingState === 'stable') {
+      pumpPeerNegotiation(peerId, peer);
     }
-    return;
+  };
+
+  for (const track of callState.localStream?.getAudioTracks() || []) {
+    if (isLiveTrack(track)) pc.addTrack(track, callState.localStream);
   }
 
-  giveUpPeer(peerId);
+  const videoTrack = currentOutgoingVideoTrack();
+
+  if (videoTrack) {
+    const videoStream = videoTrack === screenShareTrack
+      ? screenShareStream
+      : callState.localStream;
+
+    peer.videoSender = videoStream
+      ? pc.addTrack(videoTrack, videoStream)
+      : pc.addTrack(videoTrack);
+  }
+
+  try {
+    const dc = pc.createDataChannel('state', {
+      negotiated: true,
+      id: 0,
+      ordered: true,
+    });
+
+    peer.dc = dc;
+
+    dc.onopen = () => {
+      if (isCurrentPc(peerId, pc)) sendMediaState(peerId);
+    };
+
+    dc.onmessage = event => {
+      if (!isCurrentPc(peerId, pc)) return;
+      if (typeof event.data !== 'string') return;
+      if (event.data.length > MAX_STATE_MESSAGE_LENGTH) return;
+
+      try {
+        const message = JSON.parse(event.data);
+
+        if (isRecord(message) && message.type === 'state') {
+          applyRemoteMediaState(peerId, message);
+        }
+      } catch (_) {}
+    };
+
+    dc.onerror = () => {
+      if (isCurrentPc(peerId, pc)) sendMediaState(peerId);
+    };
+  } catch (error) {
+    console.warn('[call] DataChannel unavailable', error);
+  }
+
+  pc.onicecandidate = event => {
+    if (!event.candidate || !isCurrentPc(peerId, pc)) return;
+    if (!isId(callState.callId)) return;
+
+    emitCall('callSignal', {
+      callId: callState.callId,
+      to: peerId,
+      data: {
+        type: 'ice',
+        candidate: event.candidate.toJSON(),
+      },
+    });
+  };
+
+  pc.ontrack = event => {
+    if (!isCurrentPc(peerId, pc)) return;
+
+    const track = event.track;
+
+    if (!peer.stream.getTracks().includes(track)) {
+      peer.stream.addTrack(track);
+    }
+
+    const refresh = () => {
+      if (isCurrentPc(peerId, pc)) scheduleCallGrid();
+    };
+
+    track.onmute = refresh;
+    track.onunmute = refresh;
+
+    track.onended = () => {
+      if (!isCurrentPc(peerId, pc)) return;
+
+      try {
+        peer.stream.removeTrack(track);
+      } catch (_) {}
+
+      scheduleCallGrid();
+    };
+
+    scheduleCallGrid();
+  };
+
+  const updateConnection = () => {
+    if (!isCurrentPc(peerId, pc)) return;
+
+    const status = peerConnectionStatus(pc);
+
+    // Некоторые браузеры присылают оба события для одного перехода.
+    if (peer.lastConnectionState === status) return;
+    peer.lastConnectionState = status;
+
+    if (peerIsConnected(pc)) {
+      clearTimeout(peer.restartTimer);
+      clearTimeout(peer.disconnectTimer);
+
+      peer.restartTimer = null;
+      peer.disconnectTimer = null;
+      peer.iceRestarted = false;
+
+      stopOutgoingRing();
+
+      setText('call-overlay-status', 'в звонке');
+      startCallTimer();
+      sendMediaState(peerId);
+
+      applyAudioBitrate(pc).catch(() => {});
+      scheduleCallGrid();
+      return;
+    }
+
+    if (status === 'disconnected') {
+      setText('call-overlay-status', 'переподключение…');
+
+      clearTimeout(peer.disconnectTimer);
+
+      peer.disconnectTimer = setTimeout(() => {
+        if (!isCurrentPc(peerId, pc) || peerIsConnected(pc)) return;
+        handlePeerFailed(peerId, pc);
+      }, 2500);
+
+      return;
+    }
+
+    if (status === 'failed') {
+      handlePeerFailed(peerId, pc);
+    }
+  };
+
+  pc.onconnectionstatechange = updateConnection;
+  pc.oniceconnectionstatechange = updateConnection;
+
+  return pc;
 }
 
-function giveUpPeer(peerId) {
-  if (!callState.active) return;
+async function connectToPeer(peerId, shouldOffer = true) {
+  if (!isId(peerId) || peerId === state.me?.id || !callState.active) return null;
+
+  const pc = createPeerConnection(peerId);
+  if (!pc) return null;
+
+  if (shouldOffer && !pc.localDescription) {
+    await sendOffer(peerId, pc);
+  }
+
+  return pc;
+}
+
+function handlePeerFailed(peerId, pc) {
+  const peer = callState.peers[peerId];
+
+  if (!peer || !isCurrentPc(peerId, pc)) return;
+  if (peerIsConnected(pc)) return;
+
+  // Повторное failed во время текущего restart не завершает его досрочно.
+  if (peer.iceRestarted) return;
+
+  peer.iceRestarted = true;
+  setText('call-overlay-status', 'переподключение…');
+
+  clearTimeout(peer.restartTimer);
+
+  peer.restartTimer = setTimeout(() => {
+    if (!isCurrentPc(peerId, pc) || peerIsConnected(pc)) return;
+    giveUpPeer(peerId, pc);
+  }, ICE_RESTART_TIMEOUT_MS);
+
+  /*
+   * Обе стороны могут инициировать восстановление:
+   * конфликт offer разрешается perfect negotiation.
+   */
+  requestPeerNegotiation(peerId, peer, { iceRestart: true });
+}
+
+function giveUpPeer(peerId, expectedPc = null) {
+  const peer = callState.peers[peerId];
+
+  if (!callState.active || !peer) return;
+  if (expectedPc && peer.pc !== expectedPc) return;
+
   if (callState.isGroup) {
     showTransientNotice(`${callPeerName(peerId)}: соединение потеряно`);
     teardownPeer(peerId);
-    if (!Object.keys(callState.peers).length) {
-      setText('call-overlay-status', 'ожидание участников…');
-    }
+
+    if (!Object.keys(callState.peers).length) startPeerWait();
   } else {
-    showTransientNotice(window.__chatappRtc?.relayRequired && !window.__chatappRtc?.relayConfigured
-      ? 'Голос не прошёл через VPN: TURN не настроен или недоступен.'
-      : 'Соединение с собеседником потеряно');
+    showTransientNotice(
+      window.__chatappRtc?.relayRequired &&
+      !window.__chatappRtc?.relayConfigured
+        ? 'Соединение не установлено. Проверьте настройку TURN'
+        : 'Соединение с собеседником потеряно',
+    );
+
     hangupCall();
   }
 }
 
-async function connectToPeer(peerId, shouldOffer) {
-  if (!peerId || peerId === state.me?.id || !callState.active) return null;
-  const pc   = createPeerConnection(peerId);
-  const peer = callState.peers[peerId];
-  if (
-    shouldOffer && peer &&
-    !peer.makingOffer &&
-    pc.signalingState === 'stable' &&
-    !pc.localDescription
-  ) {
-    await sendOffer(peerId, pc);
-  }
-  return pc;
-}
-
 function teardownPeer(peerId, { render = true } = {}) {
-  closePeerConnection(callState.peers[peerId]);
+  const peer = callState.peers[peerId];
+
+  // Сначала делаем асинхронные обработчики старого PC неактуальными.
   delete callState.peers[peerId];
-  stopSpeakingMonitor(peerId);
+
+  closePeerConnection(peer);
+  stopSpeakingMonitor(`peer:${peerId}`);
+
   if (render) renderCallGrid();
 }
+
+async function flushPeerCandidates(peerId, peer) {
+  if (!isCurrentPc(peerId, peer.pc) || !peer.pc.remoteDescription) return;
+
+  const candidates = peer.pendingCandidates.splice(0);
+
+  for (const candidate of candidates) {
+    if (!isCurrentPc(peerId, peer.pc)) return;
+
+    try {
+      await peer.pc.addIceCandidate(candidate);
+    } catch (error) {
+      if (!peer.ignoreOffer) {
+        console.warn('[call] queued ICE rejected', peerId, error);
+      }
+    }
+  }
+}
+
+function validSessionDescription(data, expectedType) {
+  return isRecord(data) &&
+    data.type === expectedType &&
+    typeof data.sdp === 'string' &&
+    data.sdp.length > 0 &&
+    data.sdp.length <= MAX_SIGNAL_SDP_LENGTH;
+}
+
+function validIceCandidate(candidate) {
+  return isRecord(candidate) &&
+    typeof candidate.candidate === 'string' &&
+    candidate.candidate.length <= 16_384 &&
+    (candidate.sdpMid == null || typeof candidate.sdpMid === 'string') &&
+    (
+      candidate.sdpMLineIndex == null ||
+      (
+        Number.isInteger(candidate.sdpMLineIndex) &&
+        candidate.sdpMLineIndex >= 0
+      )
+    );
+}
+
+async function handleCallSignal(payload) {
+  if (!isRecord(payload)) return;
+
+  const { callId, from, data } = payload;
+
+  if (!callState.active || !isId(callId) || callId !== callState.callId) return;
+  if (!isId(from) || from === state.me?.id || !isRecord(data)) return;
+
+  if (!['state', 'offer', 'answer', 'ice'].includes(data.type)) return;
+
+  if (data.type === 'state') {
+    // Одно сообщение состояния не создаёт дорогостоящий PeerConnection.
+    applyRemoteMediaState(from, data);
+    return;
+  }
+
+  if (
+    ['offer', 'answer'].includes(data.type) &&
+    !validSessionDescription(data.sdp, data.type)
+  ) {
+    return;
+  }
+
+  if (data.type === 'ice' && !validIceCandidate(data.candidate)) return;
+
+  /*
+   * Авторизацию участника комнаты ОБЯЗАТЕЛЬНО проверяет сервер.
+   * Клиентская проверка callId не заменяет серверную авторизацию.
+   */
+  let peer = callState.peers[from];
+
+  // Answer без существующего локального offer не имеет смысла.
+  if (!peer && data.type === 'answer') return;
+
+  const pc = peer?.pc || createPeerConnection(from);
+  if (!pc) return;
+
+  peer = callState.peers[from];
+
+  await enqueuePeerOperation(from, peer, async () => {
+    if (callState.callId !== callId) return;
+
+    if (data.type === 'offer') {
+      const collision =
+        peer.makingOffer ||
+        pc.signalingState !== 'stable';
+
+      peer.ignoreOffer = collision && !isPolite(from);
+
+      if (peer.ignoreOffer) return;
+
+      if (collision) {
+        try {
+          // Современный WebRTC выполняет implicit rollback.
+          await pc.setRemoteDescription(data.sdp);
+        } catch (error) {
+          if (!isCurrentPc(from, pc)) return;
+
+          if (pc.signalingState !== 'have-local-offer') throw error;
+
+          await pc.setLocalDescription({ type: 'rollback' });
+
+          if (!isCurrentPc(from, pc)) return;
+          await pc.setRemoteDescription(data.sdp);
+        }
+      } else {
+        await pc.setRemoteDescription(data.sdp);
+      }
+
+      if (!isCurrentPc(from, pc)) return;
+
+      peer.ignoreOffer = false;
+      await flushPeerCandidates(from, peer);
+
+      if (!isCurrentPc(from, pc)) return;
+
+      const answer = await pc.createAnswer();
+
+      if (!isCurrentPc(from, pc)) return;
+
+      await pc.setLocalDescription(answer);
+
+      if (!isCurrentPc(from, pc) || callState.callId !== callId) return;
+
+      const description = pc.localDescription;
+
+      emitCall('callSignal', {
+        callId,
+        to: from,
+        data: {
+          type: 'answer',
+          sdp: {
+            type: description.type,
+            sdp: description.sdp,
+          },
+        },
+      });
+
+      sendMediaState(from);
+      await applyAudioBitrate(pc);
+
+      // Локальные изменения, накопленные во время glare, не теряются.
+      pumpPeerNegotiation(from, peer);
+      return;
+    }
+
+    if (data.type === 'answer') {
+      if (pc.signalingState !== 'have-local-offer') return;
+
+      await pc.setRemoteDescription(data.sdp);
+
+      if (!isCurrentPc(from, pc)) return;
+
+      peer.ignoreOffer = false;
+
+      await flushPeerCandidates(from, peer);
+
+      if (!isCurrentPc(from, pc)) return;
+
+      sendMediaState(from);
+      await applyAudioBitrate(pc);
+      pumpPeerNegotiation(from, peer);
+      return;
+    }
+
+    if (data.type === 'ice') {
+      if (peer.ignoreOffer) return;
+
+      if (!pc.remoteDescription) {
+        if (peer.pendingCandidates.length < MAX_PENDING_ICE) {
+          peer.pendingCandidates.push(data.candidate);
+        }
+        return;
+      }
+
+      try {
+        await pc.addIceCandidate(data.candidate);
+      } catch (error) {
+        if (!peer.ignoreOffer) {
+          console.warn('[call] ICE rejected', from, error);
+        }
+      }
+    }
+  });
+}
+
+async function offerToParticipants(participants) {
+  if (!Array.isArray(participants)) return;
+
+  const session = captureCallSession();
+  const others = uniqueIds(participants)
+    .filter(id => id !== state.me?.id);
+
+  await Promise.allSettled(
+    others.map(async peerId => {
+      if (!currentSessionMatches(session)) return;
+      await connectToPeer(peerId, true);
+    }),
+  );
+
+  if (!currentSessionMatches(session)) return;
+
+  renderCallGrid();
+
+  if (!others.length) {
+    setText(
+      'call-overlay-status',
+      callState.isGroup ? 'ожидание участников…' : 'ожидание ответа…',
+    );
+  }
+}
+
+/* ── Входящий звонок ───────────────────────────────────────────────────── */
+
+function dismissIncomingCall(expectedCallId = null) {
+  const incoming = callState.pendingIncoming;
+
+  if (expectedCallId && incoming?.callId !== expectedCallId) return;
+
+  if (
+    incoming &&
+    pendingMediaOperation?.kind === 'accept' &&
+    pendingMediaOperation.incomingCallId === incoming.callId
+  ) {
+    cancelMediaOperation();
+  }
+
+  clearTimeout(callState.incomingTimer);
+
+  callState.incomingTimer = null;
+  callState.pendingIncoming = null;
+
+  setDisplay('incoming-call-modal', 'none');
+  safeCallSound('stopRing');
+}
+
+function showIncomingCall(info) {
+  clearTimeout(callState.incomingTimer);
+
+  callState.pendingIncoming = info;
+
+  const nickname = info.isGroup
+    ? state.groups[info.groupId]?.name || 'Групповой звонок'
+    : info.fromNick || state.friends[info.from]?.nickname || info.from;
+
+  setText('incoming-call-nick', nickname);
+
+  setText(
+    'incoming-call-sub',
+    info.isGroup
+      ? `${info.fromNick || 'Участник'} начал(а) ${info.video ? 'видео' : 'аудио'}звонок`
+      : `Входящий ${info.video ? 'видео' : 'аудио'}звонок…`,
+  );
+
+  const avatar = $('incoming-call-avatar');
+
+  if (avatar) {
+    if (info.isGroup && state.groups[info.groupId]) {
+      renderGroupAv(avatar, state.groups[info.groupId]);
+    } else {
+      avatar.classList.remove('group-av');
+      renderAv(
+        avatar,
+        nickname,
+        info.isGroup ? null : state.friends[info.from]?.avatar ?? null,
+      );
+    }
+  }
+
+  setDisplay('incoming-call-modal', 'flex');
+  safeCallSound('startRing', false);
+
+  callState.incomingTimer = setTimeout(() => {
+    if (callState.pendingIncoming !== info) return;
+
+    if (!info.isGroup) {
+      emitCall('callReject', { callId: info.callId });
+    }
+
+    dismissIncomingCall(info.callId);
+    showTransientNotice(`Пропущенный звонок от ${nickname}`);
+  }, CALL_RING_TIMEOUT_MS);
+}
+
+async function acceptIncomingCall() {
+  const info = callState.pendingIncoming;
+
+  if (!info || callStarting || callState.active) return;
+
+  if (!socket.connected || !state.me) {
+    dismissIncomingCall(info.callId);
+    return;
+  }
+
+  const operation = beginMediaOperation('accept', info.callId);
+  if (!operation) return;
+
+  /*
+   * После нажатия "Принять" таймер рингтона больше не отменяет запрос
+   * разрешения на устройства. Отмена сервером всё ещё обрабатывается.
+   */
+  clearTimeout(callState.incomingTimer);
+  callState.incomingTimer = null;
+
+  setDisplay('incoming-call-modal', 'none');
+  safeCallSound('stopRing');
+
+  let stream = null;
+
+  try {
+    stream = await acquireLocalStream(!!info.video, {
+      signal: operation.controller.signal,
+    });
+
+    if (!isCurrentMediaOperation(operation)) return;
+    if (callState.pendingIncoming !== info || callState.active) return;
+
+    if (!socket.connected) {
+      dismissIncomingCall(info.callId);
+      return;
+    }
+
+    if (!$('call-overlay')) {
+      throw new Error('#call-overlay not found');
+    }
+
+    beginCallSession({
+      stream,
+      callId: info.callId,
+      chatKey: info.chatKey,
+      isGroup: info.isGroup,
+      groupId: info.groupId,
+      peerFriendId: info.isGroup ? null : info.from,
+      peerFriendName: info.isGroup
+        ? null
+        : info.fromNick || state.friends[info.from]?.nickname || info.from,
+    });
+
+    stream = null;
+
+    openCallOverlay('соединение…');
+    requestCallJoin();
+    safeCallSound('join');
+  } catch (error) {
+    if (error?.name !== 'AbortError' && isCurrentMediaOperation(operation)) {
+      showTransientNotice(mediaErrorMessage(error));
+
+      if (!info.isGroup) {
+        emitCall('callReject', { callId: info.callId });
+      }
+
+      dismissIncomingCall(info.callId);
+    }
+  } finally {
+    stopStream(stream);
+    finishMediaOperation(operation);
+  }
+}
+
+function declineIncomingCall() {
+  const info = callState.pendingIncoming;
+  if (!info) return;
+
+  if (!info.isGroup) {
+    emitCall('callReject', { callId: info.callId });
+  }
+
+  dismissIncomingCall(info.callId);
+}
+
+/* ── DM voice bar ──────────────────────────────────────────────────────── */
 
 function updateDmVoiceBar() {
   const bar = $('dm-voice-bar');
   if (!bar) return;
+
   const peerId = state.activeFriend;
-  const room = state.dmVoiceCalls[peerId];
+  const room = peerId ? state.dmVoiceCalls[peerId] : null;
   const visible = !!(peerId && !state.activeGroup && room);
+
   bar.style.display = visible ? 'flex' : 'none';
   if (!visible) return;
+
   const inRoom = callState.active && callState.callId === room.callId;
-  const others = room.participants.filter(id => id !== state.me?.id);
-  setText('dm-voice-status', inRoom ? 'Вы подключены' : others.length ? 'Собеседник в войсе, можно вернуться' : 'Ожидание участников');
+  const others = uniqueIds(room.participants)
+    .filter(id => id !== state.me?.id);
+
+  setText(
+    'dm-voice-status',
+    inRoom
+      ? 'Вы подключены'
+      : others.length
+        ? 'Собеседник в войсе, можно вернуться'
+        : 'Ожидание участников',
+  );
+
   const button = $('btn-rejoin-dm-voice');
+
   if (button) {
     button.textContent = inRoom ? 'Вы в войсе' : 'Вернуться в войс';
     button.disabled = callBusy() || !socket.connected;
   }
 }
-window.updateDmVoiceBar = updateDmVoiceBar;
-function receiveDmVoice(info) {
-  if (!info || typeof info.peerId !== 'string') return;
-  if (typeof info.callId === 'string' && info.callId) {
-    state.dmVoiceCalls[info.peerId] = { callId: info.callId, video: !!info.video,
-      participants: Array.isArray(info.participants) ? info.participants.filter(id => typeof id === 'string') : [] };
-    if (callState.active && callState.callId === info.callId) {
-      clearTimeout(callState.ringTimer); callState.ringTimer = null; sfx.stopRing();
-    }
-  } else delete state.dmVoiceCalls[info.peerId];
-  updateDmVoiceBar();
+
+function receiveDmVoice(info, { render = true } = {}) {
+  if (!isRecord(info) || !isId(info.peerId)) return;
+
+  if (isId(info.callId)) {
+    state.dmVoiceCalls[info.peerId] = {
+      callId: info.callId,
+      video: info.video === true,
+      participants: uniqueIds(info.participants),
+    };
+
+    /*
+     * Наличие комнаты ещё не означает, что собеседник ответил.
+     * Не отменяем таймер исходящего вызова только из-за dmVoiceState.
+     */
+  } else if (info.callId == null || info.callId === '') {
+    delete state.dmVoiceCalls[info.peerId];
+  }
+
+  if (render) updateDmVoiceBar();
 }
-socket.on('dmVoiceState', receiveDmVoice);
+
+/* ── Socket events ─────────────────────────────────────────────────────── */
+
+onCallSocket('dmVoiceState', receiveDmVoice);
+
 socket.on('dmVoiceSnapshot', rooms => {
   if (!Array.isArray(rooms)) return;
+
   state.dmVoiceCalls = Object.create(null);
-  rooms.forEach(receiveDmVoice);
+
+  for (const room of rooms) {
+    receiveDmVoice(room, { render: false });
+  }
+
   updateDmVoiceBar();
 });
-on('btn-rejoin-dm-voice', 'click', () => {
-  if (!callBusy() && state.activeFriend) startCall({ toId: state.activeFriend, video: false });
-});
 
-/* ── UI-хуки кнопок ────────────────────────────────────────────────────── */
-on('btn-call-audio',       'click', () => { if (state.activeFriend) startCall({ toId: state.activeFriend, video: false }); });
-on('btn-call-video',       'click', () => { if (state.activeFriend) startCall({ toId: state.activeFriend, video: true  }); });
-on('btn-group-call-audio', 'click', () => { if (state.activeGroup)  startCall({ groupId: state.activeGroup, video: false }); });
-on('btn-group-call-video', 'click', () => { if (state.activeGroup)  startCall({ groupId: state.activeGroup, video: true  }); });
+onCallSocket('callIncoming', info => {
+  if (!state.me || !isId(info.callId) || !isId(info.from)) return;
+  if (info.from === state.me.id) return;
+  if (info.isGroup !== undefined && typeof info.isGroup !== 'boolean') return;
+  if (info.video !== undefined && typeof info.video !== 'boolean') return;
 
-on('btn-join-group-voice', 'click', () => {
-  if (callBusy() || !state.activeGroup) return;
-  if (state.groupVoiceCalls[state.activeGroup]) joinExistingGroupVoice(state.activeGroup);
-  else startCall({ groupId: state.activeGroup, video: false });
-});
+  const isGroup = info.isGroup === true;
 
-on('btn-call-hangup', 'click', hangupCall);
-on('btn-call-share-screen', 'click', () => { toggleScreenShare().catch(e => console.warn('[call] screen share toggle failed', e)); });
+  if (isGroup && !isId(info.groupId)) return;
+  if (info.fromNick != null && typeof info.fromNick !== 'string') return;
+  if (info.chatKey != null && typeof info.chatKey !== 'string') return;
 
-function toggleMic() {
-  if (!callState.active || !callState.localStream) return;
-  if (!callState.localStream.getAudioTracks().length) {
-    showTransientNotice('Микрофон недоступен');
-    return;
-  }
-  callState.micOn = !callState.micOn;
-  callState.localStream.getAudioTracks().forEach(t => { t.enabled = callState.micOn; });
-  resetCallControls();
-  showTransientNotice(callState.micOn ? 'Микрофон включён' : 'Микрофон выключен');
-  renderCallGrid();
-  broadcastMediaState();
-}
-on('btn-call-toggle-mic', 'click', toggleMic);
-
-function toggleCam() {
-  if (!callState.active || !callState.localStream) return;
-  if (!hasLocalVideo()) {
-    showTransientNotice('В этом звонке нет видео');
-    return;
-  }
-  callState.camOn = !callState.camOn;
-  callState.localStream.getVideoTracks().forEach(t => { t.enabled = callState.camOn; });
-  resetCallControls();
-  renderCallGrid();
-  broadcastMediaState();
-}
-on('btn-call-toggle-cam', 'click', toggleCam);
-
-document.addEventListener('keydown', e => {
-  const key = typeof e.key === 'string' ? e.key : '';
-  // Ctrl/Cmd+Shift+M — мьют микрофона
-  if (callState.active && (e.ctrlKey || e.metaKey) && e.shiftKey && key.toLowerCase() === 'm') {
-    e.preventDefault();
-    toggleMic();
-    return;
-  }
-  // Escape — отклонить входящий (только если нет другого открытого модала)
-  if (key === 'Escape' && callState.pendingIncoming && !callState.active) {
-    e.preventDefault();
-    $('btn-call-decline')?.click();
-  }
-});
-
-/* ── Входящий звонок ────────────────────────────────────────────────────── */
-function dismissIncomingCall() {
-  clearTimeout(callState.incomingTimer);
-  callState.incomingTimer   = null;
-  callState.pendingIncoming = null;
-  setDisplay('incoming-call-modal', 'none');
-  sfx.stopRing();
-}
-
-function showIncomingCall(info) {
-  callState.pendingIncoming = info;
-
-  const nick = info.isGroup
-    ? (state.groups[info.groupId]?.name || 'Групповой звонок')
-    : (info.fromNick || state.friends[info.from]?.nickname || info.from);
-
-  setText('incoming-call-nick', nick);
-  setText('incoming-call-sub', info.isGroup
-    ? `${info.fromNick || 'Кто-то'} начал(а) ${info.video ? 'видео' : 'аудио'}звонок`
-    : `Входящий ${info.video ? 'видео' : 'аудио'}звонок…`);
-
-  const avatarEl = $('incoming-call-avatar');
-  if (avatarEl) {
-    if (info.isGroup) {
-      renderGroupAv(avatarEl, state.groups[info.groupId]);
-    } else {
-      avatarEl.classList.remove('group-av');
-      renderAv(avatarEl, nick, state.friends[info.from]?.avatar ?? null);
-    }
-  }
-
-  setDisplay('incoming-call-modal', 'flex');
-  sfx.startRing(false);
-
-  clearTimeout(callState.incomingTimer);
-  callState.incomingTimer = setTimeout(() => {
-    if (callState.pendingIncoming?.callId !== info.callId) return;
-    if (!info.isGroup) socket.emit('callReject', { callId: info.callId });
-    dismissIncomingCall();
-    showTransientNotice(`Пропущенный звонок от ${nick}`);
-  }, CALL_RING_TIMEOUT_MS);
-}
-
-on('btn-call-accept', 'click', async () => {
-  const info = callState.pendingIncoming;
-  if (!info || callStarting) return;
-
-  setDisplay('incoming-call-modal', 'none');
-  sfx.stopRing();
-
-  callStarting = true;
-  const mediaRevision = state.sessionRevision;
-  const mediaUser = state.me?.id;
-  let stream;
-  try {
-    stream = await acquireLocalStream(!!info.video);
-  } catch (e) {
-    callStarting = false;
-    showTransientNotice(mediaErrorMessage(e));
-    if (!info.isGroup) socket.emit('callReject', { callId: info.callId });
-    dismissIncomingCall();
-    return;
-  }
-  callStarting = false;
-
-  // Проверяем: звонок не отменили, пока ждали разрешение
-  if (
-    callState.pendingIncoming?.callId !== info.callId ||
-    callState.active ||
-    !socket.connected ||
-    !state.me || state.me.id !== mediaUser || state.sessionRevision !== mediaRevision
-  ) {
-    stopStream(stream);
-    dismissIncomingCall();
-    return;
-  }
-
-  beginCallSession({
-    stream,
-    callId:        info.callId,
-    chatKey:       info.chatKey ?? null,
-    isGroup:       !!info.isGroup,
-    groupId:       info.groupId ?? null,
-    peerFriendId:  info.isGroup ? null : info.from,
-    peerFriendName: info.isGroup
-      ? null
-      : (info.fromNick || state.friends[info.from]?.nickname || info.from),
-    video: !!info.video,
-  });
-  openCallOverlay('соединение…');
-  socket.emit('callJoin', { callId: info.callId });
-  sfx.join();
-});
-
-on('btn-call-decline', 'click', () => {
-  const info = callState.pendingIncoming;
-  if (!info) return;
-  if (!info.isGroup) socket.emit('callReject', { callId: info.callId });
-  dismissIncomingCall();
-});
-
-/* ── Сигналинг ──────────────────────────────────────────────────────────── */
-async function flushPendingCandidates(peerId) {
-  const peer = callState.peers[peerId];
-  if (!peer?.pc.remoteDescription) return;
-  const queue = peer.pendingCandidates.splice(0);
-  for (const c of queue) {
-    try {
-      await peer.pc.addIceCandidate(new RTCIceCandidate(c));
-    } catch (e) {
-      console.warn('[call] addIceCandidate failed', e);
-    }
-  }
-}
-
-/**
- * Perfect negotiation: при «glare» вежливая сторона откатывает свой offer.
- *
- * @param {{callId: string, from: string, data: object}} payload
- */
-async function handleCallSignal({ callId, from, data } = {}) {
-  // Строгая валидация входных данных с сервера
-  if (!callState.active)                        return;
-  if (typeof callId !== 'string' || !callId)    return;
-  if (callId !== callState.callId)              return;
-  if (typeof from !== 'string' || !from)        return;
-  if (from === state.me?.id)                    return;
-  if (!data || typeof data !== 'object')        return;
-
-  const pc   = createPeerConnection(from);
-  const peer = callState.peers[from];
-  if (!peer) return;
-
-  try {
-    if (data.type === 'state') {
-      applyRemoteMediaState(from, data);
-
-    } else if (data.type === 'offer') {
-      if (!data.sdp || typeof data.sdp.sdp !== 'string') return;
-      const desc      = new RTCSessionDescription(data.sdp);
-      const collision = peer.makingOffer || pc.signalingState !== 'stable';
-      const polite    = isPolite(from);
-
-      if (collision && !polite) return; // наш offer «победил»
-
-      if (collision) {
-        // Implicit rollback (современные браузеры) с fallback на явный rollback
-        try {
-          await pc.setRemoteDescription(desc);
-        } catch (_) {
-          await pc.setLocalDescription({ type: 'rollback' });
-          await pc.setRemoteDescription(desc);
-        }
-      } else {
-        await pc.setRemoteDescription(desc);
-      }
-
-      if (!isCurrentPc(from, pc)) return;
-      await flushPendingCandidates(from);
-
-      const answer = await pc.createAnswer();
-      const modifiedAnswer = new RTCSessionDescription({
-        type: answer.type,
-        sdp: maximizeAudioQualitySDP(answer.sdp)
-      });
-      await pc.setLocalDescription(modifiedAnswer);
-      await applyMaxAudioBitrate(pc);
-      const ld = pc.localDescription;
-      socket.emit('callSignal', {
-        callId,
-        to:   from,
-        data: { type: 'answer', sdp: { type: ld.type, sdp: ld.sdp } },
-      });
-
-    } else if (data.type === 'answer') {
-      if (!data.sdp || typeof data.sdp.sdp !== 'string') return;
-      if (pc.signalingState !== 'have-local-offer') return;
-      await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-      await flushPendingCandidates(from);
-      await applyMaxAudioBitrate(pc);
-
-    } else if (data.type === 'ice') {
-      if (!data.candidate || typeof data.candidate !== 'object') return;
-      if (pc.remoteDescription?.type) {
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-        } catch (e) {
-          // После rollback кандидаты к откатанному offer невалидны — это нормально
-          if (!(peer.makingOffer || pc.signalingState !== 'stable')) throw e;
-        }
-      } else {
-        peer.pendingCandidates.push(data.candidate);
-      }
-    }
-  } catch (e) {
-    console.warn('[call] signal error from', from, e);
-  }
-}
-
-async function offerToParticipants(participants) {
-  if (!Array.isArray(participants)) return;
-  const myId  = state.me?.id;
-  const others = [...new Set(participants.filter(id => id && typeof id === 'string' && id !== myId))];
-
-  for (const peerId of others) {
-    if (!callState.active) return;
-    try { await connectToPeer(peerId, true); } catch (e) {
-      console.warn('[call] offer failed', peerId, e);
-    }
-  }
-
-  if (!callState.active) return;
-  renderCallGrid();
-
-  if (!others.length) {
-    setText('call-overlay-status', callState.isGroup ? 'ожидание участников…' : 'ожидание ответа…');
-  }
-}
-
-/* ── Socket events ──────────────────────────────────────────────────────── */
-
-socket.on('callIncoming', info => {
-  if (!info || typeof info !== 'object') return;
-  const { callId, from, isGroup, groupId, video, fromNick, chatKey } = info;
-
-  if (typeof callId !== 'string' || !callId) return;
-  if (!state.me) return;
-  if (from && from === state.me.id) return;
+  if (callState.pendingIncoming?.callId === info.callId) return;
+  if (callState.active && callState.callId === info.callId) return;
 
   if (callBusy()) {
-    if (!isGroup && typeof callId === 'string') {
-      socket.emit('callReject', { callId, reason: 'busy' });
+    if (!isGroup) {
+      emitCall('callReject', {
+        callId: info.callId,
+        reason: 'busy',
+      });
     }
     return;
   }
 
-  // Групповой канал, уже отображаемый в списке — не звоним повторно
-  if (isGroup && state.groupVoiceCalls[groupId]?.callId === callId) return;
-
-  showIncomingCall({ callId, from, isGroup, groupId, video: !!video, fromNick, chatKey });
-});
-
-socket.on('callStarted', ({ callId, chatKey, participants, requestId, answered } = {}) => {
-  if (typeof callId !== 'string' || !callId) return;
-  if (!callState.active || (requestId && requestId !== pendingStartRequestId) ||
-      (callState.callId && callState.callId !== callId)) {
-    if (callState.callId !== callId && socket.connected) socket.emit('callLeave', { callId, requestId });
+  if (
+    isGroup &&
+    state.groupVoiceCalls[info.groupId]?.callId === info.callId
+  ) {
     return;
   }
+
+  showIncomingCall({
+    callId: info.callId,
+    from: info.from,
+    fromNick: info.fromNick || null,
+    isGroup,
+    groupId: isGroup ? info.groupId : null,
+    video: info.video === true,
+    chatKey: info.chatKey || null,
+  });
+});
+
+onCallSocket('callStarted', async payload => {
+  const {
+    callId,
+    requestId,
+    participants,
+    chatKey,
+    answered,
+  } = payload;
+
+  if (!isId(callId)) return;
+  if (requestId !== undefined && !isId(requestId)) return;
+
+  const belongsToCurrentStart =
+    callState.active &&
+    !!pendingStartRequestId &&
+    !callState.callId &&
+    (
+      requestId === undefined ||
+      requestId === pendingStartRequestId
+    );
+
+  if (!belongsToCurrentStart) {
+    // Повторный ACK текущего звонка не требует выхода.
+    if (callState.callId !== callId) {
+      emitCall('callLeave', { callId, requestId });
+    }
+    return;
+  }
+
   pendingStartRequestId = null;
-  if (answered) { clearTimeout(callState.ringTimer); callState.ringTimer = null; sfx.stopRing(); }
+
+  clearTimeout(startAckTimer);
+  startAckTimer = null;
+
   callState.callId = callId;
-  if (chatKey && typeof chatKey === 'string') callState.chatKey = chatKey;
+
+  if (typeof chatKey === 'string') callState.chatKey = chatKey;
+
+  if (answered === true || callState.isGroup) stopOutgoingRing();
 
   if (callState.isGroup && callState.groupId) {
-    const existing = state.groupVoiceCalls[callState.groupId];
-    if (!existing || existing.callId !== callId) {
-      state.groupVoiceCalls[callState.groupId] = {
-        callId,
-        video: callState.video,
-        participants: Array.isArray(participants) && participants.length
-          ? participants
-          : [state.me?.id].filter(Boolean),
-      };
-      renderGroupsList();
-      updateGroupVoiceBar(callState.groupId);
-    }
+    state.groupVoiceCalls[callState.groupId] = {
+      callId,
+      video: callState.video,
+      participants: uniqueIds(
+        Array.isArray(participants) ? participants : [state.me?.id],
+      ),
+    };
+
+    rememberGroupVoice(callState.groupId, callId, callState.video);
+    renderGroupsList();
+    updateGroupVoiceBar(callState.groupId);
   }
 
-  offerToParticipants(participants);
+  await offerToParticipants(participants);
+
+  for (const [peerId, peer] of Object.entries(callState.peers)) {
+    pumpPeerNegotiation(peerId, peer);
+  }
 });
 
-socket.on('callJoined', ({ callId, participants, requestId } = {}) => {
-  if (typeof callId !== 'string' || !callId) return;
-  if (!callState.active || callId !== callState.callId) {
-    if (socket.connected) socket.emit('callLeave', { callId, requestId });
+onCallSocket('callJoined', async payload => {
+  const { callId, participants, requestId } = payload;
+
+  if (!isId(callId)) return;
+  if (requestId !== undefined && !isId(requestId)) return;
+
+  if (!callState.active || callState.callId !== callId) {
+    emitCall('callLeave', { callId, requestId });
     return;
   }
-  clearTimeout(callState.ringTimer); callState.ringTimer = null; sfx.stopRing();
-  offerToParticipants(participants);
+
+  if (
+    requestId !== undefined &&
+    pendingJoinRequestId !== null &&
+    requestId !== pendingJoinRequestId
+  ) {
+    return;
+  }
+
+  // Повторный ACK не должен пересоздавать переговоры с уже подключёнными.
+  if (requestId !== undefined && pendingJoinRequestId === null) return;
+
+  pendingJoinRequestId = null;
+
+  clearTimeout(joinAckTimer);
+  joinAckTimer = null;
+
+  stopOutgoingRing();
+
+  await offerToParticipants(participants);
 });
 
-socket.on('callLeft', ({ callId, reason } = {}) => {
-  // Manual leave already stopped local media; a late acknowledgement must not close a rejoin.
+onCallSocket('callLeft', ({ callId, reason }) => {
+  if (!isId(callId)) return;
+  if (reason != null && typeof reason !== 'string') return;
+
+  // Запоздалый ACK обычного выхода не закрывает повторный вход.
   if (reason === 'left') return;
   if (!callState.active || callState.callId !== callId) return;
+
   closeCallOverlay();
-  if (reason === 'kicked' || reason === 'left_group') showTransientNotice('Доступ к голосовому каналу закрыт');
-});
 
-socket.on('callPeerJoined', ({ callId, peerId } = {}) => {
-  if (!callState.active) return;
-  if (typeof callId !== 'string' || callId !== callState.callId) return;
-  if (!peerId || typeof peerId !== 'string' || peerId === state.me?.id) return;
-
-  clearTimeout(callState.ringTimer);
-  callState.ringTimer = null;
-  sfx.stopRing();
-  sfx.join();
-  clearPeerWait();
-
-  // Старое соединение недействительно — пир пришлёт свежий offer
-  if (callState.peers[peerId]) teardownPeer(peerId, { render: false });
-  createPeerConnection(peerId);
-  setText('call-overlay-status', 'соединение…');
-  renderCallGrid();
-});
-
-socket.on('callPeerLeft', ({ callId, peerId } = {}) => {
-  if (!callState.active) return;
-  if (typeof callId !== 'string' || callId !== callState.callId) return;
-  if (!peerId || typeof peerId !== 'string' || peerId === state.me?.id) return;
-
-  const name = callPeerName(peerId);
-  teardownPeer(peerId);
-  sfx.leave();
-
-  if (!callState.isGroup) {
-    showTransientNotice(`${name} вышел(а). Можно вернуться в этот войс`);
-    startPeerWait();
-    return;
+  if (reason === 'kicked' || reason === 'left_group') {
+    showTransientNotice('Доступ к голосовому каналу закрыт');
   }
-  showTransientNotice(`${name} покинул(а) канал`);
+});
+
+onCallSocket('callPeerJoined', async ({ callId, peerId }) => {
+  if (!isId(callId) || !isId(peerId)) return;
+  if (!callState.active || callId !== callState.callId) return;
+  if (peerId === state.me?.id) return;
+
+  stopOutgoingRing();
+
+  const existing = callState.peers[peerId];
+
+  /*
+   * Если offer уже пришёл раньше события callPeerJoined, не уничтожаем PC.
+   * При настоящем повторном входе сервер должен сначала прислать
+   * callPeerLeft/callPeerReconnecting.
+   */
+  if (!existing) {
+    safeCallSound('join');
+    createPeerConnection(peerId);
+    setText('call-overlay-status', 'соединение…');
+  }
+
+  renderCallGrid();
+
+  const peer = callState.peers[peerId];
+
+  if (peer && !peer.pc.localDescription) {
+    await sendOffer(peerId, peer.pc);
+  }
+});
+
+onCallSocket('callPeerLeft', ({ callId, peerId }) => {
+  if (!isId(callId) || !isId(peerId)) return;
+  if (!callState.active || callId !== callState.callId) return;
+  if (peerId === state.me?.id) return;
+
+  const existed = !!callState.peers[peerId];
+  const nickname = callPeerName(peerId);
+
+  teardownPeer(peerId);
+
+  if (existed) {
+    safeCallSound('leave');
+
+    showTransientNotice(
+      callState.isGroup
+        ? `${nickname} покинул(а) канал`
+        : `${nickname} вышел(а). Можно вернуться в этот войс`,
+    );
+  }
+
   if (!Object.keys(callState.peers).length) startPeerWait();
 });
 
-socket.on('callPeerReconnecting', ({ callId, peerId } = {}) => {
-  if (!callState.active || callId !== callState.callId || peerId === state.me?.id) return;
-  if (!Object.keys(callState.peers).length) {
-    showTransientNotice('Участник переподключается. Войс остаётся открыт');
-    startPeerWait();
-  } else {
-    setText('call-overlay-status', 'участник переподключается…');
-  }
+onCallSocket('callPeerReconnecting', ({ callId, peerId }) => {
+  if (!isId(callId) || !isId(peerId)) return;
+  if (!callState.active || callId !== callState.callId) return;
+  if (peerId === state.me?.id) return;
+
+  /*
+   * Сервер сообщает о пересборке соединения удалённой стороны.
+   * Сбрасываем именно её PC, а не весь mesh.
+   */
+  if (callState.peers[peerId]) teardownPeer(peerId);
+
+  setText('call-overlay-status', 'участник переподключается…');
 });
 
-socket.on('callSignal', payload => {
-  if (payload && typeof payload === 'object') handleCallSignal(payload);
-});
+onCallSocket('callSignal', handleCallSignal);
 
-socket.on('callRejected', ({ callId, reason } = {}) => {
-  if (!callState.active) return;
-  if (typeof callId !== 'string' || callId !== callState.callId) return;
+onCallSocket('callRejected', ({ callId, reason }) => {
+  if (!isId(callId)) return;
+  if (!callState.active || callId !== callState.callId) return;
   if (callState.isGroup) return;
-  showTransientNotice(reason === 'busy' ? 'Собеседник занят' : 'Собеседник отклонил звонок');
+
+  showTransientNotice(
+    reason === 'busy'
+      ? 'Собеседник занят'
+      : 'Собеседник отклонил звонок',
+  );
+
   closeCallOverlay();
 });
 
-socket.on('callCancelled', ({ callId, reason } = {}) => {
-  if (typeof callId !== 'string' || !callId) return;
-  if (callState.pendingIncoming?.callId !== callId) return;
+onCallSocket('callCancelled', ({ callId, reason }) => {
+  if (!isId(callId)) return;
 
-  const inc  = callState.pendingIncoming;
-  const nick = inc.isGroup
-    ? (state.groups[inc.groupId]?.name || 'группы')
-    : (inc.fromNick || state.friends[inc.from]?.nickname || inc.from);
+  const incoming = callState.pendingIncoming;
+  if (!incoming || incoming.callId !== callId) return;
 
-  dismissIncomingCall();
-  if (reason !== 'answered_elsewhere') showTransientNotice(`Пропущенный звонок от ${nick}`);
+  const nickname = incoming.isGroup
+    ? state.groups[incoming.groupId]?.name || 'группы'
+    : incoming.fromNick ||
+      state.friends[incoming.from]?.nickname ||
+      incoming.from;
+
+  dismissIncomingCall(callId);
+
+  if (reason !== 'answered_elsewhere') {
+    showTransientNotice(`Пропущенный звонок от ${nickname}`);
+  }
 });
 
-socket.on('callEnded', ({ callId, reason } = {}) => {
-  if (typeof callId !== 'string' || !callId) return;
+onCallSocket('callEnded', ({ callId, reason }) => {
+  if (!isId(callId)) return;
+  if (reason != null && typeof reason !== 'string') return;
 
   if (callState.pendingIncoming?.callId === callId) {
-    dismissIncomingCall();
-    return;
+    dismissIncomingCall(callId);
   }
-  for (const [peerId, room] of Object.entries(state.dmVoiceCalls)) {
-    if (room.callId === callId && reason !== 'replaced_device') delete state.dmVoiceCalls[peerId];
-  }
-  updateDmVoiceBar();
 
-  const groupId = Object.keys(state.groupVoiceCalls).find(id => state.groupVoiceCalls[id]?.callId === callId);
-  if (reason !== 'replaced_device' && groupId) {
-    clearGroupVoiceRejoin(groupId, callId);
-    delete state.groupVoiceCalls[groupId];
+  if (reason !== 'replaced_device') {
+    for (const [peerId, room] of Object.entries(state.dmVoiceCalls)) {
+      if (room?.callId === callId) delete state.dmVoiceCalls[peerId];
+    }
+
+    for (const [groupId, room] of Object.entries(state.groupVoiceCalls)) {
+      if (room?.callId !== callId) continue;
+
+      clearGroupVoiceRejoin(groupId, callId);
+      delete state.groupVoiceCalls[groupId];
+      updateGroupVoiceBar(groupId);
+    }
+
     renderGroupsList();
-    updateGroupVoiceBar(groupId);
+    updateDmVoiceBar();
   }
-  if (callState.active && callState.callId === callId) {
-    const messages = {
-      timeout:      'Нет ответа',
-      ended:        'Звонок завершён',
-      group_deleted: 'Группа удалена — звонок завершён',
-      kicked:       'Вы исключены из группы — звонок завершён',
-      server_error: 'Звонок прерван из-за ошибки сервера',
-    };
-    showTransientNotice(messages[reason] || 'Звонок завершён');
-    sfx.leave();
-    closeCallOverlay();
-  }
+
+  if (!callState.active || callState.callId !== callId) return;
+
+  const messages = {
+    timeout: 'Нет ответа',
+    ended: 'Звонок завершён',
+    group_deleted: 'Группа удалена — звонок завершён',
+    kicked: 'Вы исключены из группы — звонок завершён',
+    server_error: 'Звонок прерван из-за ошибки сервера',
+    replaced_device: 'Звонок продолжен на другом устройстве',
+  };
+
+  showTransientNotice(
+    Object.hasOwn(messages, reason)
+      ? messages[reason]
+      : 'Звонок завершён',
+  );
+
+  safeCallSound('leave');
+  closeCallOverlay();
 });
 
-socket.on('callError', ({ reason, callId, event, requestId } = {}) => {
-  if (['watchGroupVoice', 'watchDmVoice', 'callSignal', 'callLeave'].includes(event)) return;
-  if (requestId && requestId !== pendingStartRequestId) return;
-  if (callId && callState.callId && callId !== callState.callId) return;
-  if (reason === 'not_found' && callId) {
-    for (const [id, room] of Object.entries(state.dmVoiceCalls)) if (room.callId === callId) delete state.dmVoiceCalls[id];
-    for (const [id, room] of Object.entries(state.groupVoiceCalls)) if (room.callId === callId) {
-      clearGroupVoiceRejoin(id); delete state.groupVoiceCalls[id]; updateGroupVoiceBar(id);
-    }
-    renderGroupsList(); updateDmVoiceBar();
+onCallSocket('callError', payload => {
+  const { reason, callId, event, requestId } = payload;
+
+  if (typeof reason !== 'string') return;
+  if (callId !== undefined && !isId(callId)) return;
+  if (requestId !== undefined && !isId(requestId)) return;
+  if (event !== undefined && typeof event !== 'string') return;
+
+  if (
+    ['watchGroupVoice', 'watchDmVoice', 'callSignal', 'callLeave']
+      .includes(event)
+  ) {
+    return;
   }
+
+  if (
+    requestId !== undefined &&
+    requestId !== pendingStartRequestId &&
+    requestId !== pendingJoinRequestId
+  ) {
+    return;
+  }
+
+  if (
+    callId &&
+    callState.callId &&
+    callId !== callState.callId &&
+    callState.pendingIncoming?.callId !== callId
+  ) {
+    return;
+  }
+
+  if (reason === 'not_found' && callId) {
+    for (const [peerId, room] of Object.entries(state.dmVoiceCalls)) {
+      if (room?.callId === callId) delete state.dmVoiceCalls[peerId];
+    }
+
+    for (const [groupId, room] of Object.entries(state.groupVoiceCalls)) {
+      if (room?.callId !== callId) continue;
+
+      clearGroupVoiceRejoin(groupId, callId);
+      delete state.groupVoiceCalls[groupId];
+      updateGroupVoiceBar(groupId);
+    }
+
+    renderGroupsList();
+    updateDmVoiceBar();
+  }
+
   const messages = {
-    busy:          'Собеседник уже в звонке',
-    offline:       'Пользователь не в сети',
-    not_found:     'Звонок не найден или уже завершён',
-    not_friends:   'Звонить можно только друзьям',
-    not_member:    'Вы не участник группы',
-    blocked:       'Невозможно позвонить этому пользователю',
+    busy: 'Собеседник уже в звонке',
+    offline: 'Пользователь не в сети',
+    not_found: 'Звонок не найден или уже завершён',
+    not_friends: 'Звонить можно только друзьям',
+    not_member: 'Вы не участник группы',
+    blocked: 'Невозможно позвонить этому пользователю',
     limit_reached: 'Достигнут лимит участников звонка',
-    rate_limited:  'Слишком много действий, подождите',
-    server_error:  'Ошибка сервера',
+    rate_limited: 'Слишком много действий, подождите',
+    server_error: 'Ошибка сервера',
   };
-  showTransientNotice(messages[reason] || 'Ошибка звонка');
-  pendingStartRequestId = null;
-  if (callState.active) closeCallOverlay();
-  else if (callState.pendingIncoming) dismissIncomingCall();
+
+  showTransientNotice(
+    Object.hasOwn(messages, reason)
+      ? messages[reason]
+      : 'Ошибка звонка',
+  );
+
+  /*
+   * Ошибка без requestId/callId не должна произвольно закрывать давно
+   * установленный звонок. Завершаем только коррелированную операцию.
+   */
+  const matchesPendingRequest =
+    !!requestId &&
+    (
+      requestId === pendingStartRequestId ||
+      requestId === pendingJoinRequestId
+    );
+
+  const matchesCurrentCall =
+    !!callId && callId === callState.callId;
+
+  const legacyPendingStart =
+    !requestId &&
+    !callId &&
+    !!pendingStartRequestId &&
+    (!event || event === 'callStart');
+
+  if (matchesPendingRequest || matchesCurrentCall || legacyPendingStart) {
+    if (callState.active) {
+      // Выходим и локально, и на сервере, если членство уже создано.
+      hangupCall();
+    } else {
+      cancelMediaOperation();
+    }
+  }
+
+  if (callId && callState.pendingIncoming?.callId === callId) {
+    dismissIncomingCall(callId);
+  }
 });
 
 /* ── Реконнект сокета ───────────────────────────────────────────────────── */
-let callReconnectTimer = null;
+
 socket.on('disconnect', () => {
   clearTimeout(callReconnectTimer);
-  if (callState.active) callReconnectTimer = setTimeout(() => {
-    if (callState.active && !socket.connected) { showTransientNotice('Звонок завершён: соединение не восстановилось'); closeCallOverlay(); }
-  }, 16000);
+  callReconnectTimer = null;
+
+  // Старое разрешение на устройства не должно запускать звонок после reconnect.
+  if (pendingMediaOperation) cancelMediaOperation();
+
   if (callState.pendingIncoming) dismissIncomingCall();
-  if (callState.active) setText('call-overlay-status', 'переподключение…');
+
+  updateDmVoiceBar();
+
+  if (!callState.active) return;
+
+  const session = captureCallSession();
+
+  setText('call-overlay-status', 'переподключение…');
+
+  callReconnectTimer = setTimeout(() => {
+    if (!currentSessionMatches(session) || socket.connected) return;
+
+    showTransientNotice('Звонок завершён: соединение не восстановилось');
+    closeCallOverlay();
+  }, CALL_SOCKET_GRACE_MS);
 });
 
 socket.on('connect', () => {
   clearTimeout(callReconnectTimer);
-  if (state.activeFriend) socket.emit('watchDmVoice', { peerId: state.activeFriend });
-  if (!callState.active || !callState.callId) return;
-  // Пересобираем mesh: старые соединения могли пережить разрыв, но сигналинг для них потерян
-  Object.keys(callState.peers).forEach(id => teardownPeer(id, { render: false }));
+  callReconnectTimer = null;
+
+  if (isId(state.activeFriend)) {
+    emitCall('watchDmVoice', { peerId: state.activeFriend });
+  }
+
+  updateDmVoiceBar();
+
+  if (!callState.active) return;
+
+  if (!isId(callState.callId)) {
+    /*
+     * Сервер ещё не подтвердил callStart. Не запускаем второй callStart:
+     * ждём коррелированный ACK или установленный таймаут.
+     */
+    return;
+  }
+
+  for (const peerId of Object.keys(callState.peers)) {
+    teardownPeer(peerId, { render: false });
+  }
+
   renderCallGrid();
   setText('call-overlay-status', 'соединение…');
-  socket.emit('callJoin', { callId: callState.callId, rejoin: true });
+  requestCallJoin({ rejoin: true });
 });
 
-/* ── Участник группы вышел (не через callPeerLeft) ─────────────────────── */
-socket.on('groupMemberLeft', ({ groupId, userId } = {}) => {
+onCallSocket('groupMemberLeft', ({ groupId, userId }) => {
+  if (!isId(groupId) || !isId(userId)) return;
   if (!callState.active || !callState.isGroup) return;
   if (callState.groupId !== groupId) return;
-  if (!userId || typeof userId !== 'string' || userId === state.me?.id) return;
+
+  if (userId === state.me?.id) {
+    hangupCall();
+    showTransientNotice('Вы покинули группу');
+    return;
+  }
+
   if (callState.peers[userId]) teardownPeer(userId);
 });
 
-/* ── Закрытие вкладки ───────────────────────────────────────────────────── */
-window.addEventListener('pagehide', () => {
-  if (callState.active && callState.callId && socket.connected) {
-    try { socket.emit('callLeave', { callId: callState.callId }); } catch (_) {}
+/* ── UI events ─────────────────────────────────────────────────────────── */
+
+function runCallAction(action) {
+  try {
+    Promise.resolve(action()).catch(error => {
+      console.warn('[call] UI action failed', error);
+    });
+  } catch (error) {
+    console.warn('[call] UI action failed', error);
+  }
+}
+
+on('btn-call-audio', 'click', () => {
+  if (state.activeFriend) {
+    runCallAction(() =>
+      startCall({ toId: state.activeFriend, video: false }),
+    );
   }
 });
 
-/* ── Автоскрытие контролов в видео-режиме ───────────────────────────────── */
-function pokeCallIdle() {
-  const overlay = $('call-overlay');
-  if (!overlay || !callState.active || !overlay.classList.contains('video-mode')) return;
-  if (overlay.classList.contains('detached')) return;
-  overlay.classList.remove('idle');
-  clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => overlay?.classList.add('idle'), IDLE_HIDE_MS);
+on('btn-call-video', 'click', () => {
+  if (state.activeFriend) {
+    runCallAction(() =>
+      startCall({ toId: state.activeFriend, video: true }),
+    );
+  }
+});
+
+on('btn-group-call-audio', 'click', () => {
+  if (state.activeGroup) {
+    runCallAction(() =>
+      startCall({ groupId: state.activeGroup, video: false }),
+    );
+  }
+});
+
+on('btn-group-call-video', 'click', () => {
+  if (state.activeGroup) {
+    runCallAction(() =>
+      startCall({ groupId: state.activeGroup, video: true }),
+    );
+  }
+});
+
+on('btn-join-group-voice', 'click', () => {
+  if (callBusy() || !state.activeGroup) return;
+
+  runCallAction(() => {
+    if (state.groupVoiceCalls[state.activeGroup]) {
+      return joinExistingGroupVoice(state.activeGroup);
+    }
+
+    return startCall({
+      groupId: state.activeGroup,
+      video: false,
+    });
+  });
+});
+
+on('btn-rejoin-dm-voice', 'click', () => {
+  if (callBusy() || !state.activeFriend) return;
+
+  runCallAction(() =>
+    startCall({ toId: state.activeFriend, video: false }),
+  );
+});
+
+on('btn-call-hangup', 'click', hangupCall);
+on('btn-call-toggle-mic', 'click', toggleMic);
+on('btn-call-toggle-cam', 'click', toggleCam);
+
+on('btn-call-share-screen', 'click', () => {
+  runCallAction(toggleScreenShare);
+});
+
+on('btn-call-accept', 'click', () => {
+  runCallAction(acceptIncomingCall);
+});
+
+on('btn-call-decline', 'click', declineIncomingCall);
+
+document.addEventListener('keydown', event => {
+  if (event.repeat) return;
+
+  const key = typeof event.key === 'string'
+    ? event.key.toLowerCase()
+    : '';
+
+  if (
+    callState.active &&
+    (event.ctrlKey || event.metaKey) &&
+    event.shiftKey &&
+    key === 'm'
+  ) {
+    event.preventDefault();
+    toggleMic();
+    return;
+  }
+
+  if (
+    key === 'escape' &&
+    callState.pendingIncoming &&
+    !callState.active
+  ) {
+    const otherVisibleModal = [...document.querySelectorAll(
+      '.modal, [role="dialog"], [aria-modal="true"]',
+    )].some(element => {
+      if (
+        element.id === 'incoming-call-modal' ||
+        element.closest('#incoming-call-modal')
+      ) {
+        return false;
+      }
+
+      return getComputedStyle(element).display !== 'none' &&
+        element.getClientRects().length > 0;
+    });
+
+    if (!otherVisibleModal) {
+      event.preventDefault();
+      declineIncomingCall();
+    }
+  }
+});
+
+/*
+ * Разблокировка autoplay после жеста пользователя.
+ * Отказ play() не означает неисправность WebRTC.
+ */
+function unlockCallAudio() {
+  if (!callState.active) return;
+
+  if (audioCtx?.state === 'suspended') {
+    audioCtx.resume().catch(() => {});
+  }
+
+  const grid = $('call-video-grid');
+  if (!grid) return;
+
+  for (const element of grid.querySelectorAll(
+    'audio[data-play-pending="1"], video[data-play-pending="1"]',
+  )) {
+    tryPlayCallMedia(element);
+  }
 }
 
-['mousemove', 'pointerdown', 'keydown', 'touchstart'].forEach(ev =>
-  document.addEventListener(ev, pokeCallIdle, { passive: true })
-);
+document.addEventListener('pointerdown', unlockCallAudio, { passive: true });
+document.addEventListener('keydown', unlockCallAudio);
 
-/* ── Пульс статуса ──────────────────────────────────────────────────────── */
+/* ── Позиционирование и idle ───────────────────────────────────────────── */
+
+function pokeCallIdle() {
+  const overlay = $('call-overlay');
+
+  if (!overlay || !callState.active) return;
+  if (!overlay.classList.contains('video-mode')) return;
+  if (overlay.classList.contains('detached')) return;
+
+  clearTimeout(idleTimer);
+  overlay.classList.remove('idle');
+
+  const session = captureCallSession();
+
+  idleTimer = setTimeout(() => {
+    idleTimer = null;
+
+    if (!currentSessionMatches(session)) return;
+    if (overlay.classList.contains('detached')) return;
+    if (!overlay.classList.contains('video-mode')) return;
+
+    // Не прячем контролы, пока пользователь работает с ними с клавиатуры.
+    if (
+      overlay.contains(document.activeElement) &&
+      document.activeElement?.matches(
+        'button, a, input, select, textarea, [role="button"]',
+      )
+    ) {
+      return;
+    }
+
+    overlay.classList.add('idle');
+  }, IDLE_HIDE_MS);
+}
+
+for (const event of ['mousemove', 'pointerdown', 'keydown', 'touchstart']) {
+  document.addEventListener(event, pokeCallIdle, { passive: true });
+}
+
+window.addEventListener('resize', scheduleOverlaySync, { passive: true });
+window.addEventListener('orientationchange', scheduleOverlaySync, {
+  passive: true,
+});
+
 whenDomReady(() => {
-  const st = $('call-overlay-status');
-  if (!st || !('MutationObserver' in window)) return;
-  new MutationObserver(() => {
-    const busy = /вызов|соединение|переподключение|ожидание/i.test(st.textContent ?? '');
-    if (busy) st.setAttribute('data-busy', '1');
-    else st.removeAttribute('data-busy');
-  }).observe(st, { childList: true, characterData: true, subtree: true });
-});
+  const overlay = $('call-overlay');
 
-/* ============================================================================
- * GLOBAL ERROR GUARDS
- * ==========================================================================*/
-window.addEventListener('unhandledrejection', e => {
-  if (e.reason instanceof AuthError) { e.preventDefault(); return; }
-  console.error('[app] Unhandled rejection:', e.reason);
-});
+  overlay?.addEventListener('click', event => {
+    if (!overlay.classList.contains('detached')) return;
+    if (!(event.target instanceof Element)) return;
 
-window.addEventListener('error', e => {
-  console.error('[app] Uncaught error:', e.error ?? e.message);
-});
+    if (event.target.closest('button, a, input, [role="button"]')) return;
 
-/* ============================================================================
- * DEBUG / INTEROP EXPORTS
- * ==========================================================================*/
-Object.assign(window, {
-  state, callState, socket, sfx,
-  BACKEND_URL, RTC_CONFIG, MAX_AVATAR_SIZE, ALLOWED_AVATAR_TYPES, RAW_AUDIO_CONSTRAINTS,
-  setText, setDisplay, showTransientNotice, authFetch, safeJson, on,
-  isAnyModalOpen, updateTitleBadge, closeAllModals,
-  syncVoiceOverlayPosition, hangupCall, toggleMic, toggleCam,
-  syncCallDetached, returnToCallChat, broadcastMediaState, toggleScreenShare, startScreenShare, stopScreenShare, renderCallGrid, clearPeerWait,
-});
-
-try {
-  Object.assign(window, {
-    closeActiveChat, openGroupChat, updateGroupVoiceBar, renderGroupsList,
-    showUserProfile, openChat, renderFriendsList, renderGroupMembersPanel,
-    closeProfileModal, closeGroupInfoModal, closeAddMembersModal,
-    closeCreateGroupModal, refreshGroupItem, openGroupInfoModal,
-    openEditProfileModal, closeEditProfileModal,
-    openBlockedUsersModal, closeBlockedUsersModal,
+    returnToCallChat();
   });
-} catch (e) {
-  console.warn('[exports] some UI functions are not defined:', e.message);
+
+  const sidebar = document.querySelector('.sidebar');
+
+  if (sidebar && 'MutationObserver' in window) {
+    new MutationObserver(scheduleOverlaySync).observe(sidebar, {
+      attributes: true,
+      attributeFilter: ['class', 'style'],
+    });
+  }
+
+  if ('ResizeObserver' in window) {
+    const observer = new ResizeObserver(scheduleOverlaySync);
+
+    if (sidebar) observer.observe(sidebar);
+
+    for (const header of document.querySelectorAll('.chat-head')) {
+      observer.observe(header);
+    }
+  }
+
+  const status = $('call-overlay-status');
+
+  if (status && 'MutationObserver' in window) {
+    const updateBusy = () => {
+      const busy = /вызов|соединение|переподключение|ожидание/i
+        .test(status.textContent || '');
+
+      if (busy) {
+        status.setAttribute('data-busy', '1');
+      } else {
+        status.removeAttribute('data-busy');
+      }
+    };
+
+    new MutationObserver(updateBusy).observe(status, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+
+    updateBusy();
+  }
+
+  resetCallControls();
+  updateScreenShareUI();
+  updateDmVoiceBar();
+});
+
+/* ── Уход со страницы ──────────────────────────────────────────────────── */
+
+window.addEventListener('pagehide', () => {
+  /*
+   * socket.emit при закрытии страницы — best effort.
+   * Сервер всё равно должен чистить членство по disconnect/TTL.
+   */
+  if (callState.active && isId(callState.callId)) {
+    try {
+      emitCall('callLeave', { callId: callState.callId });
+    } catch (_) {}
+  }
+
+  if (
+    callState.active ||
+    callStarting ||
+    callState.pendingIncoming ||
+    screenShareStarting
+  ) {
+    closeCallOverlay();
+  }
+});
+
+/* ── Глобальные ошибки ─────────────────────────────────────────────────── */
+
+window.addEventListener('unhandledrejection', event => {
+  if (
+    typeof AuthError !== 'undefined' &&
+    event.reason instanceof AuthError
+  ) {
+    event.preventDefault();
+    return;
+  }
+
+  console.error('[app] Unhandled rejection:', event.reason);
+});
+
+window.addEventListener('error', event => {
+  console.error('[app] Uncaught error:', event.error ?? event.message);
+});
+
+/* ── Экспорты для существующего UI ─────────────────────────────────────── */
+
+Object.assign(window, {
+  state,
+  callState,
+  socket,
+  sfx,
+
+  startCall,
+  startExistingCall,
+  joinExistingGroupVoice,
+  hangupCall,
+  closeCallOverlay,
+
+  toggleMic,
+  toggleCam,
+  toggleScreenShare,
+  startScreenShare,
+  stopScreenShare,
+
+  broadcastMediaState,
+  renderCallGrid,
+  resetCallControls,
+  updateScreenShareUI,
+  updateDmVoiceBar,
+
+  rememberGroupVoice,
+  clearGroupVoiceRejoin,
+  restoreGroupVoiceRejoin,
+
+  syncVoiceOverlayPosition,
+  syncCallDetached,
+  returnToCallChat,
+  scheduleOverlaySync,
+  clearPeerWait,
+
+  setText,
+  setDisplay,
+  showTransientNotice,
+  on,
+
+  RTC_CONFIG,
+  RAW_AUDIO_CONSTRAINTS,
+});
+
+/*
+ * Сохраняем дополнительные interop-экспорты исходного файла.
+ * Отсутствие одного символа не мешает экспортировать остальные.
+ */
+const callInteropExports = [
+  ['BACKEND_URL', () => BACKEND_URL],
+  ['MAX_AVATAR_SIZE', () => MAX_AVATAR_SIZE],
+  ['ALLOWED_AVATAR_TYPES', () => ALLOWED_AVATAR_TYPES],
+  ['authFetch', () => authFetch],
+  ['safeJson', () => safeJson],
+  ['isAnyModalOpen', () => isAnyModalOpen],
+  ['updateTitleBadge', () => updateTitleBadge],
+  ['closeAllModals', () => closeAllModals],
+
+  ['closeActiveChat', () => closeActiveChat],
+  ['openGroupChat', () => openGroupChat],
+  ['updateGroupVoiceBar', () => updateGroupVoiceBar],
+  ['renderGroupsList', () => renderGroupsList],
+  ['showUserProfile', () => showUserProfile],
+  ['openChat', () => openChat],
+  ['renderFriendsList', () => renderFriendsList],
+  ['renderGroupMembersPanel', () => renderGroupMembersPanel],
+  ['closeProfileModal', () => closeProfileModal],
+  ['closeGroupInfoModal', () => closeGroupInfoModal],
+  ['closeAddMembersModal', () => closeAddMembersModal],
+  ['closeCreateGroupModal', () => closeCreateGroupModal],
+  ['refreshGroupItem', () => refreshGroupItem],
+  ['openGroupInfoModal', () => openGroupInfoModal],
+  ['openEditProfileModal', () => openEditProfileModal],
+  ['closeEditProfileModal', () => closeEditProfileModal],
+  ['openBlockedUsersModal', () => openBlockedUsersModal],
+  ['closeBlockedUsersModal', () => closeBlockedUsersModal],
+];
+
+for (const [name, getter] of callInteropExports) {
+  try {
+    const value = getter();
+    if (value !== undefined) window[name] = value;
+  } catch (_) {
+    // Необязательная функция другого UI-модуля отсутствует.
+  }
 }
