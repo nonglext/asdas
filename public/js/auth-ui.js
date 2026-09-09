@@ -2,51 +2,55 @@
 
 /* ============================================================================
  * CONSTANTS
- * ==========================================================================*/
+ * ========================================================================== */
+
 const ID_RE = /^[a-z0-9_]{3,30}$/;
 const ID_MIN_LEN = 3;
 const PW_MIN_LEN = 8;
-const SLOW_SERVER_HINT_MS = 6000;   // после этого показываем «Сервер запускается…»
+const SLOW_SERVER_HINT_MS = 6000;
 const NICK_FETCH_CONCURRENCY = 6;
 const SIDEBAR_TAB_KEY = 'chatapp_tab';
 
-const AUTH_ERRORS = {
+const AUTH_ERRORS = Object.freeze({
   invalid_credentials: 'Неверный ID или пароль',
   wrong_password: 'Неверный ID или пароль',
   not_found: 'Пользователь не найден',
   user_exists: 'Этот ID уже занят',
   already_exists: 'Этот ID уже занят',
-  invalid_id: 'ID: только a-z, 0-9, _',
+  invalid_id: 'ID: только a-z, 0-9, _; от 3 до 30 символов',
   weak_password: `Пароль минимум ${PW_MIN_LEN} символов`,
   rate_limited: 'Слишком много попыток, попробуйте позже',
   server_error: 'Ошибка сервера',
-};
+});
 
-const FRIEND_REQUEST_ERRORS = {
+const FRIEND_REQUEST_ERRORS = Object.freeze({
   rate_limited: 'Слишком много заявок, попробуйте позже',
   not_found: 'Пользователь не найден',
   self: 'Нельзя добавить самого себя',
   already_friends: 'Вы уже друзья',
   already_sent: 'Заявка уже отправлена',
   blocked: 'Невозможно отправить заявку',
-  limit_reached: 'Достигнут лимит заявок/друзей',
+  limit_reached: 'Достигнут лимит заявок или друзей',
   target_limit_reached: 'У пользователя переполнен список заявок',
   server_error: 'Ошибка сервера. Попробуйте позже',
-  incoming_request_exists: 'У вас уже есть входящая заявка: примите её в разделе заявок',
+  incoming_request_exists: 'У вас уже есть входящая заявка от этого пользователя',
   no_request: 'Заявка уже обработана или отозвана',
   unauthorized: 'Сессия истекла. Войдите снова',
   busy: 'Сервер занят. Попробуйте ещё раз',
   bad_request: 'Некорректный запрос. Обновите страницу',
-};
+});
 
-const SEND_MESSAGE_ERRORS = {
+const SEND_MESSAGE_ERRORS = Object.freeze({
   image_too_large: 'Изображение слишком большое',
   text_too_long: 'Сообщение слишком длинное',
   not_friends: 'Вы не друзья с этим пользователем',
   blocked: 'Невозможно отправить сообщение',
-};
+  rate_limited: 'Слишком много сообщений, подождите',
+  not_found: 'Получатель не найден',
+  server_error: 'Не удалось отправить сообщение',
+});
 
-const GROUP_ERRORS = {
+const GROUP_ERRORS = Object.freeze({
   not_found: 'Группа не найдена',
   not_member: 'Вы не участник группы',
   not_owner: 'Только владелец может это делать',
@@ -56,87 +60,410 @@ const GROUP_ERRORS = {
   blocked: 'Невозможно добавить пользователя',
   rate_limited: 'Слишком много действий, подождите',
   text_too_long: 'Сообщение слишком длинное',
-};
+  server_error: 'Ошибка сервера',
+});
+
+/* ============================================================================
+ * LOCAL STATE
+ * ========================================================================== */
+
+let authUiRevision = state.sessionRevision;
+
+let authOperation = null;
+let restoreOperation = null;
+let restoreStarted = false;
+
+let searchTimer = null;
+let searchAbort = null;
+let searchBlurTimer = null;
+
+let nickFetchInFlight = null;
+let nickFetchController = null;
+let nickFetchGeneration = 0;
+
+const nicknameQueue = new Set();
+const nicknameVersions = new Map();
+
+const friendRequestOperations = new Map();
+const incomingRequestOperations = new Map();
+const sentFriendRequests = new Set();
+
+const recentMessageEvents = new Map();
+const deletedMessageIds = new Set();
+
+const buttonBusyOperations = new WeakMap();
+
+const MAX_RECENT_MESSAGE_EVENTS = 5000;
+const MAX_DELETED_MESSAGE_IDS = 5000;
 
 /* ============================================================================
  * SMALL HELPERS
- * ==========================================================================*/
-const getReqId = r => (typeof r === 'string' ? r : r?.id);
-const userIdOf = u => (typeof u === 'string' ? u : u?.id);
+ * ========================================================================== */
 
-/** Человекочитаемое сообщение об ошибке: код → словарь, иначе текст сервера (если это текст), иначе fallback. */
-function humanError(raw, dict, fallback) {
-  if (!raw) return fallback;
-  if (dict[raw]) return dict[raw];
-  const looksLikeText = /\s|[а-яё]/i.test(String(raw)) && String(raw).length < 120;
-  return looksLikeText ? String(raw) : fallback;
+function auRecord(value) {
+  return value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value);
+}
+
+function auId(value) {
+  if (typeof value !== 'string' && typeof value !== 'number') return '';
+
+  const id = String(value);
+  return id && id.length <= 512 ? id : '';
+}
+
+const getReqId = request => auId(
+  typeof request === 'string' || typeof request === 'number'
+    ? request
+    : request?.id,
+);
+
+const userIdOf = user => auId(
+  typeof user === 'string' || typeof user === 'number'
+    ? user
+    : user?.id,
+);
+
+function auIds(value) {
+  if (!Array.isArray(value)) return [];
+
+  return [...new Set(value.map(userIdOf).filter(Boolean))];
+}
+
+function auCount(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.trunc(number)) : 0;
+}
+
+function auCounts(value) {
+  const result = Object.create(null);
+
+  if (!auRecord(value)) return result;
+
+  for (const [id, count] of Object.entries(value)) {
+    if (auId(id)) result[id] = auCount(count);
+  }
+
+  return result;
+}
+
+function auMembers(group) {
+  if (!Array.isArray(group?.members)) return [];
+
+  const seen = new Set();
+
+  return group.members.filter(member => {
+    const id = userIdOf(member);
+
+    if (!auRecord(member) || !id || seen.has(id)) return false;
+
+    seen.add(id);
+    return true;
+  });
+}
+
+function auRequests(value) {
+  if (!Array.isArray(value)) return [];
+
+  const result = new Map();
+
+  for (const request of value) {
+    const id = getReqId(request);
+    if (!id) continue;
+
+    result.set(id, {
+      ...(auRecord(request) ? request : {}),
+      id,
+    });
+  }
+
+  return [...result.values()];
+}
+
+function auSnapshot() {
+  return {
+    revision: state.sessionRevision,
+    userId: state.me?.id ?? null,
+    token: storage.getItem('chatapp_token'),
+  };
+}
+
+function auCurrent(snapshot) {
+  return state.sessionRevision === snapshot.revision &&
+    (state.me?.id ?? null) === snapshot.userId &&
+    storage.getItem('chatapp_token') === snapshot.token;
+}
+
+function auSilentError(error) {
+  return [
+    'AuthError',
+    'SessionChangedError',
+    'AbortError',
+  ].includes(error?.name);
+}
+
+function auRun(action) {
+  try {
+    Promise.resolve(action()).catch(error => {
+      if (!auSilentError(error)) {
+        console.warn('[auth-ui] action failed', error);
+        showTransientNotice(error?.message || 'Не удалось выполнить действие');
+      }
+    });
+  } catch (error) {
+    if (!auSilentError(error)) {
+      console.warn('[auth-ui] action failed', error);
+      showTransientNotice(error?.message || 'Не удалось выполнить действие');
+    }
+  }
+}
+
+function auNode(tag, className, text) {
+  const element = document.createElement(tag);
+
+  if (className) element.className = className;
+  if (text !== undefined) element.textContent = String(text ?? '');
+
+  return element;
+}
+
+function auActivate(element, action) {
+  element.setAttribute('role', 'button');
+  element.tabIndex = 0;
+
+  element.addEventListener('click', () => auRun(action));
+
+  element.addEventListener('keydown', event => {
+    if (event.target !== element || event.repeat || event.isComposing) return;
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+
+    event.preventDefault();
+    element.click();
+  });
+}
+
+function humanError(raw, dictionary, fallback) {
+  if (typeof raw !== 'string' || !raw) return fallback;
+
+  if (Object.prototype.hasOwnProperty.call(dictionary, raw)) {
+    return dictionary[raw];
+  }
+
+  const looksLikeText = /\s|[а-яё]/i.test(raw) && raw.length < 160;
+  return looksLikeText ? raw : fallback;
+}
+
+function auErrorCode(data) {
+  return typeof data?.reason === 'string'
+    ? data.reason
+    : typeof data?.error === 'string'
+      ? data.error
+      : '';
+}
+
+function auPersistProfile() {
+  if (!state.me) return;
+
+  try {
+    storage.setItem('chatapp_profile', JSON.stringify(state.me));
+  } catch (error) {
+    console.warn('[auth-ui] profile cache failed', error);
+  }
+}
+
+function auIsFriend(id) {
+  return !!state.friends[id] || auIds(state.me?.friends).includes(id);
+}
+
+function auIsBlocked(id) {
+  return auIds(state.me?.blockedUsers).includes(id);
+}
+
+function auMessageId(message) {
+  return auId(message?._id ?? message?.id);
+}
+
+function auRememberMessage(key) {
+  if (recentMessageEvents.has(key)) return false;
+
+  recentMessageEvents.set(key, Date.now());
+
+  while (recentMessageEvents.size > MAX_RECENT_MESSAGE_EVENTS) {
+    recentMessageEvents.delete(recentMessageEvents.keys().next().value);
+  }
+
+  return true;
+}
+
+function auRememberDeleted(id) {
+  deletedMessageIds.add(id);
+
+  while (deletedMessageIds.size > MAX_DELETED_MESSAGE_IDS) {
+    deletedMessageIds.delete(deletedMessageIds.values().next().value);
+  }
+}
+
+function auPrepareMessage(message) {
+  if (!auRecord(message) || !userIdOf(message.from)) return null;
+
+  const id = auMessageId(message);
+
+  return {
+    ...message,
+    from: userIdOf(message.from),
+    ...(id && deletedMessageIds.has(id) ? { deleted: true } : {}),
+  };
+}
+
+function auEnsureSession() {
+  if (authUiRevision === state.sessionRevision) return;
+
+  authUiRevision = state.sessionRevision;
+
+  clearTimeout(searchTimer);
+  clearTimeout(searchBlurTimer);
+
+  searchTimer = null;
+  searchBlurTimer = null;
+
+  searchAbort?.abort();
+  searchAbort = null;
+
+  nickFetchGeneration++;
+  nickFetchController?.abort();
+  nickFetchController = null;
+  nickFetchInFlight = null;
+
+  nicknameQueue.clear();
+  nicknameVersions.clear();
+
+  for (const operation of incomingRequestOperations.values()) {
+    clearTimeout(operation.timer);
+  }
+
+  incomingRequestOperations.clear();
+  friendRequestOperations.clear();
+  sentFriendRequests.clear();
+
+  recentMessageEvents.clear();
+  deletedMessageIds.clear();
+
+  $('search-results')?.replaceChildren();
+  $('search-results')?.classList.remove('open');
+  $('search-input')?.setAttribute('aria-expanded', 'false');
+}
+
+function auOnSocket(event, handler) {
+  socket.on(event, payload => {
+    auEnsureSession();
+
+    if (!state.me || state.loggingOut) return;
+
+    auRun(() => handler(payload));
+  });
 }
 
 function bindEnterToButton(inputIds, buttonId) {
-  inputIds.forEach(id =>
-    on(id, 'keydown', e => {
-      if (e.key === 'Enter' && !e.isComposing) {
-        e.preventDefault();
-        $(buttonId)?.click();
+  for (const id of inputIds) {
+    on(id, 'keydown', event => {
+      if (
+        event.key !== 'Enter' ||
+        event.isComposing ||
+        event.repeat
+      ) {
+        return;
       }
-    })
-  );
-}
 
-function removeFriendRequest(fromId) {
-  if (!state.me?.friendRequests) return;
-  state.me.friendRequests = state.me.friendRequests.filter(r => getReqId(r) !== fromId);
-  renderRequests(state.me.friendRequests);
-}
-
-function forgetGroup(groupId) {
-  delete state.groups[groupId];
-  delete state.groupUnread[groupId];
-  clearGroupVoiceRejoin?.(groupId);
-  delete state.groupVoiceCalls[groupId];
-  delete state.groupLastActivity[groupId];
-  renderGroupsList();
-  updateTitleBadge();
-  if (state.activeGroup === groupId) closeActiveChat();
-  if (state.infoGroupId === groupId) closeGroupInfoModal();
-  if (callState.active && callState.isGroup && callState.groupId === groupId) hangupCall();
-}
-
-function syncActiveGroupUI(group) {
-  if (!group || state.activeGroup !== group.id) return;
-  updateGroupChatHeader(group);
-  renderGroupMembersPanel(group);
+      event.preventDefault();
+      $(buttonId)?.click();
+    });
+  }
 }
 
 /* ============================================================================
- * UI WIRING: password toggle / tabs / rail
- * ==========================================================================*/
+ * BOOT READINESS
+ * ========================================================================== */
+
+function auWaitForApp() {
+  if (window.__chatappReady) return window.__chatappReady;
+
+  if (window.__chatappBooted) return Promise.resolve();
+
+  if (window.__chatappBootstrap) {
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        window.removeEventListener('chatapp:ready', onReady);
+        window.removeEventListener('chatapp:boot-error', onError);
+      };
+
+      const onReady = () => {
+        cleanup();
+        resolve();
+      };
+
+      const onError = event => {
+        cleanup();
+        reject(new Error(event.detail?.message || 'Ошибка загрузки приложения'));
+      };
+
+      window.addEventListener('chatapp:ready', onReady, { once: true });
+      window.addEventListener('chatapp:boot-error', onError, { once: true });
+    });
+  }
+
+  // Совместимость с обычным подключением всех скриптов в HTML.
+  if (document.readyState === 'complete') return Promise.resolve();
+
+  return new Promise(resolve => {
+    window.addEventListener('load', resolve, { once: true });
+  });
+}
+
+/* ============================================================================
+ * PASSWORD / TABS / SIDEBAR
+ * ========================================================================== */
+
 whenDomReady(() => {
-  document.querySelectorAll('.pw-toggle').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const input = $(btn.dataset.target);
-      if (!input) return;
+  document.querySelectorAll('.pw-toggle').forEach(button => {
+    if (button instanceof HTMLButtonElement) button.type = 'button';
+
+    button.addEventListener('click', () => {
+      const input = $(button.dataset.target);
+
+      if (!(input instanceof HTMLInputElement)) return;
+      if (!['password', 'text'].includes(input.type)) return;
+
       const show = input.type === 'password';
       input.type = show ? 'text' : 'password';
-      const svg = btn.querySelector('svg');
+
+      const svg = button.querySelector('svg');
       if (svg) svg.style.opacity = show ? '0.5' : '1';
-      btn.setAttribute('aria-pressed', String(show));
-      btn.setAttribute('aria-label', show ? 'Скрыть пароль' : 'Показать пароль');
+
+      button.setAttribute('aria-pressed', String(show));
+      button.setAttribute('aria-label', show ? 'Скрыть пароль' : 'Показать пароль');
+
       input.focus({ preventScroll: true });
     });
   });
 
   document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('click', () => {
-      document.querySelectorAll('.tab').forEach(t => {
-        const active = t === tab;
-        t.classList.toggle('active', active);
-        t.setAttribute('aria-selected', String(active));
+      if (!tab.dataset.tab) return;
+
+      document.querySelectorAll('.tab').forEach(element => {
+        const active = element === tab;
+        element.classList.toggle('active', active);
+        element.setAttribute('aria-selected', String(active));
       });
-      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      const content = $('tab-' + tab.dataset.tab);
+
+      document.querySelectorAll('.tab-content').forEach(element => {
+        element.classList.remove('active');
+      });
+
+      const content = $(`tab-${tab.dataset.tab}`);
       content?.classList.add('active');
+
       setErr('');
       content?.querySelector('input')?.focus();
     });
@@ -145,867 +472,2108 @@ whenDomReady(() => {
   document.querySelectorAll('.sidebar-tab').forEach(tab => {
     tab.addEventListener('click', () => switchSidebarTab(tab.dataset.stab));
   });
-  switchSidebarTab(storage.getItem(SIDEBAR_TAB_KEY) === 'groups' ? 'groups' : 'dm');
 
-  // Автофокус на поле ID, если показан экран входа
-  if (!document.documentElement.classList.contains('has-session')) {
+  document.querySelectorAll('.rail-btn[data-rail]').forEach(button => {
+    button.addEventListener('click', () => switchSidebarTab(button.dataset.rail));
+  });
+
+  switchSidebarTab(
+    storage.getItem(SIDEBAR_TAB_KEY) === 'groups' ? 'groups' : 'dm',
+  );
+
+  if (!storage.getItem('chatapp_token')) {
     $('login-id')?.focus({ preventScroll: true });
   }
 });
 
-function switchSidebarTab(name) {
+function switchSidebarTab(value) {
+  const name = value === 'groups' ? 'groups' : 'dm';
   const isGroups = name === 'groups';
-  document.querySelectorAll('.sidebar-tab').forEach(t => {
-    const active = t.dataset.stab === name;
-    t.classList.toggle('active', active);
-    t.setAttribute('aria-selected', String(active));
+
+  document.querySelectorAll('.sidebar-tab').forEach(tab => {
+    const active = tab.dataset.stab === name;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', String(active));
   });
-  // Рельса слева (fallback для браузеров без :has)
-  document.querySelectorAll('.rail-btn[data-rail]').forEach(b => {
-    const active = b.dataset.rail === name;
-    b.classList.toggle('active', active);
-    b.setAttribute('aria-current', active ? 'page' : 'false');
+
+  document.querySelectorAll('.rail-btn[data-rail]').forEach(button => {
+    const active = button.dataset.rail === name;
+    button.classList.toggle('active', active);
+
+    if (active) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
   });
+
   setDisplay('dm-panel', isGroups ? 'none' : '');
   setDisplay('groups-panel', isGroups ? '' : 'none');
-  try { storage.setItem(SIDEBAR_TAB_KEY, isGroups ? 'groups' : 'dm'); } catch (e) {}
+
+  storage.setItem(SIDEBAR_TAB_KEY, name);
+}
+
+/* ============================================================================
+ * BUTTON BUSY
+ * ========================================================================== */
+
+async function withButtonBusy(button, busyText, action) {
+  if (!button) return action();
+  if (button.disabled || buttonBusyOperations.has(button)) return;
+
+  const operation = {
+    text: button.textContent,
+    disabled: button.disabled,
+  };
+
+  buttonBusyOperations.set(button, operation);
+
+  button.disabled = true;
+  button.textContent = busyText;
+  button.setAttribute('aria-busy', 'true');
+
+  const timer = setTimeout(() => {
+    if (buttonBusyOperations.get(button) === operation && button.isConnected) {
+      button.textContent = 'Сервер запускается…';
+    }
+  }, SLOW_SERVER_HINT_MS);
+
+  try {
+    return await action();
+  } finally {
+    clearTimeout(timer);
+
+    if (buttonBusyOperations.get(button) === operation) {
+      buttonBusyOperations.delete(button);
+
+      button.disabled = operation.disabled;
+      button.textContent = operation.text;
+      button.removeAttribute('aria-busy');
+    }
+  }
 }
 
 /* ============================================================================
  * REGISTER / LOGIN
- * ==========================================================================*/
-async function withButtonBusy(btn, busyText, fn) {
-  if (!btn) return fn();
-  if (btn.disabled) return; // защита от двойного клика
-  const original = btn.textContent;
-  btn.disabled = true;
-  btn.setAttribute('aria-busy', 'true');
-  btn.textContent = busyText;
-  // Render free-tier «просыпается» до ~50 с — объясняем, почему долго
-  const slowTimer = setTimeout(() => { btn.textContent = 'Сервер запускается…'; }, SLOW_SERVER_HINT_MS);
-  try {
-    await fn();
-  } finally {
-    clearTimeout(slowTimer);
-    btn.disabled = false;
-    btn.removeAttribute('aria-busy');
-    btn.textContent = original;
-  }
+ * ========================================================================== */
+
+function auCancelRestoration() {
+  if (!restoreOperation) return;
+
+  restoreOperation.cancelled = true;
+  restoreOperation.controller.abort();
+  restoreOperation = null;
+
+  setConnBanner(false);
 }
 
 async function authRequest(path, body, fallbackError) {
+  if (authOperation) return;
+
+  auCancelRestoration();
+
+  const operation = {
+    controller: new AbortController(),
+    snapshot: auSnapshot(),
+  };
+
+  authOperation = operation;
+
+  const current = () =>
+    authOperation === operation &&
+    !operation.controller.signal.aborted &&
+    auCurrent(operation.snapshot);
+
   try {
-    const res = await authFetch(BACKEND_URL + path, {
+    await auWaitForApp();
+
+    if (!current() || state.me) return;
+
+    const response = await authFetch(`${BACKEND_URL}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: operation.controller.signal,
     });
-    const data = await safeJson(res);
-    if (res.status === 429) return setErr(AUTH_ERRORS.rate_limited);
-    if (!res.ok) return setErr(humanError(data?.error, AUTH_ERRORS, fallbackError));
-    if (!data?.user || !data?.token) return setErr('Некорректный ответ сервера');
-    saveAndLogin(data.user, data.user.id || body.userId, data.token);
-  } catch (e) {
-    if (e instanceof AuthError) return;
-    setErr(e?.name === 'TimeoutError' ? 'Сервер не отвечает, попробуйте ещё раз' : 'Ошибка сети');
+
+    const data = await safeJson(response);
+
+    if (!current()) return;
+
+    if (response.status === 429) {
+      setErr(AUTH_ERRORS.rate_limited);
+      return;
+    }
+
+    if (!response.ok) {
+      setErr(humanError(auErrorCode(data), AUTH_ERRORS, fallbackError));
+      return;
+    }
+
+    const user = data?.user;
+    const token = data?.token;
+    const id = userIdOf(user) || auId(body.userId);
+
+    if (
+      !auRecord(user) ||
+      !id ||
+      typeof token !== 'string' ||
+      !token.trim()
+    ) {
+      setErr('Некорректный ответ сервера');
+      return;
+    }
+
+    saveAndLogin({ ...user, id }, id, token);
+
+    for (const id of ['login-pw', 'reg-pw']) {
+      const input = $(id);
+      if (input) input.value = '';
+    }
+  } catch (error) {
+    if (!current() || auSilentError(error)) return;
+
+    console.warn('[auth] request failed', error);
+
+    setErr(
+      error?.name === 'TimeoutError'
+        ? 'Сервер не отвечает, попробуйте ещё раз'
+        : 'Не удалось выполнить вход. Проверьте соединение',
+    );
+  } finally {
+    if (authOperation === operation) authOperation = null;
   }
 }
 
-on('btn-register', 'click', async () => {
+on('btn-register', 'click', () => {
+  if (authOperation || state.me) return;
+
   setErr('');
+
   const userId = ($('reg-id')?.value || '').trim().toLowerCase();
   const nickname = ($('reg-nick')?.value || '').trim() || userId;
   const password = $('reg-pw')?.value || '';
 
-  if (userId.length < ID_MIN_LEN) return setErr(`ID минимум ${ID_MIN_LEN} символа`);
-  if (!ID_RE.test(userId)) return setErr('ID: только a-z, 0-9, _');
-  if (password.length < PW_MIN_LEN) return setErr(`Пароль минимум ${PW_MIN_LEN} символов`);
-  if (new TextEncoder().encode(password).length > 72 || password.includes('\0')) return setErr('Пароль: не больше 72 байт UTF-8, без нулевого символа');
+  if (userId.length < ID_MIN_LEN) {
+    setErr(`ID минимум ${ID_MIN_LEN} символа`);
+    return;
+  }
 
-  await withButtonBusy($('btn-register'), 'Загрузка…', () =>
-    authRequest('/api/register', { userId, nickname, password }, 'Ошибка регистрации')
-  );
+  if (!ID_RE.test(userId)) {
+    setErr(AUTH_ERRORS.invalid_id);
+    return;
+  }
+
+  if (password.length < PW_MIN_LEN) {
+    setErr(AUTH_ERRORS.weak_password);
+    return;
+  }
+
+  if (
+    new TextEncoder().encode(password).length > 72 ||
+    password.includes('\0')
+  ) {
+    setErr('Пароль: не больше 72 байт UTF-8, без нулевого символа');
+    return;
+  }
+
+  auRun(() => withButtonBusy(
+    $('btn-register'),
+    'Регистрация…',
+    () => authRequest(
+      '/api/register',
+      { userId, nickname, password },
+      'Ошибка регистрации',
+    ),
+  ));
 });
 
-on('btn-login', 'click', async () => {
+on('btn-login', 'click', () => {
+  if (authOperation || state.me) return;
+
   setErr('');
+
   const userId = ($('login-id')?.value || '').trim().toLowerCase();
   const password = $('login-pw')?.value || '';
-  if (!userId || !password) return setErr('Введите ID и пароль');
 
-  await withButtonBusy($('btn-login'), 'Загрузка…', () =>
-    authRequest('/api/login', { userId, password }, 'Ошибка входа')
-  );
+  if (!userId || !password) {
+    setErr('Введите ID и пароль');
+    return;
+  }
+
+  auRun(() => withButtonBusy(
+    $('btn-login'),
+    'Вход…',
+    () => authRequest(
+      '/api/login',
+      { userId, password },
+      'Ошибка входа',
+    ),
+  ));
 });
 
 bindEnterToButton(['login-id', 'login-pw'], 'btn-login');
 bindEnterToButton(['reg-id', 'reg-nick', 'reg-pw'], 'btn-register');
 
-on('btn-logout', 'click', e => {
-  e.stopPropagation();
+on('btn-logout', 'click', event => {
+  event.stopPropagation();
+
   if (callState.active && !confirm('Идёт звонок. Выйти из аккаунта?')) return;
+
+  authOperation?.controller.abort();
+  authOperation = null;
+
+  auCancelRestoration();
+  closeDrop();
+
+  /*
+   * resetChatUiState вызывается и здесь для совместимости,
+   * даже если хук ещё не добавлен в core.resetState().
+   */
+  window.resetChatUiState?.();
+
   forceLogoutToLogin();
+  auEnsureSession();
 });
+
+/* ============================================================================
+ * SESSION RESTORATION
+ * ========================================================================== */
+
+async function restoreSession() {
+  if (restoreStarted || state.me || authOperation) return;
+
+  restoreStarted = true;
+
+  const token = storage.getItem('chatapp_token');
+
+  if (!token) {
+    document.documentElement.classList.remove('has-session');
+    return;
+  }
+
+  const operation = {
+    controller: new AbortController(),
+    snapshot: auSnapshot(),
+    cancelled: false,
+  };
+
+  restoreOperation = operation;
+
+  const current = () =>
+    restoreOperation === operation &&
+    !operation.cancelled &&
+    !authOperation &&
+    !state.me &&
+    auCurrent(operation.snapshot);
+
+  setConnBanner(true, 'Проверяем сессию…');
+
+  try {
+    const response = await authFetch(`${BACKEND_URL}/api/me`, {
+      cache: 'no-store',
+      timeoutMs: 20000,
+      signal: operation.controller.signal,
+    });
+
+    if (!current()) return;
+
+    if (response.status === 401) {
+      storage.removeItem('chatapp_token');
+      storage.removeItem('chatapp_id');
+      storage.removeItem('chatapp_profile');
+
+      document.documentElement.classList.remove('has-session');
+      setErr('Сессия истекла, войдите снова');
+      return;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Проверка сессии: HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (!current()) return;
+
+    const user = auRecord(data?.user) ? data.user : data;
+    const id = userIdOf(user);
+
+    if (!auRecord(user) || !id) {
+      throw new Error('Некорректный ответ /api/me');
+    }
+
+    saveAndLogin({ ...user, id }, id, token);
+  } catch (error) {
+    if (!current() || auSilentError(error)) return;
+
+    console.warn('[auth] restoration failed', error);
+
+    /*
+     * Сбой сети не означает, что токен недействителен.
+     * Не удаляем сохранённую сессию и не доверяем кешированному профилю.
+     */
+    restoreStarted = false;
+
+    document.documentElement.classList.remove('has-session');
+
+    setErr(
+      error?.name === 'TimeoutError'
+        ? 'Проверка сессии заняла слишком много времени. Обновите страницу или войдите'
+        : 'Не удалось проверить сессию. Проверьте соединение или войдите снова',
+    );
+  } finally {
+    if (restoreOperation === operation) {
+      restoreOperation = null;
+      setConnBanner(false);
+    }
+  }
+}
+
+/*
+ * Загрузчик не ожидает этот Promise, поэтому циклического ожидания нет:
+ * сначала выполняются chat-ui.js и calls.js, затем восстанавливается сессия.
+ */
+auWaitForApp()
+  .then(() => restoreSession())
+  .catch(error => {
+    console.warn('[auth] App is not ready:', error);
+  });
+
+window.addEventListener('online', () => {
+  if (!state.me && !authOperation && !restoreOperation && !restoreStarted) {
+    auRun(restoreSession);
+  }
+});
+
+/* ============================================================================
+ * CHAT / OWN PROFILE
+ * ========================================================================== */
 
 function showChatPlaceholder() {
   setDisplay('chat-placeholder', 'flex');
   setDisplay('chat-window', 'none');
   setDisplay('group-chat-window', 'none');
   setDisplay('group-voice-bar', 'none');
+  setDisplay('dm-voice-bar', 'none');
 }
 
 function closeActiveChat() {
+  /*
+   * При logout state.me уже может быть null.
+   * Не восстанавливаем очищенные drafts из старых DOM-полей.
+   */
+  if (state.me && typeof saveComposerDraft === 'function') {
+    saveComposerDraft();
+  }
+
   state.seq.chat++;
   state.seq.groupChat++;
-  saveComposerDraft();
+
+  for (const id of ['messages', 'group-messages']) {
+    const box = $(id);
+
+    if (typeof uiCancelHistory === 'function') uiCancelHistory(box);
+
+    if (box) {
+      box._conversationKey = null;
+      box._historyReady = false;
+    }
+  }
+
   state.activeFriend = null;
   state.activeGroup = null;
   state.pendingDeleteId = null;
+
   setDisplay('delete-confirm', 'none');
-  document.querySelectorAll('.friend-item.active').forEach(el => el.classList.remove('active'));
+
+  document.querySelectorAll('.friend-item.active').forEach(element => {
+    element.classList.remove('active');
+  });
+
   showChatPlaceholder();
+
+  if (typeof scheduleOverlaySync === 'function') scheduleOverlaySync();
 }
 
-/* ── Восстановление сессии при загрузке (идемпотентно) ─────────────────── */
-window.addEventListener('load', () => {
-  if (state.me) return;
-  const token = storage.getItem('chatapp_token');
-  const raw = storage.getItem('chatapp_profile');
-  if (!token || !raw) return;
-  try {
-    const profile = JSON.parse(raw);
-    if (profile && profile.id) {
-      state.me = profile;
-      enterApp(profile);
-    } else {
-      throw new Error('bad profile');
-    }
-  } catch (e) {
-    storage.removeItem('chatapp_profile');
-    storage.removeItem('chatapp_token');
-    document.documentElement.classList.remove('has-session');
-  }
+on('me-card', 'click', event => {
+  if (!(event.target instanceof Element)) return;
+  if (event.target.closest('#btn-logout')) return;
+
+  if (state.me) auRun(() => openEditProfileModal());
 });
 
-/* ============================================================================
- * ME CARD → EDIT PROFILE
- * ==========================================================================*/
-on('me-card', 'click', e => {
-  if (e.target.closest('#btn-logout')) return;
-  if (state.me) openEditProfileModal();
-});
-on('me-card', 'keydown', e => {
-  if ((e.key === 'Enter' || e.key === ' ') && e.target === $('me-card')) {
-    e.preventDefault();
-    if (state.me) openEditProfileModal();
-  }
+on('me-card', 'keydown', event => {
+  if (event.target !== $('me-card') || event.repeat) return;
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+
+  event.preventDefault();
+
+  if (state.me) auRun(() => openEditProfileModal());
 });
 
 /* ============================================================================
  * SEARCH
- * ==========================================================================*/
-let searchTimer = null;
-let searchAbort = null;
-
-on('search-input', 'input', () => {
-  clearTimeout(searchTimer);
-  const q = $('search-input').value.trim();
-  // Invalidate immediately: old responses can arrive during debounce.
-  closeDrop(false);
-  if (!q) return;
-  searchTimer = setTimeout(() => doSearch(q), SEARCH_DEBOUNCE_MS);
-});
-on('search-input', 'blur', () => setTimeout(() => {
-  // не закрывать, если фокус ушёл внутрь дропдауна (стрелки)
-  if (!$('search-results')?.contains(document.activeElement)) closeDrop(false);
-}, 200));
-on('search-input', 'focus', () => {
-  const q = $('search-input').value.trim();
-  if (q) doSearch(q);
-});
-on('search-input', 'keydown', e => {
-  if (e.isComposing) return;
-  const drop = $('search-results');
-  if (e.key === 'Escape') {
-    closeDrop();
-    e.target.blur();
-  } else if (e.key === 'Enter') {
-    drop?.querySelector('.s-item[data-uid]')?.click(); // Enter открывает первый результат
-  } else if (e.key === 'ArrowDown' && drop?.classList.contains('open')) {
-    e.preventDefault();
-    drop.querySelector('.s-item[data-uid]')?.focus();
-  }
-});
-
-// Навигация стрелками по результатам
-on('search-results', 'keydown', e => {
-  const items = [...$('search-results').querySelectorAll('.s-item[data-uid]')];
-  const i = items.indexOf(document.activeElement);
-  if (i < 0) return;
-  if (e.key === 'ArrowDown') { e.preventDefault(); items[Math.min(i + 1, items.length - 1)].focus(); }
-  else if (e.key === 'ArrowUp') { e.preventDefault(); if (i === 0) $('search-input')?.focus(); else items[i - 1].focus(); }
-  else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); items[i].click(); }
-  else if (e.key === 'Escape') { closeDrop(); }
-});
-
-function renderSearchNotice(drop, text, isError = false) {
-  drop.innerHTML = `<div class="s-empty"${isError ? ' style="color:var(--text-danger)"' : ''}>${esc(text)}</div>`;
-  drop.classList.add('open');
-  $('search-input')?.setAttribute('aria-expanded', 'true');
-}
-
-function buildSearchItem(u) {
-  const isFriend = !!state.me?.friends?.includes(u.id);
-  const el = document.createElement('div');
-  el.className = 's-item';
-  el.dataset.uid = u.id; // нужен для отката кнопки в friendRequestError
-  el.setAttribute('role', 'option');
-  el.tabIndex = -1;
-  el.innerHTML = `
-    <div class="s-mini-av"></div>
-    <div style="flex:1;min-width:0">
-      <div class="s-nick">${esc(u.nickname)}</div>
-      <div class="s-id">@${esc(u.id)}</div>
-    </div>
-    <button class="btn-add" type="button" ${isFriend ? 'disabled' : ''}>${isFriend ? '✓ В друзьях' : 'Добавить'}</button>`;
-  renderAvWithDot(el.querySelector('.s-mini-av'), u.nickname, u.avatar, !!u.online);
-
-  const btn = el.querySelector('.btn-add');
-  btn.addEventListener('click', e => {
-    e.stopPropagation();
-    if (isFriend || btn.disabled) return;
-    if (!socket.connected) return showTransientNotice('Нет соединения с сервером');
-    requestFriend(u.id, btn);
-  });
-  // mousedown раньше blur → не теряем клик из‑за закрытия дропдауна
-  el.addEventListener('mousedown', e => e.preventDefault());
-  el.addEventListener('click', () => {
-    if (isFriend) openChat(u.id);
-    else showUserProfile(u.id);
-    closeDrop();
-  });
-  return el;
-}
-
-async function doSearch(q) {
-  q = q.trim().replace(/^@/, '').slice(0, 50);
-  if (!q) return closeDrop(false);
-  const drop = $('search-results');
-  if (!drop) return;
-
-  searchAbort?.abort();
-  searchAbort = new AbortController();
-  const { signal } = searchAbort;
-  const requestSeq = ++state.seq.search;
-  const stale = () => requestSeq !== state.seq.search;
-
-  try {
-    const res = await authFetch(BACKEND_URL + '/api/search?q=' + encodeURIComponent(q), { signal });
-    if (stale()) return;
-    if (res.status === 429) return renderSearchNotice(drop, 'Слишком часто, подождите');
-    if (!res.ok) {
-      const detail = await safeJson(res);
-      const error = new Error(detail?.error || 'search failed');
-      error.requestId = detail?.requestId;
-      throw error;
-    }
-    const list = await res.json();
-    if (stale()) return;
-
-    const visible = (Array.isArray(list) ? list : []).filter(u => u && u.id && u.id !== state.me?.id);
-    if (!visible.length) return renderSearchNotice(drop, 'Никого не найдено');
-
-    drop.innerHTML = '';
-    visible.forEach(u => drop.appendChild(buildSearchItem(u)));
-    drop.classList.add('open');
-    $('search-input')?.setAttribute('aria-expanded', 'true');
-  } catch (e) {
-    if (e?.name === 'AbortError' || e instanceof AuthError || stale()) return;
-    renderSearchNotice(drop, e?.message && e.message !== 'search failed' ? `${e.message}${e.requestId ? ` · Код: ${String(e.requestId).slice(0, 8)}` : ''}` : 'Ошибка поиска', true);
-  }
-}
+ * ========================================================================== */
 
 function closeDrop(clearInput = true) {
   clearTimeout(searchTimer);
+  clearTimeout(searchBlurTimer);
+
+  searchTimer = null;
+  searchBlurTimer = null;
+
   searchAbort?.abort();
+  searchAbort = null;
+
   state.seq.search++;
+
   $('search-results')?.classList.remove('open');
   $('search-input')?.setAttribute('aria-expanded', 'false');
+
   if (clearInput) {
     const input = $('search-input');
     if (input) input.value = '';
   }
 }
 
-/* ============================================================================
- * SOCKET: connection / auth errors
- * ==========================================================================*/
-socket.on('connect_error', err => {
-  const msg = String(err?.message || err?.data?.message || '').toLowerCase();
-  if (state.me && /unauthori|invalid token|jwt|auth|expired|forbidden/.test(msg)) {
-    forceLogoutToLogin('Сессия истекла, войдите снова');
+function renderSearchNotice(drop, text, isError = false) {
+  if (!drop) return;
+
+  const notice = auNode('div', 's-empty', text);
+
+  if (isError) notice.style.color = 'var(--red)';
+
+  drop.replaceChildren(notice);
+  drop.classList.add('open');
+
+  $('search-input')?.setAttribute('aria-expanded', 'true');
+}
+
+function auRefreshAddButtons(userId) {
+  const id = auId(userId);
+  if (!id) return;
+
+  const buttons = [];
+
+  for (const row of document.querySelectorAll('.s-item[data-uid]')) {
+    if (row.dataset.uid === id) {
+      const button = row.querySelector('.btn-add');
+      if (button) buttons.push({ button, profile: false });
+    }
   }
-});
 
-/* ============================================================================
- * SOCKET EVENTS: profile / friends
- * ==========================================================================*/
-socket.on('profile', profile => {
-  if (!profile) return;
-  state.me = { ...state.me, ...profile };
-  try { storage.setItem('chatapp_profile', JSON.stringify(state.me)); } catch (e) {}
-  state.unread = Object.assign(Object.create(null), profile.unreadCounts || {});
-  state.groupUnread = Object.assign(Object.create(null), profile.groupUnreadCounts || {});
-
-  renderAv($('my-avatar'), state.me.nickname, state.me.avatar);
-  setText('my-nick', state.me.nickname || state.me.id);
-  setText('my-id', '@' + state.me.id);
-
-  // Пересобираем карту друзей: убираем тех, кого больше нет, сохраняем известные данные
-  const friendIds = profile.friends || [];
-  const next = Object.create(null);
-  friendIds.forEach(id => {
-    next[id] = state.friends[id] || { id, nickname: id, online: false };
-  });
-  state.friends = next;
-
-  renderRequests(profile.friendRequests || []);
-  renderFriendsList();
-  fetchNicknames(friendIds);
-
-  if (state.activeFriend) {
-    if (state.friends[state.activeFriend]) openChat(state.activeFriend);
-    else closeActiveChat();
+  if ($('profile-modal-id')?.textContent === `@${id}`) {
+    const button = $('btn-add-friend');
+    if (button) buttons.push({ button, profile: true });
   }
-  loadGroups().then(() => {
-    if (!state.activeGroup) return;
-    if (state.groups[state.activeGroup]) openGroupChat(state.activeGroup);
-    else closeActiveChat();
-  });
-});
 
-let nickFetchInFlight = null;
-async function fetchNicknames(ids) {
-  if (!ids?.length) return;
-  if (nickFetchInFlight) { await nickFetchInFlight; }
+  const friend = auIsFriend(id);
+  const blocked = auIsBlocked(id);
+  const pending = friendRequestOperations.has(id);
+  const sent = sentFriendRequests.has(id);
 
-  const queue = [...new Set(ids)];
-  const run = async () => {
-    let touched = false;
-    const worker = async () => {
-      while (queue.length) {
-        const id = queue.shift();
-        if (!state.friends[id]) continue; // перестал быть другом
-        try {
-          const res = await authFetch(BACKEND_URL + '/api/profile/' + encodeURIComponent(id));
-          if (!res.ok) continue;
-          const u = await res.json();
-          if (!state.friends[id]) continue;
-          state.friends[id] = {
-            ...state.friends[id],
-            id,
-            nickname: u.nickname || id,
-            avatar: u.avatar || null,
-            online: !!u.online,
-            status: u.status || '',
-          };
-          touched = true;
-        } catch (e) {
-          if (e instanceof AuthError) return;
-        }
+  for (const { button, profile } of buttons) {
+    if (friend) {
+      button.textContent = profile ? 'Написать' : '✓ В друзьях';
+      button.disabled = !profile;
+      button.removeAttribute('aria-busy');
+
+      if (profile) {
+        button.onclick = () => {
+          closeProfileModal();
+          auRun(() => openChat(id));
+        };
       }
-    };
-    await Promise.all(Array.from({ length: Math.min(NICK_FETCH_CONCURRENCY, queue.length) }, worker));
-    if (!touched) return;
+    } else if (pending) {
+      button.textContent = 'Отправляем…';
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+    } else {
+      button.textContent = sent
+        ? 'Заявка отправлена'
+        : profile ? 'Добавить в друзья' : 'Добавить';
 
-    renderFriendsList();
-    const f = state.activeFriend && state.friends[state.activeFriend];
-    if (f) {
-      renderAv($('chat-avatar'), f.nickname, f.avatar);
-      setText('chat-nick', f.nickname);
-      updateStatus(f.id, f.online);
+      button.disabled = sent || blocked;
+      button.removeAttribute('aria-busy');
+
+      if (profile) {
+        button.onclick = () => auRun(() => requestFriend(id, button));
+      }
     }
-  };
-
-  nickFetchInFlight = run().finally(() => { nickFetchInFlight = null; });
-  return nickFetchInFlight;
+  }
 }
 
-socket.on('friendRequest', req => {
-  if (!state.me || !req?.id) return;
-  state.me.friendRequests ??= [];
-  if (state.me.friendRequests.some(r => getReqId(r) === req.id)) return;
-  state.me.friendRequests.push({ id: req.id, nickname: req.nickname, avatar: req.avatar });
+function buildSearchItem(user) {
+  const id = userIdOf(user);
+  if (!id) return null;
+
+  const element = auNode('div', 's-item');
+  element.dataset.uid = id;
+  element.setAttribute('role', 'option');
+  element.setAttribute('aria-selected', 'false');
+  element.tabIndex = -1;
+
+  const avatar = auNode('div', 's-mini-av');
+  const info = auNode('div');
+
+  info.style.flex = '1';
+  info.style.minWidth = '0';
+
+  info.append(
+    auNode('div', 's-nick', user.nickname || id),
+    auNode('div', 's-id', `@${id}`),
+  );
+
+  const button = auNode('button', 'btn-add', 'Добавить');
+  button.type = 'button';
+
+  const friend = auIsFriend(id);
+  const sent = sentFriendRequests.has(id);
+  const pending = friendRequestOperations.has(id);
+
+  button.textContent = friend
+    ? '✓ В друзьях'
+    : pending
+      ? 'Отправляем…'
+      : sent
+        ? 'Заявка отправлена'
+        : 'Добавить';
+
+  button.disabled = friend || pending || sent || auIsBlocked(id);
+
+  renderAvWithDot(avatar, user.nickname || id, user.avatar, user.online === true);
+
+  element.append(avatar, info, button);
+
+  button.addEventListener('click', event => {
+    event.stopPropagation();
+
+    if (!button.disabled) auRun(() => requestFriend(id, button));
+  });
+
+  element.addEventListener('click', event => {
+    if (event.target instanceof Element && event.target.closest('button')) return;
+
+    const openFriend = auIsFriend(id);
+
+    closeDrop();
+
+    auRun(() => openFriend ? openChat(id) : showUserProfile(id));
+  });
+
+  element.addEventListener('focus', () => {
+    element.setAttribute('aria-selected', 'true');
+  });
+
+  element.addEventListener('blur', () => {
+    element.setAttribute('aria-selected', 'false');
+  });
+
+  return element;
+}
+
+async function doSearch(rawQuery) {
+  auEnsureSession();
+
+  if (!state.me) return;
+
+  const query = String(rawQuery || '')
+    .trim()
+    .replace(/^@/, '')
+    .slice(0, 50);
+
+  if (!query) {
+    closeDrop(false);
+    return;
+  }
+
+  const drop = $('search-results');
+  if (!drop) return;
+
+  searchAbort?.abort();
+
+  const controller = new AbortController();
+  searchAbort = controller;
+
+  const snapshot = auSnapshot();
+  const requestSeq = ++state.seq.search;
+
+  const stale = () =>
+    !auCurrent(snapshot) ||
+    requestSeq !== state.seq.search ||
+    controller.signal.aborted;
+
+  try {
+    const response = await authFetch(
+      `${BACKEND_URL}/api/search?q=${encodeURIComponent(query)}`,
+      { signal: controller.signal },
+    );
+
+    if (stale()) return;
+
+    if (response.status === 429) {
+      renderSearchNotice(drop, 'Слишком часто, подождите');
+      return;
+    }
+
+    if (!response.ok) {
+      const detail = await safeJson(response);
+      if (stale()) return;
+
+      throw new Error(
+        typeof detail?.error === 'string'
+          ? detail.error
+          : 'Ошибка поиска',
+      );
+    }
+
+    const data = await response.json();
+
+    if (stale()) return;
+    if (!Array.isArray(data)) throw new Error('Некорректный результат поиска');
+
+    const users = new Map();
+
+    for (const user of data) {
+      const id = userIdOf(user);
+
+      if (
+        auRecord(user) &&
+        id &&
+        id !== String(state.me.id) &&
+        !auIsBlocked(id)
+      ) {
+        users.set(id, { ...user, id });
+      }
+    }
+
+    if (!users.size) {
+      renderSearchNotice(drop, 'Никого не найдено');
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+
+    for (const user of [...users.values()].slice(0, 100)) {
+      const item = buildSearchItem(user);
+      if (item) fragment.appendChild(item);
+    }
+
+    drop.replaceChildren(fragment);
+    drop.classList.add('open');
+
+    $('search-input')?.setAttribute('aria-expanded', 'true');
+  } catch (error) {
+    if (stale() || auSilentError(error)) return;
+
+    renderSearchNotice(drop, error.message || 'Ошибка поиска', true);
+  } finally {
+    if (searchAbort === controller) searchAbort = null;
+  }
+}
+
+on('search-input', 'input', event => {
+  closeDrop(false);
+
+  const query = event.target.value.trim();
+  if (!query || !state.me) return;
+
+  searchTimer = setTimeout(() => {
+    searchTimer = null;
+    auRun(() => doSearch(query));
+  }, SEARCH_DEBOUNCE_MS);
+});
+
+on('search-input', 'focus', event => {
+  clearTimeout(searchBlurTimer);
+
+  const query = event.target.value.trim();
+  if (query && state.me) auRun(() => doSearch(query));
+});
+
+function auScheduleSearchClose() {
+  clearTimeout(searchBlurTimer);
+
+  searchBlurTimer = setTimeout(() => {
+    const active = document.activeElement;
+
+    if (
+      active !== $('search-input') &&
+      !$('search-results')?.contains(active)
+    ) {
+      closeDrop(false);
+    }
+  }, 150);
+}
+
+on('search-input', 'blur', auScheduleSearchClose);
+on('search-results', 'focusout', auScheduleSearchClose);
+
+on('search-input', 'keydown', event => {
+  if (event.isComposing) return;
+
+  const drop = $('search-results');
+
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+
+    closeDrop();
+    event.target.blur();
+    return;
+  }
+
+  if (!drop?.classList.contains('open')) return;
+
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    drop.querySelector('.s-item[data-uid]')?.click();
+  } else if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    drop.querySelector('.s-item[data-uid]')?.focus();
+  }
+});
+
+on('search-results', 'keydown', event => {
+  if (event.isComposing) return;
+
+  const drop = $('search-results');
+  if (!drop) return;
+
+  const items = [...drop.querySelectorAll('.s-item[data-uid]')];
+  const row = document.activeElement?.closest?.('.s-item[data-uid]');
+  const index = items.indexOf(row);
+
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+
+    closeDrop();
+    $('search-input')?.focus();
+    return;
+  }
+
+  if (index < 0) return;
+
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    items[Math.min(index + 1, items.length - 1)]?.focus();
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+
+    if (index === 0) $('search-input')?.focus();
+    else items[index - 1]?.focus();
+  } else if (
+    (event.key === 'Enter' || event.key === ' ') &&
+    document.activeElement === row
+  ) {
+    event.preventDefault();
+    row.click();
+  }
+});
+
+document.addEventListener('pointerdown', event => {
+  if (!(event.target instanceof Element)) return;
+
+  if (
+    !event.target.closest('#search-results') &&
+    !event.target.closest('#search-input')
+  ) {
+    closeDrop(false);
+  }
+}, { passive: true });
+
+/* ============================================================================
+ * FRIEND REQUESTS
+ * ========================================================================== */
+
+function removeFriendRequest(value) {
+  const id = userIdOf(value);
+  if (!id || !state.me) return;
+
+  const operation = incomingRequestOperations.get(id);
+
+  if (operation) {
+    clearTimeout(operation.timer);
+    incomingRequestOperations.delete(id);
+  }
+
+  state.me.friendRequests = auRequests(state.me.friendRequests)
+    .filter(request => request.id !== id);
+
   renderRequests(state.me.friendRequests);
-  showTransientNotice(`Заявка в друзья от ${req.nickname || req.id}`);
-  sfx.friend();
-});
-
-socket.on('requestSent', ({ alreadySent } = {}) => showTransientNotice(alreadySent ? 'Заявка уже отправлена: ждём ответа друга' : 'Заявка отправлена'));
-
-socket.on('friendRequestError', ({ reason, targetId, toId } = {}) => {
-  targetId ||= toId;
-  const addBtn = $('btn-add-friend');
-  if (addBtn && addBtn.style.display !== 'none') {
-    addBtn.textContent = 'Добавить в друзья';
-    addBtn.disabled = false;
-  }
-
-  const resetBtn = btn => {
-    btn.textContent = 'Добавить';
-    btn.disabled = false;
-  };
-  if (targetId) {
-    const row = document.querySelector(`.s-item[data-uid="${CSS.escape(targetId)}"] .btn-add`);
-    if (row) resetBtn(row);
-  } else {
-    document
-      .querySelectorAll('#search-results .btn-add:disabled')
-      .forEach(btn => btn.textContent === 'Отправлено' && resetBtn(btn));
-  }
-
-  showTransientNotice(FRIEND_REQUEST_ERRORS[reason] || 'Не удалось отправить заявку');
-});
-
-socket.on('requestDeclined', fromId => removeFriendRequest(userIdOf(fromId)));
-
-socket.on('friendAdded', user => {
-  if (!state.me || !user?.id) return;
-  state.friends[user.id] = {
-    ...(state.friends[user.id] || {}),
-    id: user.id,
-    nickname: user.nickname || user.id,
-    avatar: user.avatar || null,
-    online: !!user.online,
-  };
-  state.me.friends ??= [];
-  if (!state.me.friends.includes(user.id)) state.me.friends.push(user.id);
-  removeFriendRequest(user.id);
-  renderFriendsList();
-  showTransientNotice(`${user.nickname || user.id} теперь у вас в друзьях`);
-  sfx.friend();
-
-  // Если открыт профиль этого пользователя — спрятать кнопку «Добавить»
-  const addBtn = $('btn-add-friend');
-  const profileOpen = $('profile-modal')?.style.display === 'flex';
-  const sameUser = $('profile-modal-id')?.textContent === '@' + user.id;
-  if (addBtn && profileOpen && sameUser) addBtn.style.display = 'none';
-
-  // В открытом поиске — обновить кнопку
-  const row = document.querySelector(`.s-item[data-uid="${CSS.escape(user.id)}"] .btn-add`);
-  if (row) { row.textContent = '✓ В друзьях'; row.disabled = true; }
-});
-
-socket.on('friendRemoved', ({ id } = {}) => {
-  if (!id) return;
-  if (state.me?.friends) state.me.friends = state.me.friends.filter(fid => fid !== id);
-  delete state.friends[id];
-  delete state.unread[id];
-  delete state.lastActivity[id];
-  renderFriendsList();
-  if (state.activeFriend === id) closeActiveChat();
-});
-
-function setFriendPresence(id, online) {
-  if (!id) return;
-  if (state.friends[id]) {
-    state.friends[id].online = online;
-    updateStatus(id, online);
-  }
-  // Presence в группах — во ВСЕХ, а не только в открытой (иначе счётчик онлайн в списке врёт)
-  let touched = false;
-  Object.values(state.groups).forEach(g => {
-    const m = (g.members || []).find(x => x.id === id);
-    if (m && m.online !== online) {
-      m.online = online;
-      touched = true;
-    }
-  });
-  if (touched) {
-    renderGroupsList();
-    syncActiveGroupUI(state.activeGroup && state.groups[state.activeGroup]);
-  }
+  auPersistProfile();
 }
 
-socket.on('friendOnline', u => setFriendPresence(userIdOf(u), true));
-socket.on('friendOffline', u => setFriendPresence(userIdOf(u), false));
+async function requestFriend(value, button) {
+  auEnsureSession();
 
-socket.on('newMessage', ({ chatWith, msg } = {}) => {
-  if (!chatWith || !msg) return;
-  state.lastActivity[chatWith] = getMsgTimeMs(msg);
-  const isMine = msg.from === state.me?.id;
-  const visible = document.visibilityState === 'visible';
+  const userId = auId(value);
 
-  if (state.activeFriend === chatWith) {
-    appendMsg(msg, 'messages');
-    if (visible) {
-      socket.emit('markRead', chatWith);
-    } else if (!isMine) {
-      // Вкладка скрыта: считаем непрочитанным, прочитаем при возврате (visibilitychange)
-      state.unread[chatWith] = (state.unread[chatWith] || 0) + 1;
-      updateTitleBadge();
-      sfx.message();
-    }
-  } else {
-    if (!isMine) {
-      state.unread[chatWith] = (state.unread[chatWith] || 0) + 1;
-      sfx.message();
-    }
-    updateTitleBadge();
-  }
-  // Порядок в списке (последняя активность)
-  renderFriendsList();
-});
+  if (!state.me || !userId || userId === String(state.me.id)) return;
+  if (button?.disabled || friendRequestOperations.has(userId)) return;
 
-// Вернулись на вкладку — отмечаем прочитанным то, что пришло в активный чат, пока нас не было
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible' || !socket.connected || !state.me) return;
-  if (state.activeFriend && state.unread[state.activeFriend]) {
-    socket.emit('markRead', state.activeFriend);
-    state.unread[state.activeFriend] = 0;
-    refreshFriendItem(state.activeFriend);
-  }
-  if (state.activeGroup && state.groupUnread[state.activeGroup]) {
-    socket.emit('markGroupRead', state.activeGroup);
-    state.groupUnread[state.activeGroup] = 0;
-    refreshGroupItem(state.activeGroup);
-  }
-  updateTitleBadge();
-});
-
-// Удаление сообщения — работает и в DM, и в группах (оба используют .g-msg)
-socket.on('messageDeleted', ({ messageId } = {}) => {
-  if (!messageId) return;
-  const wrap = document.querySelector(`[data-msgid="${CSS.escape(String(messageId))}"]`);
-  if (!wrap) return;
-  wrap.classList.add('deleted');
-  wrap.querySelector('.msg-del-btn')?.remove();
-  const text = wrap.querySelector('.g-msg-text');
-  if (text) {
-    text.textContent = 'Сообщение удалено';
-    text.classList.remove('jumbo');
-  }
-  if (state.pendingDeleteId === messageId) {
-    state.pendingDeleteId = null;
-    setDisplay('delete-confirm', 'none');
-  }
-});
-
-socket.on('rateLimited', kind => {
-  showTransientNotice(
-    kind === 'sendMessage'
-      ? 'Слишком много сообщений, подождите немного'
-      : 'Слишком много действий, подождите'
-  );
-});
-
-socket.on('sendMessageError', ({ reason } = {}) => {
-  showTransientNotice(SEND_MESSAGE_ERRORS[reason] || 'Не удалось отправить сообщение');
-});
-
-/* ============================================================================
- * SOCKET EVENTS: groups
- * ==========================================================================*/
-socket.on('addedToGroup', ({ group } = {}) => {
-  if (!group?.id) return;
-  state.groups[group.id] = group;
-  state.groupLastActivity[group.id] = Date.now();
-  renderGroupsList();
-  showTransientNotice(`Вас добавили в группу «${group.name}»`);
-  sfx.friend();
-});
-
-socket.on('groupVoiceState', ({ groupId, callId, video, participants } = {}) => {
-  if (!groupId) return;
-  if (!callId) {
-    window.clearGroupVoiceRejoin?.(groupId);
-    delete state.groupVoiceCalls[groupId];
-  } else {
-    state.groupVoiceCalls[groupId] = { callId, video: !!video, participants: Array.isArray(participants) ? participants : [] };
-    window.rememberGroupVoice?.(groupId, callId, !!video);
-  }
-  renderGroupsList();
-  updateGroupVoiceBar(groupId);
-});
-
-socket.on('callStateChanged', ({ callId, groupId, participants } = {}) => {
-  if (!groupId || !callId) return;
-  const call = state.groupVoiceCalls[groupId];
-  if (!call || call.callId !== callId) return;
-  call.participants = participants || call.participants;
-  renderGroupsList();
-  updateGroupVoiceBar(groupId);
-});
-
-socket.on('groupUpdated', ({ groupId, name, avatar } = {}) => {
-  const group = state.groups[groupId];
-  if (!group) return void loadGroups();
-  if (typeof name === 'string') group.name = name;
-  if (avatar !== undefined) group.avatar = avatar;
-  refreshGroupItem(groupId);
-  if (state.activeGroup === groupId) {
-    syncActiveGroupUI(group);
-    const input = $('group-msg-input');
-    if (input) input.placeholder = 'Написать в ' + group.name;
-  }
-  if (state.infoGroupId === groupId) openGroupInfoModal(groupId);
-});
-
-socket.on('newGroupMessage', ({ groupId, msg } = {}) => {
-  if (!groupId || !msg) return;
-  state.groupLastActivity[groupId] = getMsgTimeMs(msg);
-  const isMine = msg.from === state.me?.id;
-  const visible = document.visibilityState === 'visible';
-
-  if (state.activeGroup === groupId) {
-    appendGroupMsg(msg);
-    if (visible) {
-      socket.emit('markGroupRead', groupId);
-    } else if (!isMine) {
-      state.groupUnread[groupId] = (state.groupUnread[groupId] || 0) + 1;
-      updateTitleBadge();
-      sfx.message();
-    }
-  } else {
-    if (!isMine) {
-      state.groupUnread[groupId] = (state.groupUnread[groupId] || 0) + 1;
-      sfx.message();
-    }
-    updateTitleBadge();
-  }
-  renderGroupsList();
-});
-
-socket.on('groupMemberJoined', ({ groupId, user } = {}) => {
-  const g = state.groups[groupId];
-  if (!g || !user?.id) return;
-  g.members ??= [];
-  if (!g.members.some(m => m.id === user.id)) g.members.push(user);
-  renderGroupsList();
-  if (state.activeGroup === groupId) {
-    syncActiveGroupUI(g);
-    appendSystemMsg('group-messages', `${user.nickname || user.id} присоединился к группе`);
-  }
-  if (state.infoGroupId === groupId) renderGroupInfoMembers(g);
-});
-
-socket.on('groupMemberLeft', ({ groupId, userId } = {}) => {
-  const g = state.groups[groupId];
-  if (!g || !userId) return;
-
-  if (userId === state.me?.id) {
-    // Нас исключили / мы вышли
-    const name = g.name;
-    forgetGroup(groupId);
-    showTransientNotice(`Вы больше не участник группы «${name}»`);
+  if (auIsFriend(userId)) {
+    auRefreshAddButtons(userId);
     return;
   }
 
-  const left = (g.members || []).find(m => m.id === userId);
-  g.members = (g.members || []).filter(m => m.id !== userId);
-  renderGroupsList();
-  if (state.activeGroup === groupId) {
-    syncActiveGroupUI(g);
-    if (left) appendSystemMsg('group-messages', `${left.nickname || userId} покинул(а) группу`);
+  if (!socket.connected) {
+    showTransientNotice('Нет соединения с сервером');
+    return;
   }
-  if (state.infoGroupId === groupId) renderGroupInfoMembers(g);
-});
 
-socket.on('groupDeleted', ({ groupId } = {}) => {
-  if (!groupId) return;
-  const name = state.groups[groupId]?.name;
-  forgetGroup(groupId);
-  if (name) showTransientNotice(`Группа «${name}» удалена`);
-});
+  const snapshot = auSnapshot();
+  const operation = {};
 
-socket.on('groupError', ({ reason } = {}) => {
-  showTransientNotice(GROUP_ERRORS[reason] || 'Ошибка группы');
-});
+  friendRequestOperations.set(userId, operation);
 
-/* ============================================================================
- * RENDER: friend requests
- * ==========================================================================*/
-function renderRequests(reqs) {
-  const sec = $('requests-section');
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Отправляем…';
+    button.setAttribute('aria-busy', 'true');
+  }
+
+  auRefreshAddButtons(userId);
+
+  try {
+    const result = await socketRequest('sendFriendRequest', userId);
+
+    if (
+      !auCurrent(snapshot) ||
+      friendRequestOperations.get(userId) !== operation
+    ) {
+      return;
+    }
+
+    if (result.status === 'friends') {
+      state.me.friends = [...new Set([...auIds(state.me.friends), userId])];
+
+      state.friends[userId] ||= {
+        id: userId,
+        nickname: userId,
+        online: false,
+      };
+
+      auRun(() => fetchNicknames([userId]));
+      renderFriendsList();
+    } else {
+      sentFriendRequests.add(userId);
+    }
+  } catch (error) {
+    if (!auCurrent(snapshot) || auSilentError(error)) return;
+
+    showTransientNotice(
+      humanError(
+        error.reason,
+        FRIEND_REQUEST_ERRORS,
+        error.message || 'Не удалось отправить заявку',
+      ),
+    );
+  } finally {
+    if (friendRequestOperations.get(userId) === operation) {
+      friendRequestOperations.delete(userId);
+    }
+
+    if (auCurrent(snapshot)) {
+      auRefreshAddButtons(userId);
+
+      if (button?.isConnected) {
+        button.removeAttribute('aria-busy');
+      }
+    }
+  }
+}
+
+function auRespondToRequest(id, accept) {
+  if (!state.me || incomingRequestOperations.has(id)) return;
+
+  if (!socket.connected) {
+    showTransientNotice('Нет соединения с сервером');
+    return;
+  }
+
+  const snapshot = auSnapshot();
+  const operation = { timer: null };
+
+  incomingRequestOperations.set(id, operation);
+
+  /*
+   * Исходный протокол использует события без ACK.
+   * Не меняем его на socketRequest, иначе старый сервер будет давать таймауты.
+   */
+  socket.emit(accept ? 'acceptFriendRequest' : 'declineFriendRequest', id);
+
+  operation.timer = setTimeout(() => {
+    if (incomingRequestOperations.get(id) !== operation) return;
+
+    incomingRequestOperations.delete(id);
+
+    if (auCurrent(snapshot)) {
+      renderRequests(state.me.friendRequests);
+      showTransientNotice('Нет подтверждения от сервера. Попробуйте ещё раз');
+    }
+  }, 15000);
+
+  renderRequests(state.me.friendRequests);
+}
+
+function renderRequests(value) {
+  const section = $('requests-section');
   const list = $('requests-list');
-  if (!sec || !list) return;
 
-  if (!reqs?.length) {
-    sec.style.display = 'none';
-    list.innerHTML = '';
-    setText('req-badge', '');
-    return;
+  if (!section || !list) return;
+
+  const requests = auRequests(value);
+  list.replaceChildren();
+
+  section.style.display = requests.length ? 'block' : 'none';
+  setText('req-badge', requests.length ? String(requests.length) : '');
+
+  for (const request of requests) {
+    const id = request.id;
+    const nickname = request.nickname || id;
+    const pending = incomingRequestOperations.has(id);
+
+    const card = auNode('div', 'req-card');
+    const avatar = auNode('div', 'f-av');
+    const info = auNode('div', 'req-info');
+
+    info.append(
+      auNode('div', 'req-nick', nickname),
+      auNode('div', 'req-id', `Входящая заявка · @${id}`),
+    );
+
+    auActivate(info, () => showUserProfile(id));
+    info.setAttribute('aria-label', `Профиль: ${nickname}`);
+
+    const controls = auNode('div', 'req-btns');
+    const accept = auNode('button', 'btn-ok', '✓');
+    const decline = auNode('button', 'btn-no', '✕');
+
+    accept.type = 'button';
+    decline.type = 'button';
+
+    accept.title = 'Принять';
+    decline.title = 'Отклонить';
+
+    accept.setAttribute('aria-label', `Принять заявку от ${nickname}`);
+    decline.setAttribute('aria-label', `Отклонить заявку от ${nickname}`);
+
+    accept.disabled = pending || !socket.connected;
+    decline.disabled = pending || !socket.connected;
+
+    accept.addEventListener('click', () => auRespondToRequest(id, true));
+    decline.addEventListener('click', () => auRespondToRequest(id, false));
+
+    renderAv(avatar, nickname, request.avatar || null);
+
+    controls.append(accept, decline);
+    card.append(avatar, info, controls);
+    list.appendChild(card);
   }
-
-  sec.style.display = 'block';
-  setText('req-badge', String(reqs.length));
-  list.innerHTML = '';
-
-  reqs.forEach(r => {
-    const id = getReqId(r);
-    if (!id) return;
-    const nick = r.nickname || id;
-    const el = document.createElement('div');
-    el.className = 'req-card';
-    el.setAttribute('role', 'button');
-    el.tabIndex = 0;
-    el.innerHTML = `
-      <div class="f-av"></div>
-      <div class="req-info">
-        <div class="req-nick">${esc(nick)}</div>
-        <div class="req-id">Входящая заявка · @${esc(id)}</div>
-      </div>
-      <div class="req-btns">
-        <button class="btn-ok" type="button" title="Принять" aria-label="Принять заявку от ${esc(nick)}">✓</button>
-        <button class="btn-no" type="button" title="Отклонить" aria-label="Отклонить заявку от ${esc(nick)}">✕</button>
-      </div>`;
-    renderAv(el.querySelector('.f-av'), nick, r.avatar || null);
-
-    const guard = fn => e => {
-      e.stopPropagation();
-      if (!socket.connected) return showTransientNotice('Нет соединения с сервером');
-      e.currentTarget.disabled = true;
-      fn();
-    };
-    el.querySelector('.btn-ok').addEventListener('click', guard(() => socket.emit('acceptFriendRequest', id)));
-    el.querySelector('.btn-no').addEventListener('click', guard(() => socket.emit('declineFriendRequest', id)));
-    el.addEventListener('click', () => showUserProfile(id));
-    el.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showUserProfile(id); }
-    });
-    list.appendChild(el);
-  });
 }
 
 /* ============================================================================
- * RENDER: friends list
- * ==========================================================================*/
-function sortedFriendIds() {
-  const unread = id => (state.unread[id] ? 1 : 0);
-  const activity = id => state.lastActivity[id] || 0;
-  const online = id => (state.friends[id]?.online ? 1 : 0);
-  const nick = id => state.friends[id]?.nickname || id;
+ * FRIENDS LIST
+ * ========================================================================== */
 
-  return Object.keys(state.friends).sort(
-    (a, b) =>
-      unread(b) - unread(a) ||          // непрочитанные выше
-      activity(b) - activity(a) ||      // недавняя активность выше
-      online(b) - online(a) ||          // онлайн выше
-      nick(a).localeCompare(nick(b), 'ru')
+function sortedFriendIds() {
+  return Object.keys(state.friends).sort((a, b) => {
+    const unreadDifference =
+      Number(auCount(state.unread[b]) > 0) -
+      Number(auCount(state.unread[a]) > 0);
+
+    if (unreadDifference) return unreadDifference;
+
+    const activityDifference =
+      (Number(state.lastActivity[b]) || 0) -
+      (Number(state.lastActivity[a]) || 0);
+
+    if (activityDifference) return activityDifference;
+
+    const onlineDifference =
+      Number(!!state.friends[b]?.online) -
+      Number(!!state.friends[a]?.online);
+
+    if (onlineDifference) return onlineDifference;
+
+    return String(state.friends[a]?.nickname || a)
+      .localeCompare(String(state.friends[b]?.nickname || b), 'ru') ||
+      a.localeCompare(b);
+  });
+}
+
+function buildFriendEl(id) {
+  const friend = state.friends[id];
+  if (!friend) return null;
+
+  const unread = auCount(state.unread[id]);
+  const nickname = friend.nickname || id;
+
+  const element = auNode(
+    'div',
+    `friend-item${state.activeFriend === id ? ' active' : ''}${unread ? ' unread' : ''}`,
   );
+
+  element.dataset.fid = id;
+
+  element.setAttribute(
+    'aria-label',
+    `${nickname}${unread
+      ? `, ${plural(unread, 'новое сообщение', 'новых сообщения', 'новых сообщений')}`
+      : ''}`,
+  );
+
+  const avatar = auNode('div', 'f-av');
+  const info = auNode('div', 'f-info');
+
+  info.append(
+    auNode('div', 'f-nick', nickname),
+    auNode(
+      'div',
+      `f-stat${friend.online ? ' on' : ''}`,
+      friend.online ? friend.status || 'В сети' : 'Не в сети',
+    ),
+  );
+
+  renderAvWithDot(avatar, nickname, friend.avatar, friend.online);
+
+  element.append(avatar, info);
+
+  if (unread) {
+    element.appendChild(
+      auNode('div', 'f-unread', unread > 99 ? '99+' : unread),
+    );
+  }
+
+  auActivate(element, () => openChat(id));
+  return element;
 }
 
 function renderFriendsList() {
   const list = $('friends-list');
   if (!list) return;
+
   const ids = sortedFriendIds();
-  const focusedId = document.activeElement?.closest?.('.friend-item')?.dataset.fid;
+
+  const focused = document.activeElement;
+  const focusedItem = focused?.closest?.('.friend-item[data-fid]');
+  const focusedId = focusedItem && list.contains(focusedItem)
+    ? focusedItem.dataset.fid
+    : null;
 
   if (!ids.length) {
     list.innerHTML = emptyFriendsHTML();
   } else {
-    const frag = document.createDocumentFragment();
-    ids.forEach(id => {
-      const el = buildFriendEl(id);
-      if (el) frag.appendChild(el);
-    });
-    list.innerHTML = '';
-    list.appendChild(frag);
-    // Не терять фокус клавиатуры при перерисовке
-    if (focusedId) list.querySelector(`[data-fid="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
-  }
-  updateTitleBadge();
-}
+    const fragment = document.createDocumentFragment();
 
-function buildFriendEl(id) {
-  const f = state.friends[id];
-  if (!f) return null;
-  const unread = state.unread[id] || 0;
-  const sub = f.online ? f.status || 'В сети' : 'Не в сети';
-
-  const el = document.createElement('div');
-  el.className = 'friend-item'
-    + (state.activeFriend === id ? ' active' : '')
-    + (unread ? ' unread' : '');
-  el.dataset.fid = id;
-  el.setAttribute('role', 'button');
-  el.tabIndex = 0;
-  el.setAttribute('aria-label', `${f.nickname}${unread ? `, ${plural(unread, 'новое сообщение', 'новых сообщения', 'новых сообщений')}` : ''}`);
-  el.innerHTML = `
-    <div class="f-av"></div>
-    <div class="f-info">
-      <div class="f-nick">${esc(f.nickname)}</div>
-      <div class="f-stat ${f.online ? 'on' : ''}">${esc(sub)}</div>
-    </div>
-    ${unread ? `<div class="f-unread">${unread > 99 ? '99+' : unread}</div>` : ''}`;
-
-  renderAvWithDot(el.querySelector('.f-av'), f.nickname, f.avatar, f.online);
-
-  el.addEventListener('click', () => openChat(id));
-  el.addEventListener('keydown', e => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      openChat(id);
+    for (const id of ids) {
+      const item = buildFriendEl(id);
+      if (item) fragment.appendChild(item);
     }
-  });
-  return el;
+
+    list.replaceChildren(fragment);
+
+    if (focusedId) {
+      [...list.children]
+        .find(element => element.dataset.fid === focusedId)
+        ?.focus({ preventScroll: true });
+    }
+  }
+
+  updateTitleBadge();
 }
 
-// Обновляет одну строку НА МЕСТЕ (без перестановки в конец списка)
-function refreshFriendItem(id) {
-  const list = $('friends-list');
-  if (!list) return;
-  if (list.querySelector('.empty-state')) return renderFriendsList();
-
-  const old = list.querySelector(`[data-fid="${CSS.escape(id)}"]`);
-  const fresh = buildFriendEl(id);
-  if (!fresh) {
-    old?.remove();
-    if (!list.children.length) renderFriendsList();
-    return;
-  }
-  if (old) {
-    const hadFocus = document.activeElement === old;
-    old.replaceWith(fresh);
-    if (hadFocus) fresh.focus({ preventScroll: true });
-  } else {
-    list.appendChild(fresh);
-  }
-  updateTitleBadge();
+function refreshFriendItem() {
+  // Online/unread/активность меняют порядок списка.
+  renderFriendsList();
 }
 
 function updateStatus(id, online) {
-  refreshFriendItem(id);
+  renderFriendsList();
+
   if (state.activeFriend !== id) return;
-  const st = $('chat-status');
-  if (!st) return;
-  st.textContent = online ? 'В сети' : 'Не в сети';
-  st.className = 'chat-head-status' + (online ? ' on' : '');
+
+  const status = $('chat-status');
+
+  if (status) {
+    status.textContent = online ? 'В сети' : 'Не в сети';
+    status.className = `chat-head-status${online ? ' on' : ''}`;
+  }
 }
 
-async function requestFriend(userId, button) {
-  if (!button || button.disabled) return;
-  const original = button.textContent;
-  button.disabled = true;
-  button.textContent = 'Отправляем…';
-  button.setAttribute('aria-busy', 'true');
+function auRefreshActiveFriend() {
+  const friend = state.friends[state.activeFriend];
+  if (!friend) return;
+
+  renderAv($('chat-avatar'), friend.nickname, friend.avatar);
+  setText('chat-nick', friend.nickname || friend.id);
+
+  const input = $('msg-input');
+
+  if (input) {
+    input.placeholder = `Написать @${friend.nickname || friend.id}`;
+  }
+
+  const status = $('chat-status');
+
+  if (status) {
+    status.textContent = friend.online ? 'В сети' : 'Не в сети';
+    status.className = `chat-head-status${friend.online ? ' on' : ''}`;
+  }
+}
+
+/* ============================================================================
+ * FETCH FRIEND PROFILES: SHARED QUEUE
+ * ========================================================================== */
+
+function fetchNicknames(values) {
+  auEnsureSession();
+
+  if (!state.me) return Promise.resolve();
+
+  for (const id of auIds(values)) {
+    if (state.friends[id]) nicknameQueue.add(id);
+  }
+
+  if (nickFetchInFlight) return nickFetchInFlight;
+  if (!nicknameQueue.size) return Promise.resolve();
+
+  const snapshot = auSnapshot();
+  const generation = nickFetchGeneration;
+
+  const controller = new AbortController();
+  nickFetchController = controller;
+
+  const current = () =>
+    generation === nickFetchGeneration &&
+    auCurrent(snapshot) &&
+    !controller.signal.aborted;
+
+  let touched = false;
+
+  const worker = async () => {
+    while (current() && nicknameQueue.size) {
+      const id = nicknameQueue.values().next().value;
+      nicknameQueue.delete(id);
+
+      const original = state.friends[id];
+      const version = nicknameVersions.get(id) || 0;
+
+      if (!original) continue;
+
+      try {
+        const response = await authFetch(
+          `${BACKEND_URL}/api/profile/${encodeURIComponent(id)}`,
+          { signal: controller.signal },
+        );
+
+        if (!response.ok) continue;
+
+        const user = await response.json();
+
+        if (!current()) return;
+        if (!auRecord(user) || userIdOf(user) !== id) continue;
+
+        /*
+         * Presence/socket-событие, пришедшее позднее начала запроса,
+         * имеет приоритет перед HTTP-снимком.
+         */
+        if (
+          state.friends[id] !== original ||
+          (nicknameVersions.get(id) || 0) !== version
+        ) {
+          continue;
+        }
+
+        state.friends[id] = {
+          ...original,
+          id,
+          nickname: typeof user.nickname === 'string' ? user.nickname : id,
+          avatar: typeof user.avatar === 'string' ? user.avatar : null,
+          online: user.online === true,
+          status: typeof user.status === 'string' ? user.status : '',
+        };
+
+        touched = true;
+      } catch (error) {
+        if (auSilentError(error) || !current()) return;
+        console.warn('[friends] profile fetch failed', id, error);
+      }
+    }
+  };
+
+  let task;
+
+  task = Promise.all(
+    Array.from(
+      { length: Math.min(NICK_FETCH_CONCURRENCY, nicknameQueue.size) },
+      worker,
+    ),
+  ).then(() => {
+    if (!current() || !touched) return;
+
+    renderFriendsList();
+    auRefreshActiveFriend();
+  }).finally(() => {
+    if (nickFetchInFlight === task) {
+      nickFetchInFlight = null;
+      nickFetchController = null;
+    }
+  });
+
+  nickFetchInFlight = task;
+  return task;
+}
+
+/* ============================================================================
+ * SOCKET: PROFILE / FRIENDS
+ * ========================================================================== */
+
+auOnSocket('profile', profile => {
+  if (!auRecord(profile)) return;
+
+  const id = userIdOf(profile);
+
+  // Не принимаем профиль другого аккаунта или профиль без идентификатора.
+  if (!id || id !== String(state.me.id)) return;
+
+  const snapshot = auSnapshot();
+
+  const friendIds = Array.isArray(profile.friends)
+    ? auIds(profile.friends)
+    : auIds(state.me.friends);
+
+  state.me = {
+    ...state.me,
+    ...profile,
+    id,
+    friends: friendIds,
+    blockedUsers: Array.isArray(profile.blockedUsers)
+      ? auIds(profile.blockedUsers)
+      : auIds(state.me.blockedUsers),
+    friendRequests: Array.isArray(profile.friendRequests)
+      ? auRequests(profile.friendRequests)
+      : auRequests(state.me.friendRequests),
+  };
+
+  if (auRecord(profile.unreadCounts)) {
+    state.unread = auCounts(profile.unreadCounts);
+  }
+
+  if (auRecord(profile.groupUnreadCounts)) {
+    state.groupUnread = auCounts(profile.groupUnreadCounts);
+  }
+
+  const next = Object.create(null);
+
+  for (const friendId of friendIds) {
+    next[friendId] = state.friends[friendId] || {
+      id: friendId,
+      nickname: friendId,
+      online: false,
+    };
+  }
+
+  state.friends = next;
+
+  auPersistProfile();
+
+  renderAv($('my-avatar'), state.me.nickname, state.me.avatar);
+  setText('my-nick', state.me.nickname || id);
+  setText('my-id', `@${id}`);
+
+  renderRequests(state.me.friendRequests);
+  renderFriendsList();
+
+  auRun(() => fetchNicknames(friendIds));
+
+  /*
+   * Не вызываем openChat() на каждом profile/reconnect:
+   * иначе теряются позиция прокрутки и состояние загрузки истории.
+   */
+  if (state.activeFriend) {
+    if (state.friends[state.activeFriend]) auRefreshActiveFriend();
+    else closeActiveChat();
+  }
+
+  auRun(async () => {
+    const loaded = await loadGroups();
+
+    if (!loaded || !auCurrent(snapshot)) return;
+
+    if (state.activeGroup) {
+      const group = state.groups[state.activeGroup];
+
+      if (group) syncActiveGroupUI(group);
+      else closeActiveChat();
+    }
+  });
+});
+
+auOnSocket('friendRequest', request => {
+  if (!auRecord(request)) return;
+
+  const id = userIdOf(request);
+  if (!id || id === String(state.me.id)) return;
+
+  const requests = auRequests(state.me.friendRequests);
+
+  if (requests.some(item => item.id === id)) return;
+
+  requests.push({
+    id,
+    nickname: typeof request.nickname === 'string' ? request.nickname : id,
+    avatar: typeof request.avatar === 'string' ? request.avatar : null,
+  });
+
+  state.me.friendRequests = requests;
+
+  renderRequests(requests);
+  auPersistProfile();
+
+  showTransientNotice(`Заявка в друзья от ${request.nickname || id}`);
+  sfx.friend();
+});
+
+auOnSocket('requestSent', payload => {
+  if (payload != null && !auRecord(payload)) return;
+
+  const id = auId(payload?.targetId ?? payload?.toId ?? payload?.id);
+
+  if (id) {
+    sentFriendRequests.add(id);
+    auRefreshAddButtons(id);
+  }
+
+  showTransientNotice(
+    payload?.alreadySent
+      ? 'Заявка уже отправлена: ждём ответа'
+      : 'Заявка отправлена',
+  );
+});
+
+auOnSocket('friendRequestError', payload => {
+  if (!auRecord(payload)) return;
+
+  const id = auId(payload.targetId ?? payload.toId ?? payload.fromId);
+  const reason = typeof payload.reason === 'string' ? payload.reason : '';
+
+  if (id) {
+    const incoming = incomingRequestOperations.get(id);
+
+    if (incoming) {
+      clearTimeout(incoming.timer);
+      incomingRequestOperations.delete(id);
+      renderRequests(state.me.friendRequests);
+    }
+
+    if (reason === 'already_sent') {
+      sentFriendRequests.add(id);
+    } else if (!friendRequestOperations.has(id)) {
+      sentFriendRequests.delete(id);
+    }
+
+    auRefreshAddButtons(id);
+  }
+
+  /*
+   * Если действие идёт через socketRequest, ошибку покажет его catch.
+   * Не сбрасываем кнопки чужого профиля или всех результатов поиска.
+   */
+  if (!id || !friendRequestOperations.has(id)) {
+    showTransientNotice(
+      humanError(reason, FRIEND_REQUEST_ERRORS, 'Не удалось обработать заявку'),
+    );
+  }
+});
+
+auOnSocket('requestDeclined', payload => {
+  const id = userIdOf(payload) || auId(payload?.fromId);
+  if (id) removeFriendRequest(id);
+});
+
+auOnSocket('friendAdded', user => {
+  if (!auRecord(user)) return;
+
+  const id = userIdOf(user);
+  if (!id || id === String(state.me.id)) return;
+
+  const existed = !!state.friends[id];
+
+  nicknameVersions.set(id, (nicknameVersions.get(id) || 0) + 1);
+
+  state.friends[id] = {
+    ...(state.friends[id] || {}),
+    id,
+    nickname: typeof user.nickname === 'string' ? user.nickname : id,
+    avatar: typeof user.avatar === 'string' ? user.avatar : null,
+    online: user.online === true,
+    status: typeof user.status === 'string' ? user.status : '',
+  };
+
+  state.me.friends = [...new Set([...auIds(state.me.friends), id])];
+
+  sentFriendRequests.delete(id);
+  removeFriendRequest(id);
+  renderFriendsList();
+  auRefreshAddButtons(id);
+  auPersistProfile();
+
+  if (!existed) {
+    showTransientNotice(`${user.nickname || id} теперь у вас в друзьях`);
+    sfx.friend();
+  }
+});
+
+auOnSocket('friendRemoved', payload => {
+  const id = userIdOf(payload);
+  if (!id) return;
+
+  nicknameVersions.set(id, (nicknameVersions.get(id) || 0) + 1);
+
+  state.me.friends = auIds(state.me.friends).filter(friendId => friendId !== id);
+
+  delete state.friends[id];
+  delete state.unread[id];
+  delete state.lastActivity[id];
+  delete state.dmVoiceCalls[id];
+
+  sentFriendRequests.delete(id);
+
+  if (
+    callState.active &&
+    !callState.isGroup &&
+    callState.peerFriendId === id &&
+    typeof hangupCall === 'function'
+  ) {
+    hangupCall();
+  }
+
+  if (state.activeFriend === id) closeActiveChat();
+
   try {
-    const result = await socketRequest('sendFriendRequest', userId);
-    button.textContent = result.status === 'friends' ? 'В друзьях' : 'Заявка отправлена';
-  } catch (e) {
-    button.disabled = false;
-    button.textContent = original;
-    showTransientNotice(FRIEND_REQUEST_ERRORS[e.reason] || e.message);
-  } finally { button.removeAttribute('aria-busy'); }
+    composerDrafts.delete(`dm:${id}`);
+    composerAttachments.delete(`dm:${id}`);
+    retryMessages.delete(`dm:${id}`);
+  } catch (_) {}
+
+  renderFriendsList();
+  auRefreshAddButtons(id);
+  auPersistProfile();
+});
+
+function setFriendPresence(value, online) {
+  const id = auId(value);
+  if (!id || !state.me) return;
+
+  nicknameVersions.set(id, (nicknameVersions.get(id) || 0) + 1);
+
+  if (state.friends[id]) {
+    state.friends[id] = {
+      ...state.friends[id],
+      online: !!online,
+    };
+
+    updateStatus(id, !!online);
+  }
+
+  let touched = false;
+
+  for (const [groupId, group] of Object.entries(state.groups)) {
+    const members = auMembers(group);
+
+    if (!members.some(member =>
+      String(member.id) === id && !!member.online !== !!online,
+    )) {
+      continue;
+    }
+
+    state.groups[groupId] = {
+      ...group,
+      members: members.map(member =>
+        String(member.id) === id
+          ? { ...member, online: !!online }
+          : member,
+      ),
+    };
+
+    touched = true;
+  }
+
+  if (touched) {
+    renderGroupsList();
+    syncActiveGroupUI(state.groups[state.activeGroup]);
+
+    if (state.infoGroupId && state.groups[state.infoGroupId]) {
+      renderGroupInfoMembers(state.groups[state.infoGroupId]);
+    }
+  }
 }
 
+auOnSocket('friendOnline', user => setFriendPresence(userIdOf(user), true));
+auOnSocket('friendOffline', user => setFriendPresence(userIdOf(user), false));
 
-socket.on('unreadCleared', ({ chatWith, groupId } = {}) => {
-  if (chatWith) { state.unread[chatWith] = 0; refreshFriendItem(chatWith); }
-  if (groupId) { state.groupUnread[groupId] = 0; refreshGroupItem(groupId); }
+/* ============================================================================
+ * MESSAGES / READ STATE
+ * ========================================================================== */
+
+function auChatReadable(group, target, requireNearBottom = true) {
+  if (!socket.connected || document.visibilityState !== 'visible') return false;
+  if (!state.me || isAnyModalOpen()) return false;
+
+  const activeTarget = group ? state.activeGroup : state.activeFriend;
+  if (activeTarget !== target) return false;
+
+  const box = $(group ? 'group-messages' : 'messages');
+  const chatWindow = $(group ? 'group-chat-window' : 'chat-window');
+
+  if (!box || !chatWindow) return false;
+  if (!box._historyReady || box._loadingHistory) return false;
+  if (getComputedStyle(chatWindow).display === 'none') return false;
+
+  return !requireNearBottom || isNearBottom(box);
+}
+
+function auMarkRead(group, target) {
+  if (!auChatReadable(group, target)) return;
+
+  if (group) {
+    state.groupUnread[target] = 0;
+    socket.emit('markGroupRead', target);
+    refreshGroupItem(target);
+  } else {
+    state.unread[target] = 0;
+    socket.emit('markRead', target);
+    refreshFriendItem(target);
+  }
+
+  updateTitleBadge();
+}
+
+function auReceiveMessage(group, payload) {
+  if (!auRecord(payload)) return;
+
+  const target = auId(group ? payload.groupId : payload.chatWith);
+  const message = auPrepareMessage(payload.msg);
+
+  if (!target || !message) return;
+
+  const id = auMessageId(message);
+  const key = `${group ? 'group' : 'dm'}:${target}:${id}`;
+
+  if (id && !auRememberMessage(key)) {
+    if (message.deleted) auDeleteRenderedMessage(id);
+    return;
+  }
+
+  const activities = group ? state.groupLastActivity : state.lastActivity;
+
+  activities[target] = Math.max(
+    Number(activities[target]) || 0,
+    getMsgTimeMs(message),
+  );
+
+  const mine = message.from === String(state.me.id);
+  const active = (group ? state.activeGroup : state.activeFriend) === target;
+
+  /*
+   * Проверяем положение ДО вставки: пользователь, читающий старые сообщения,
+   * не должен автоматически помечать новое сообщение прочитанным.
+   */
+  const readable = auChatReadable(group, target);
+
+  if (active) {
+    if (group) appendGroupMsg(message);
+    else appendMsg(message, 'messages');
+  }
+
+  if (!mine) {
+    const unread = group ? state.groupUnread : state.unread;
+
+    if (readable) {
+      unread[target] = 0;
+      socket.emit(group ? 'markGroupRead' : 'markRead', target);
+    } else {
+      unread[target] = auCount(unread[target]) + 1;
+      sfx.message();
+    }
+  }
+
+  if (group) renderGroupsList();
+  else renderFriendsList();
+
+  updateTitleBadge();
+}
+
+auOnSocket('newMessage', payload => auReceiveMessage(false, payload));
+auOnSocket('newGroupMessage', payload => auReceiveMessage(true, payload));
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !state.me) return;
+
+  auEnsureSession();
+
+  if (state.activeFriend) auMarkRead(false, state.activeFriend);
+  if (state.activeGroup) auMarkRead(true, state.activeGroup);
+});
+
+for (const group of [false, true]) {
+  on(group ? 'group-messages' : 'messages', 'scroll', () => {
+    if (!state.me) return;
+
+    const target = group ? state.activeGroup : state.activeFriend;
+    const unread = group ? state.groupUnread : state.unread;
+
+    if (target && auCount(unread[target])) auMarkRead(group, target);
+  }, { passive: true });
+}
+
+function auDeleteRenderedMessage(value) {
+  const id = auId(value);
+  if (!id) return;
+
+  auRememberDeleted(id);
+
+  for (const containerId of ['messages', 'group-messages']) {
+    const container = $(containerId);
+    if (!container) continue;
+
+    for (const wrap of container.querySelectorAll('.g-msg[data-msgid]')) {
+      if (wrap.dataset.msgid !== id) continue;
+
+      wrap.classList.add('deleted');
+      wrap.querySelector('.msg-del-btn')?.remove();
+
+      wrap.querySelectorAll('.message-image').forEach(image => {
+        image.remove();
+      });
+
+      const text = wrap.querySelector('.g-msg-text');
+
+      if (text) {
+        text.textContent = 'Сообщение удалено';
+        text.classList.remove('jumbo');
+      }
+    }
+
+    const buffered = container._liveMessages?.get(id);
+
+    if (buffered) {
+      container._liveMessages.set(id, {
+        ...buffered,
+        deleted: true,
+      });
+    }
+  }
+
+  if (String(state.pendingDeleteId) === id) {
+    state.pendingDeleteId = null;
+    setDisplay('delete-confirm', 'none');
+  }
+}
+
+auOnSocket('messageDeleted', payload => {
+  if (!auRecord(payload)) return;
+
+  const id = auId(payload.messageId);
+  if (id) auDeleteRenderedMessage(id);
+});
+
+auOnSocket('unreadCleared', payload => {
+  if (!auRecord(payload)) return;
+
+  const chatWith = auId(payload.chatWith);
+  const groupId = auId(payload.groupId);
+
+  if (chatWith) {
+    state.unread[chatWith] = 0;
+    refreshFriendItem(chatWith);
+  }
+
+  if (groupId) {
+    state.groupUnread[groupId] = 0;
+    refreshGroupItem(groupId);
+  }
+
   updateTitleBadge();
 });
-window.addEventListener('storage', event => {
-  if (event.key === 'chatapp_token' && event.oldValue !== event.newValue && state.me)
-    forceLogoutToLogin('Аккаунт изменён в другой вкладке. Войдите снова.');
+
+auOnSocket('rateLimited', kind => {
+  showTransientNotice(
+    kind === 'sendMessage' || kind === 'groupMessage'
+      ? 'Слишком много сообщений, подождите немного'
+      : 'Слишком много действий, подождите',
+  );
+});
+
+auOnSocket('sendMessageError', payload => {
+  if (!auRecord(payload)) return;
+
+  showTransientNotice(
+    humanError(payload.reason, SEND_MESSAGE_ERRORS, 'Не удалось отправить сообщение'),
+  );
+});
+
+/* ============================================================================
+ * GROUP HELPERS
+ * ========================================================================== */
+
+function syncActiveGroupUI(group) {
+  if (!group || state.activeGroup !== String(group.id)) return;
+
+  updateGroupChatHeader(group);
+  renderGroupMembersPanel(group);
+}
+
+function forgetGroup(value) {
+  const groupId = auId(value);
+  if (!groupId) return;
+
+  /*
+   * Сначала закрываем звонок, потом удаляем комнату:
+   * hangupCall не должен восстанавливать запись уже удалённой группы.
+   */
+  if (
+    callState.active &&
+    callState.isGroup &&
+    callState.groupId === groupId &&
+    typeof hangupCall === 'function'
+  ) {
+    hangupCall();
+  }
+
+  if (state.activeGroup === groupId) closeActiveChat();
+  if (state.infoGroupId === groupId) closeGroupInfoModal();
+
+  if ($('add-members-modal')?.dataset.gid === groupId) {
+    closeAddMembersModal();
+  }
+
+  window.clearGroupVoiceRejoin?.(groupId);
+
+  clearTimeout(state.voiceRejoin[groupId]?.timer);
+
+  delete state.voiceRejoin[groupId];
+  delete state.groups[groupId];
+  delete state.groupUnread[groupId];
+  delete state.groupVoiceCalls[groupId];
+  delete state.groupLastActivity[groupId];
+
+  try {
+    composerDrafts.delete(`group:${groupId}`);
+    composerAttachments.delete(`group:${groupId}`);
+    retryMessages.delete(`group:${groupId}`);
+  } catch (_) {}
+
+  renderGroupsList();
+  updateGroupVoiceBar();
+  updateTitleBadge();
+}
+
+/* ============================================================================
+ * SOCKET: GROUPS / VOICE
+ * ========================================================================== */
+
+auOnSocket('addedToGroup', payload => {
+  if (!auRecord(payload) || !auRecord(payload.group)) return;
+
+  const id = userIdOf(payload.group);
+  if (!id) return;
+
+  const existed = !!state.groups[id];
+
+  state.groups[id] = {
+    ...payload.group,
+    id,
+    members: auMembers(payload.group),
+  };
+
+  state.groupLastActivity[id] = Date.now();
+
+  renderGroupsList();
+
+  if (!existed) {
+    showTransientNotice(`Вас добавили в группу «${payload.group.name || id}»`);
+    sfx.friend();
+  }
+});
+
+auOnSocket('groupVoiceState', payload => {
+  if (!auRecord(payload)) return;
+
+  const groupId = auId(payload.groupId);
+  if (!groupId) return;
+
+  if (payload.callId == null || payload.callId === '') {
+    window.clearGroupVoiceRejoin?.(groupId);
+    delete state.groupVoiceCalls[groupId];
+  } else {
+    const callId = auId(payload.callId);
+    if (!callId) return;
+
+    state.groupVoiceCalls[groupId] = {
+      callId,
+      video: payload.video === true,
+      participants: auIds(payload.participants),
+    };
+
+    window.rememberGroupVoice?.(groupId, callId, payload.video === true);
+  }
+
+  renderGroupsList();
+  updateGroupVoiceBar(groupId);
+});
+
+auOnSocket('callStateChanged', payload => {
+  if (!auRecord(payload)) return;
+
+  const groupId = auId(payload.groupId);
+  const callId = auId(payload.callId);
+
+  if (!groupId || !callId || !Array.isArray(payload.participants)) return;
+
+  const call = state.groupVoiceCalls[groupId];
+  if (!call || call.callId !== callId) return;
+
+  state.groupVoiceCalls[groupId] = {
+    ...call,
+    participants: auIds(payload.participants),
+  };
+
+  renderGroupsList();
+  updateGroupVoiceBar(groupId);
+});
+
+auOnSocket('groupUpdated', payload => {
+  if (!auRecord(payload)) return;
+
+  const groupId = auId(payload.groupId);
+  if (!groupId) return;
+
+  const previous = state.groups[groupId];
+
+  if (!previous) {
+    auRun(loadGroups);
+    return;
+  }
+
+  const group = {
+    ...previous,
+    ...(typeof payload.name === 'string' ? { name: payload.name } : {}),
+    ...(payload.avatar === null || typeof payload.avatar === 'string'
+      ? { avatar: payload.avatar }
+      : {}),
+  };
+
+  state.groups[groupId] = group;
+
+  refreshGroupItem(groupId);
+  syncActiveGroupUI(group);
+
+  if (state.activeGroup === groupId) {
+    const input = $('group-msg-input');
+    if (input) input.placeholder = `Написать в ${group.name || groupId}`;
+  }
+
+  if (state.infoGroupId === groupId) {
+    openGroupInfoModal(groupId);
+  }
+});
+
+auOnSocket('groupMemberJoined', payload => {
+  if (!auRecord(payload) || !auRecord(payload.user)) return;
+
+  const groupId = auId(payload.groupId);
+  const userId = userIdOf(payload.user);
+  const previous = state.groups[groupId];
+
+  if (!groupId || !userId) return;
+
+  if (!previous) {
+    auRun(loadGroups);
+    return;
+  }
+
+  const members = auMembers(previous);
+  const existed = members.some(member => String(member.id) === userId);
+
+  const user = { ...payload.user, id: userId };
+
+  const group = {
+    ...previous,
+    members: existed
+      ? members.map(member =>
+        String(member.id) === userId ? { ...member, ...user } : member,
+      )
+      : [...members, user],
+  };
+
+  state.groups[groupId] = group;
+
+  renderGroupsList();
+  syncActiveGroupUI(group);
+
+  if (!existed && state.activeGroup === groupId) {
+    appendSystemMsg(
+      'group-messages',
+      `${user.nickname || userId} присоединился к группе`,
+    );
+  }
+
+  if (state.infoGroupId === groupId) renderGroupInfoMembers(group);
+});
+
+auOnSocket('groupMemberLeft', payload => {
+  if (!auRecord(payload)) return;
+
+  const groupId = auId(payload.groupId);
+  const userId = auId(payload.userId);
+
+  if (!groupId || !userId) return;
+
+  const previous = state.groups[groupId];
+
+  if (userId === String(state.me.id)) {
+    const name = previous?.name || groupId;
+
+    forgetGroup(groupId);
+    showTransientNotice(`Вы больше не участник группы «${name}»`);
+    return;
+  }
+
+  if (!previous) return;
+
+  const members = auMembers(previous);
+  const left = members.find(member => String(member.id) === userId);
+
+  if (!left) return;
+
+  const group = {
+    ...previous,
+    members: members.filter(member => String(member.id) !== userId),
+  };
+
+  state.groups[groupId] = group;
+
+  const room = state.groupVoiceCalls[groupId];
+
+  if (room) {
+    state.groupVoiceCalls[groupId] = {
+      ...room,
+      participants: auIds(room.participants).filter(id => id !== userId),
+    };
+  }
+
+  renderGroupsList();
+  syncActiveGroupUI(group);
+  updateGroupVoiceBar(groupId);
+
+  if (state.activeGroup === groupId) {
+    appendSystemMsg(
+      'group-messages',
+      `${left.nickname || userId} покинул(а) группу`,
+    );
+  }
+
+  if (state.infoGroupId === groupId) renderGroupInfoMembers(group);
+});
+
+auOnSocket('groupDeleted', payload => {
+  if (!auRecord(payload)) return;
+
+  const groupId = auId(payload.groupId);
+  if (!groupId) return;
+
+  const name = state.groups[groupId]?.name;
+
+  forgetGroup(groupId);
+
+  if (name) showTransientNotice(`Группа «${name}» удалена`);
+});
+
+auOnSocket('groupError', payload => {
+  if (!auRecord(payload)) return;
+
+  showTransientNotice(
+    humanError(payload.reason, GROUP_ERRORS, 'Ошибка группы'),
+  );
+});
+
+/* ============================================================================
+ * CONNECTION LIFECYCLE
+ *
+ * connect_error / баннер / проверку 401 обрабатывают chat-ui.js и core.js.
+ * Здесь нет повторного forceLogout по тексту ошибки Socket.IO.
+ * ========================================================================== */
+
+socket.on('connect', () => {
+  auEnsureSession();
+
+  if (!state.me) return;
+
+  renderRequests(state.me.friendRequests);
+
+  if (state.activeFriend) {
+    socket.emit('watchDmVoice', { peerId: state.activeFriend });
+  }
+
+  if (state.activeGroup) {
+    socket.emit('watchGroupVoice', { groupId: state.activeGroup });
+  }
+});
+
+socket.on('disconnect', () => {
+  for (const operation of incomingRequestOperations.values()) {
+    clearTimeout(operation.timer);
+  }
+
+  incomingRequestOperations.clear();
+
+  if (state.me && !state.loggingOut) {
+    renderRequests(state.me.friendRequests);
+  }
+});
+
+/*
+ * storage обрабатывается в core.js.
+ * Не вызываем forceLogoutToLogin из второго обработчика:
+ * он мог бы удалить токен, только что установленный другой вкладкой.
+ */
+
+/* ============================================================================
+ * EXPORTS
+ * ========================================================================== */
+
+Object.assign(window, {
+  AUTH_ERRORS,
+  FRIEND_REQUEST_ERRORS,
+  SEND_MESSAGE_ERRORS,
+  GROUP_ERRORS,
+
+  humanError,
+  withButtonBusy,
+  authRequest,
+  restoreSession,
+
+  switchSidebarTab,
+  showChatPlaceholder,
+  closeActiveChat,
+
+  closeDrop,
+  doSearch,
+
+  renderRequests,
+  removeFriendRequest,
+  requestFriend,
+
+  sortedFriendIds,
+  renderFriendsList,
+  refreshFriendItem,
+  buildFriendEl,
+  fetchNicknames,
+  updateStatus,
+  setFriendPresence,
+
+  forgetGroup,
+  syncActiveGroupUI,
 });
