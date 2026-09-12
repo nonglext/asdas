@@ -94,3 +94,45 @@ document.querySelectorAll('[data-settings-section]').forEach(button => {
     if (crumb) crumb.textContent = section === 'appearance' ? 'Оформление' : section === 'account' || section === 'security' ? 'Аккаунт' : labels[section] || 'Настройки';
   });
 });
+
+
+function showPasswordMessage(text, good = false) {
+  const box = document.getElementById('password-form-message');
+  if (!box) return;
+  box.textContent = text;
+  box.className = `settings-form-message${good ? ' is-good' : ' is-error'}`;
+}
+
+function openPasswordSection() {
+  document.querySelector('[data-settings-section="security"]')?.click();
+  setTimeout(() => document.getElementById('current-password')?.focus(), 0);
+}
+
+on('btn-open-password', 'click', openPasswordSection);
+on('password-change-form', 'submit', event => {
+  event.preventDefault();
+  const currentPassword = document.getElementById('current-password')?.value || '';
+  const newPassword = document.getElementById('new-password')?.value || '';
+  const confirmPassword = document.getElementById('confirm-password')?.value || '';
+  if (!currentPassword || !newPassword || !confirmPassword) return showPasswordMessage('Заполните все поля');
+  if (newPassword.length < 8) return showPasswordMessage('Новый пароль должен содержать минимум 8 символов');
+  if (newPassword !== confirmPassword) return showPasswordMessage('Новые пароли не совпадают');
+  if (currentPassword === newPassword) return showPasswordMessage('Новый пароль должен отличаться от текущего');
+
+  const button = document.getElementById('btn-save-password');
+  button.disabled = true;
+  button.textContent = 'Сохраняем…';
+  showPasswordMessage('Проверяем пароль…');
+  authFetch(`${BACKEND_URL}/api/password/change`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  }).then(async response => {
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Не удалось изменить пароль');
+    if (data.token) storage.setItem('chatapp_token', data.token);
+    document.getElementById('password-change-form').reset();
+    showPasswordMessage('Пароль успешно изменён', true);
+  }).catch(error => showPasswordMessage(error.message || 'Не удалось изменить пароль'))
+    .finally(() => { button.disabled = false; button.textContent = 'Сохранить новый пароль'; });
+});

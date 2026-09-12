@@ -1228,3 +1228,13 @@ h1, h2, h3 { text-wrap: balance; }
   .settings-content { padding: 52px 22px 36px; }
   .settings-close-mobile { display: none; }
 }
+
+.settings-password-row { margin-top: 4px; }
+.settings-password-btn { grid-column: 2; }
+.settings-password-card { max-width: 560px; padding: 22px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg1); box-shadow: var(--shadow-low); }
+.settings-password-card .form-stack { gap: 16px; }
+.settings-field-hint { display: block; margin-top: 6px; color: var(--text3); font-size: .75rem; }
+.settings-form-message { min-height: 22px; margin: 4px 0 12px; color: var(--text-danger); font-size: .84rem; }
+.settings-form-message.is-good { color: var(--text-positive); }
+.settings-save-password { min-height: 44px; width: 100%; }
+@media (max-width: 620px) { .settings-info-row { grid-template-columns: 1fr; gap: 9px; padding: 12px 10px; } .settings-password-btn { grid-column: 1; } .settings-password-card { padding: 16px; } }
