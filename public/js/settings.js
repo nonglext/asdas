@@ -40,6 +40,19 @@ function applyAppTheme(theme, announce = false) {
 }
 
 function openSettings() {
+  const user = window.state?.me;
+  const avatar = document.getElementById('settings-user-avatar');
+  const name = document.getElementById('settings-user-name');
+  const accountName = document.getElementById('settings-account-name');
+  const accountStatus = document.getElementById('settings-account-status');
+  const accountBio = document.getElementById('settings-account-bio');
+  if (user) {
+    if (name) name.textContent = user.nickname || user.id || 'Профиль';
+    if (accountName) accountName.textContent = user.nickname || user.id || '—';
+    if (accountStatus) accountStatus.textContent = user.status || 'Активен';
+    if (accountBio) accountBio.textContent = user.bio || 'Не заполнено';
+    if (avatar && typeof renderAv === 'function') renderAv(avatar, user.nickname || user.id, user.avatar || null);
+  }
   syncThemeControls();
   const status = document.getElementById('settings-status');
   if (status) status.textContent = 'Тема сохраняется на этом устройстве';
@@ -55,6 +68,7 @@ on('btn-settings', 'click', event => {
   openSettings();
 });
 on('btn-close-settings', 'click', closeSettings);
+on('btn-close-settings-top', 'click', closeSettings);
 on('settings-modal', 'click', event => {
   if (event.target === $('settings-modal')) closeSettings();
 });
@@ -66,3 +80,17 @@ document.querySelectorAll('input[name="app-theme"]').forEach(input => {
 });
 
 applyAppTheme(currentAppTheme());
+
+
+document.querySelectorAll('[data-settings-section]').forEach(button => {
+  button.addEventListener('click', () => {
+    const section = button.dataset.settingsSection;
+    document.querySelectorAll('[data-settings-section]').forEach(item => item.classList.toggle('active', item === button || item.dataset.settingsSection === section && item.classList.contains('settings-subitem')));
+    document.querySelectorAll('[data-settings-panel]').forEach(panel => panel.classList.toggle('active', panel.dataset.settingsPanel === section));
+    const title = document.getElementById('settings-title');
+    const crumb = document.getElementById('settings-current-section');
+    const labels = { account: 'Информация об аккаунте', security: 'Пароль и безопасность', privacy: 'Конфиденциальность', notifications: 'Уведомления', appearance: 'Темы' };
+    if (title) title.textContent = labels[section] || 'Настройки';
+    if (crumb) crumb.textContent = section === 'appearance' ? 'Оформление' : section === 'account' || section === 'security' ? 'Аккаунт' : labels[section] || 'Настройки';
+  });
+});

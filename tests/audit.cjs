@@ -13,7 +13,7 @@ test('group voice markup is conditional on a live callId', () => {
 });
 test('exactly one presentation layer is shipped, with no competing override sheets', () => {
   const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
-  assert.match(html, /theme\.css\?v=1\.8\.1/);
+  assert.match(html, /theme\.css\?v=1\.8\.2/);
   for (const gone of ['refined.css', 'discord-reference.css', 'discord-refactor.css']) {
     assert.doesNotMatch(html, new RegExp(gone.replace('.', '\\.')), gone + ' still linked');
     assert.equal(fs.existsSync(path.join(root, 'public/css', gone)), false, gone + ' still present');
@@ -24,5 +24,5 @@ test('exactly one presentation layer is shipped, with no competing override shee
 test('package and VERSION agree', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.equal(pkg.version, fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim());
-  assert.equal(pkg.version, '1.8.1');
+  assert.equal(pkg.version, '1.8.2');
 });

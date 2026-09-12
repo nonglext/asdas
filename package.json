@@ -1,6 +1,6 @@
 {
   "name": "chatapp",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "private": true,
   "description": "Minimal private chat with groups, calls and secure photo, ZIP, MP3 and MP4 sharing",
   "main": "server.js",
