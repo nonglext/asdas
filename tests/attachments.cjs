@@ -28,6 +28,8 @@ test('client renders photo, audio, video and download states', () => {
     assert.ok(chat.includes(token), token);
   }
   assert.match(chat, /uploadChatFile/);
+  assert.match(chat, /api\/upload\/image/);
+  assert.match(chat, /const field = isImage/);
   assert.match(chat, /is-dragging/);
 });
 

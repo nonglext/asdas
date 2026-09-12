@@ -1238,3 +1238,18 @@ h1, h2, h3 { text-wrap: balance; }
 .settings-form-message.is-good { color: var(--text-positive); }
 .settings-save-password { min-height: 44px; width: 100%; }
 @media (max-width: 620px) { .settings-info-row { grid-template-columns: 1fr; gap: 9px; padding: 12px 10px; } .settings-password-btn { grid-column: 1; } .settings-password-card { padding: 16px; } }
+
+
+/* Electron/WebRTC polish */
+.call-overlay { min-width: 0; min-height: 0; }
+.call-overlay-top, .call-overlay-controls { flex-shrink: 0; }
+.call-video-grid { min-width: 0; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
+.call-overlay-controls .call-round-btn { min-width: 44px; min-height: 44px; transition: transform var(--ease-fast), background-color var(--ease-fast), color var(--ease-fast); }
+.call-overlay-controls .call-round-btn:hover:not(:disabled) { transform: translateY(-1px); }
+.call-overlay-controls .call-round-btn:active:not(:disabled) { transform: scale(.95); }
+.call-overlay-controls .call-round-btn:disabled { opacity: .45; cursor: not-allowed; }
+@media (max-width: 700px) {
+  .call-overlay-top { padding-inline: 14px; }
+  .call-overlay-controls { gap: 8px; padding-inline: 12px; }
+  .call-overlay-controls .call-round-btn { min-width: 42px; min-height: 42px; }
+}

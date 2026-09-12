@@ -2963,7 +2963,7 @@ function setComposerAttachment(group, file) {
   }
 
   if (!isSupportedAttachment(file)) {
-    showTransientNotice('Можно отправлять JPG, PNG, WEBP, GIF, ZIP, MP3 и MP4');
+    showTransientNotice('Скриншот или файл не поддерживается. Используйте JPG, PNG, ZIP, MP3 или MP4');
     return false;
   }
 
@@ -2985,10 +2985,16 @@ async function uploadChatFile(file) {
   if (!isSupportedAttachment(file)) throw new Error('Некорректный формат файла');
   if (file.size > MAX_CHAT_FILE_SIZE) throw new Error('Файл слишком большой');
 
+  const isImage = String(file.type || '').toLowerCase().startsWith('image/') ||
+    /\.(?:jpe?g|png|webp|gif)$/i.test(file.name || '');
   const form = new FormData();
-  form.append('file', file, file.name || 'file');
+  const field = isImage ? 'image' : 'file';
+  form.append(field, file, file.name || (isImage ? 'image.png' : 'file'));
 
-  const response = await authFetch(`${BACKEND_URL}/api/upload/file`, {
+  // Render may still be running the image-only backend. Keep screenshots
+  // on the stable image route, while ZIP/MP3/MP4 use the new file route.
+  const endpoint = isImage ? '/api/upload/image' : '/api/upload/file';
+  const response = await authFetch(`${BACKEND_URL}${endpoint}`, {
     method: 'POST',
     body: form,
   });

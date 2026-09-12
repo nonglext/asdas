@@ -15,7 +15,7 @@
  * ========================================================================== */
 
 (function bootstrap() {
-  const VERSION = '1.9.2';
+  const VERSION = '1.10.4';
   const SCRIPT_TIMEOUT_MS = 30_000;
 
   const SCRIPTS = Object.freeze([

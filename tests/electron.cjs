@@ -10,13 +10,13 @@ test('Electron uses isolated preload and a local server process', () => {
   const preload = read('electron/preload.cjs');
   assert.match(main, /contextIsolation: true/);
   assert.match(main, /nodeIntegration: false/);
-  assert.match(main, /fork\(/);
-  assert.match(preload, /contextBridge\.exposeInMainWorld/);
-  assert.match(preload, /-webkit-app-region:drag/);
-  assert.match(main, /movable: true/);
-  assert.match(preload, /dblclick/);
-  assert.match(main, /isQuitting = true; app\.quit\(\)/);
-  assert.match(preload, /window-action-close/);
+  assert.doesNotMatch(main, /fork\(/);
+  assert.match(main, /asdas-p7ht\.onrender\.com/);
+  assert.doesNotMatch(preload, /electron-titlebar/);
+  assert.match(main, /frame: true/);
+  assert.match(main, /setPermissionRequestHandler/);
+  assert.match(main, /setDisplayMediaRequestHandler/);
+  assert.match(main, /mainWindow\.on\('close'/);
 });
 test('Electron package commands and desktop docs exist', () => {
   const pkg = JSON.parse(read('package.json'));
@@ -24,4 +24,5 @@ test('Electron package commands and desktop docs exist', () => {
   assert.equal(pkg.scripts.electron, 'electron .');
   assert.ok(pkg.devDependencies.electron);
   assert.match(read('ELECTRON.md'), /npm run electron/);
+  assert.match(read('ELECTRON.md'), /локальный сервер.*не запускаются/);
 });
