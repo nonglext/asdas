@@ -39,4 +39,5 @@ test('screen sharing uses a floating overlay so the chat remains usable', () => 
   assert.match(css, /\.call-overlay\.screen-share-mini:not\(\.detached\)/);
   assert.match(css, /inset: var\(--call-top/);
   assert.match(css, /background: oklch\(12%/);
+  assert.match(css, /grid-template-rows: minmax\(0, 1fr\)/);
 });

@@ -1348,6 +1348,11 @@ function updateCallVisualMode() {
   overlay.classList.toggle('video-mode', videoVisible);
   // При демонстрации оставляем звонок плавающим, чтобы чат под ним оставался доступен.
   overlay.classList.toggle('screen-share-mini', screenVisible);
+  if (screenVisible) {
+    requestAnimationFrame(() => {
+      if (currentSessionMatches(captureCallSession())) renderCallGrid();
+    });
+  }
 
   const detached = overlay.classList.contains('detached');
 
@@ -1704,8 +1709,10 @@ function updateCallTile(tile, entry) {
 
     if (video.srcObject !== stream) {
       video.srcObject = stream;
+      video.onloadedmetadata = () => tryPlayCallMedia(video);
+      video.oncanplay = () => tryPlayCallMedia(video);
       tryPlayCallMedia(video);
-    } else if (video.paused) {
+    } else if (video.paused || video.readyState < 2) {
       tryPlayCallMedia(video);
     }
   } else if (video) {
