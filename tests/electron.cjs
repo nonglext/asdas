@@ -13,6 +13,10 @@ test('Electron uses isolated preload and a local server process', () => {
   assert.match(main, /fork\(/);
   assert.match(preload, /contextBridge\.exposeInMainWorld/);
   assert.match(preload, /-webkit-app-region:drag/);
+  assert.match(main, /movable: true/);
+  assert.match(preload, /dblclick/);
+  assert.match(main, /isQuitting = true; app\.quit\(\)/);
+  assert.match(preload, /window-action-close/);
 });
 test('Electron package commands and desktop docs exist', () => {
   const pkg = JSON.parse(read('package.json'));
