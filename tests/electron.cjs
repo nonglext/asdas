@@ -30,3 +30,13 @@ test('Electron package commands and desktop docs exist', () => {
   assert.match(read('ELECTRON.md'), /npm run electron/);
   assert.match(read('ELECTRON.md'), /локальный сервер.*не запускаются/);
 });
+
+
+test('screen sharing uses a floating overlay so the chat remains usable', () => {
+  const calls = read('public/js/calls.js');
+  const css = read('public/css/calls-responsive.css');
+  assert.match(calls, /screen-share-mini/);
+  assert.match(css, /\.call-overlay\.screen-share-mini:not\(\.detached\)/);
+  assert.match(css, /inset: var\(--call-top/);
+  assert.match(css, /background: oklch\(12%/);
+});

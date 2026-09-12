@@ -857,7 +857,7 @@ function closeCallOverlay() {
 
   if (overlay) {
     overlay.style.display = 'none';
-    overlay.classList.remove('voice-mode', 'video-mode', 'idle', 'detached');
+    overlay.classList.remove('voice-mode', 'video-mode', 'idle', 'detached', 'screen-share-mini');
     overlay.style.removeProperty('--call-left');
     overlay.style.removeProperty('--call-top');
     overlay.title = '';
@@ -1346,6 +1346,8 @@ function updateCallVisualMode() {
 
   overlay.classList.toggle('voice-mode', !videoVisible);
   overlay.classList.toggle('video-mode', videoVisible);
+  // При демонстрации оставляем звонок плавающим, чтобы чат под ним оставался доступен.
+  overlay.classList.toggle('screen-share-mini', screenVisible);
 
   const detached = overlay.classList.contains('detached');
 

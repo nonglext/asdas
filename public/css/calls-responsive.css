@@ -56,6 +56,75 @@
   display: none !important;
 }
 
+/* Демка закреплена в рабочей области, как сцена Discord, а не плавает поверх UI. */
+.call-overlay.screen-share-mini:not(.detached),
+.call-overlay.screen-share-mini.detached {
+  inset: var(--call-top, var(--header-h, 48px)) 0 0
+    var(--call-left, calc(var(--rail-w, 72px) + var(--sidebar-w, 240px)));
+
+  width: auto;
+  height: auto;
+  max-height: none;
+
+  border: 0;
+  border-radius: 0;
+  background: oklch(12% 0.008 265);
+  box-shadow: none;
+
+  z-index: calc(var(--z-dropdown, 100) + 10);
+}
+
+.call-overlay.screen-share-mini .call-overlay-top {
+  padding: 14px 20px 8px;
+}
+
+.call-overlay.screen-share-mini .call-overlay-title {
+  margin-top: 4px;
+  font-size: 16px;
+}
+
+.call-overlay.screen-share-mini .call-overlay-status {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.call-overlay.screen-share-mini .call-video-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  align-content: stretch;
+  justify-content: stretch;
+  max-width: none;
+  padding: 14px 24px 92px;
+  gap: 12px;
+}
+
+.call-overlay.screen-share-mini .call-tile {
+  min-height: 0;
+  aspect-ratio: auto;
+  max-width: none;
+}
+
+.call-overlay.screen-share-mini .call-overlay-controls {
+  margin-bottom: 20px;
+  padding: 8px 10px;
+}
+
+.call-overlay.screen-share-mini .call-overlay-controls,
+.call-overlay.screen-share-mini .call-overlay-top {
+  z-index: 4;
+}
+
+@media (max-width: 900px) {
+  .call-overlay.screen-share-mini:not(.detached),
+  .call-overlay.screen-share-mini.detached {
+    inset: var(--call-top, var(--header-h, 48px)) 0 0 0;
+  }
+
+  .call-overlay.screen-share-mini .call-video-grid {
+    padding-inline: 12px;
+  }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    Шапка
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -1389,6 +1458,43 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    Уменьшение движения
    ═══════════════════════════════════════════════════════════════════════════ */
+
+
+/* Screen share always wins over detached compact-call styling. */
+.call-overlay.screen-share-mini.detached {
+  inset: var(--call-top, var(--header-h, 48px)) 0 0
+    var(--call-left, calc(var(--rail-w, 72px) + var(--sidebar-w, 240px)));
+  width: auto;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: oklch(12% 0.008 265);
+  box-shadow: none;
+  cursor: default;
+}
+
+.call-overlay.screen-share-mini.detached .call-video-grid {
+  display: grid;
+  padding: 14px 24px 92px;
+}
+
+.call-overlay.screen-share-mini.detached .call-overlay-controls {
+  position: absolute;
+  inset: auto 0 0;
+  justify-content: center;
+  width: auto;
+  max-width: none;
+  margin: 0 0 20px;
+  padding: 8px 10px;
+  border: 1px solid oklch(90% 0.008 265 / 0.12);
+  border-radius: 14px;
+  background: oklch(18% 0.01 265 / 0.94);
+  box-shadow: 0 8px 24px oklch(8% 0.01 265 / 0.35);
+}
 
 @media (prefers-reduced-motion: reduce) {
   .call-overlay,
