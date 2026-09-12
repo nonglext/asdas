@@ -358,6 +358,21 @@
   border-color: var(--dc-green, #23a559);
 }
 
+.call-tile.is-speaking::before {
+  border: 2px solid oklch(72% 0.16 270);
+  box-shadow: 0 0 0 3px oklch(72% 0.16 270 / 0.18);
+  animation: call-speaking-pulse 800ms ease-in-out infinite alternate;
+}
+
+@keyframes call-speaking-pulse {
+  from { box-shadow: 0 0 0 2px oklch(72% 0.16 270 / 0.12); }
+  to { box-shadow: 0 0 0 5px oklch(72% 0.16 270 / 0.28); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .call-tile.is-speaking::before { animation: none; }
+}
+
 .call-tile video {
   position: absolute;
   inset: 0;
@@ -1526,3 +1541,4 @@
     transform: none;
   }
 }
+

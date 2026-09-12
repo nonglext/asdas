@@ -41,3 +41,34 @@ test('screen sharing uses a floating overlay so the chat remains usable', () => 
   assert.match(css, /background: oklch\(12%/);
   assert.match(css, /grid-template-rows: minmax\(0, 1fr\)/);
 });
+
+
+test('Electron provides a sandboxed source picker and safe display chooser', () => {
+  const main = read('electron/main.cjs');
+  const picker = read('electron/picker-preload.cjs');
+  const html = read('electron/source-picker.html');
+  assert.match(main, /desktopCapturer\.getSources/);
+  assert.match(main, /openSourcePicker/);
+  assert.match(main, /callback\(null\)/);
+  assert.match(main, /modal: true/);
+  assert.match(main, /picker-preload\.cjs/);
+  assert.match(picker, /contextBridge\.exposeInMainWorld/);
+  assert.match(html, /sourcePicker\.select/);
+  assert.match(html, /Escape/);
+});
+
+test('security and call controls are present', () => {
+  const server = read('server.js');
+  const calls = read('public/js/calls.js');
+  const css = read('public/css/calls-responsive.css');
+  const pkg = JSON.parse(read('package.json'));
+  assert.match(server, /Permissions-Policy/);
+  assert.match(server, /registerIpRate/);
+  assert.deepEqual(pkg.overrides.qs, '^6.16.0');
+  assert.equal(pkg.overrides.uuid, '11.1.1');
+  assert.doesNotMatch(calls, /btn-call-raise-hand/);
+  assert.doesNotMatch(read('public/index.html'), /Поднять руку|btn-call-raise-hand/);
+  assert.match(calls, /getByteFrequencyData/);
+  assert.match(calls, /setInterval\(tick, 100\)/);
+  assert.match(css, /\.call-tile\.is-speaking/);
+});

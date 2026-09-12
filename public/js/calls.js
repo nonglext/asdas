@@ -1899,14 +1899,16 @@ function getAudioCtx() {
 }
 
 function setSpeakingUI(id, speaking) {
-  findCallTile(id)?.classList.toggle('speaking', speaking);
+  const tile = findCallTile(id);
+  tile?.classList.toggle('speaking', speaking);
+  tile?.classList.toggle('is-speaking', speaking);
 }
 
 function stopSpeakingMonitor(id) {
   const monitor = speakingMonitors[id];
   if (!monitor) return;
 
-  cancelAnimationFrame(monitor.raf);
+  clearInterval(monitor.timer);
 
   try {
     monitor.source.disconnect();
@@ -1965,7 +1967,7 @@ function startSpeakingMonitor(id, stream) {
     data,
     stream,
     track,
-    raf: null,
+    timer: null,
   };
 
   speakingMonitors[id] = monitor;
@@ -1983,20 +1985,12 @@ function startSpeakingMonitor(id, stream) {
     let speaking = false;
 
     if (!muted && track.readyState === 'live' && !document.hidden) {
-      analyser.getByteTimeDomainData(data);
+      analyser.getByteFrequencyData(data);
 
       let sum = 0;
-
-      for (const value of data) {
-        const normalized = (value - 128) / 128;
-        sum += normalized * normalized;
-      }
-
-      const rms = Math.sqrt(sum / data.length);
-
-      speaking = rms > (
-        wasSpeaking ? SPEAKING_THRESHOLD_OFF : SPEAKING_THRESHOLD_ON
-      );
+      for (const value of data) sum += value;
+      const averageEnergy = sum / data.length;
+      speaking = averageEnergy >= 12;
     }
 
     if (speaking !== wasSpeaking) {
@@ -2004,9 +1998,9 @@ function startSpeakingMonitor(id, stream) {
       setSpeakingUI(id, speaking);
     }
 
-    monitor.raf = requestAnimationFrame(tick);
   };
 
+  monitor.timer = setInterval(tick, 100);
   tick();
 }
 

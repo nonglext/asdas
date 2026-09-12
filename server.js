@@ -788,6 +788,11 @@ app.use(
   })
 );
 
+app.use((req, res, next) => {
+  res.set('Permissions-Policy', 'camera=(self), microphone=(self), display-capture=(self), payment=()');
+  next();
+});
+
 app.use(cors({ origin: corsOrigin, credentials: true }));
 
 const rate = (windowMs, limit) =>
@@ -849,6 +854,14 @@ app.use('/api', (req, res, next) => {
 
 const authRate = rate(15 * 60_000, 30);
 const uploadRate = rate(60_000, 20);
+const registerIpRate = rateLimit({
+  windowMs: 60 * 60_000,
+  limit: 5,
+  keyGenerator: req => requestIp(req),
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Слишком много регистраций', reason: 'rate_limited' },
+});
 
 function signToken(
   user,
@@ -1785,7 +1798,7 @@ const DUMMY_HASH = bcrypt.hashSync(
 route(
   'post',
   '/api/register',
-  [authRate],
+  [registerIpRate, authRate],
   async (req, res) => {
     const { userId, nickname, password } = req.body || {};
 
