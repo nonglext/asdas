@@ -6,7 +6,7 @@
  * Подключение в HTML:
  *
  * <script src="/socket.io/socket.io.js" defer></script>
- * <script src="/js/app.js?v=1.7.1" defer></script>
+ * <script src="/js/app.js?v=1.8.0" defer></script>
  *
  * core.js / auth-ui.js / chat-ui.js / calls.js отдельно в HTML не подключать.
  *
@@ -15,7 +15,7 @@
  * ========================================================================== */
 
 (function bootstrap() {
-  const VERSION = '1.7.1';
+  const VERSION = '1.8.0';
   const SCRIPT_TIMEOUT_MS = 30_000;
 
   const SCRIPTS = Object.freeze([

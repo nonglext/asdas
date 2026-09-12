@@ -17,6 +17,17 @@ const IMAGE_MIME_TYPES = new Set([
 ]);
 
 const IMAGE_EXTENSIONS = /\.(jpe?g|png|webp|gif)$/i;
+const ATTACHMENT_EXTENSIONS = /\.(jpe?g|png|webp|gif|zip|mp3|mp4)$/i;
+const ATTACHMENT_MIME_TYPES = new Set([
+  ...IMAGE_MIME_TYPES,
+  'application/zip',
+  'application/x-zip-compressed',
+  'audio/mpeg',
+  'audio/mp3',
+  'video/mp4',
+  'application/octet-stream',
+]);
+const MAX_CHAT_FILE_SIZE = 50 * 1024 * 1024;
 
 const pendingAvatar = {
   file: null,
@@ -412,14 +423,28 @@ function renderGroupsList() {
   const list = $('groups-list');
   if (!list) return;
 
-  const ids = sortedGroupIds();
+  const groupQuery = document.body.dataset.sidebarTab === 'groups'
+    ? ($('search-input')?.value || '').trim().toLocaleLowerCase('ru')
+    : '';
+  const ids = sortedGroupIds().filter(id =>
+    !groupQuery || String(state.groups[id]?.name || '').toLocaleLowerCase('ru').includes(groupQuery)
+  );
   const focused = document.activeElement;
   const focusedItem = focused?.closest?.('.group-item');
   const focusId = focusedItem?.dataset.gid;
   const focusJoin = focused?.classList?.contains('group-voice-channel-join');
 
   if (!ids.length) {
-    list.innerHTML = emptyGroupsHTML();
+    if (groupQuery && Object.keys(state.groups).length) {
+      const empty = uiNode('div', 'group-search-empty');
+      empty.append(
+        uiNode('strong', '', 'Ничего не найдено'),
+        uiNode('span', '', 'Попробуйте другое название группы'),
+      );
+      list.replaceChildren(empty);
+    } else {
+      list.innerHTML = emptyGroupsHTML();
+    }
     updateTitleBadge();
     return;
   }
@@ -948,34 +973,60 @@ function appendChatMsg(msg, containerId, ctx = {}, doScroll = true) {
 
   body.appendChild(text);
 
-  const imageSource = !deleted ? uiUploadUrl(msg.image) : '';
+  const attachmentSource = !deleted ? uiUploadUrl(msg.image) : '';
 
-  if (imageSource) {
-    const image = uiNode('img', 'message-image');
-    image.alt = 'Изображение в сообщении';
-    image.loading = 'lazy';
-    image.decoding = 'async';
-    image.referrerPolicy = 'no-referrer';
+  if (attachmentSource) {
+    const mime = typeof msg.attachmentMime === 'string' ? msg.attachmentMime : 'image/webp';
+    const name = typeof msg.attachmentName === 'string' ? msg.attachmentName : 'Вложение';
+    const size = Number(msg.attachmentSize) || 0;
 
-    const adjustScroll = () => {
-      if (!wrap.isConnected || !doScroll) return;
-
-      /*
-       * Не тянем пользователя вниз, если он успел прокрутить историю.
-       */
-      if (isNearBottom(container)) scrollMsgs(containerId);
-    };
-
-    image.addEventListener('load', adjustScroll, { once: true });
-
-    image.addEventListener('error', () => {
-      if (!image.isConnected) return;
-      image.replaceWith(document.createTextNode('Изображение недоступно'));
-      adjustScroll();
-    }, { once: true });
-
-    image.src = imageSource;
-    body.appendChild(image);
+    if (mime.startsWith('image/')) {
+      const image = uiNode('img', 'message-image');
+      image.alt = name;
+      image.loading = 'lazy';
+      image.decoding = 'async';
+      image.referrerPolicy = 'no-referrer';
+      const adjustScroll = () => {
+        if (wrap.isConnected && doScroll && isNearBottom(container)) scrollMsgs(containerId);
+      };
+      image.addEventListener('load', adjustScroll, { once: true });
+      image.addEventListener('error', () => {
+        if (!image.isConnected) return;
+        image.replaceWith(document.createTextNode('Изображение недоступно'));
+        adjustScroll();
+      }, { once: true });
+      image.src = attachmentSource;
+      body.appendChild(image);
+    } else if (mime === 'audio/mpeg') {
+      const audio = uiNode('audio', 'message-audio');
+      audio.controls = true;
+      audio.preload = 'metadata';
+      audio.src = attachmentSource;
+      audio.setAttribute('aria-label', name);
+      body.appendChild(audio);
+    } else if (mime === 'video/mp4') {
+      const video = uiNode('video', 'message-video');
+      video.controls = true;
+      video.preload = 'metadata';
+      video.playsInline = true;
+      video.src = attachmentSource;
+      video.setAttribute('aria-label', name);
+      body.appendChild(video);
+    } else {
+      const file = uiNode('a', 'message-file');
+      file.href = attachmentSource;
+      file.download = name;
+      file.append(
+        uiNode('span', 'message-file-icon', 'ZIP'),
+        uiNode('span', 'message-file-copy'),
+        uiNode('span', 'message-file-download', 'Скачать'),
+      );
+      file.querySelector('.message-file-copy').append(
+        uiNode('strong', '', name),
+        uiNode('small', '', formatFileSize(size)),
+      );
+      body.appendChild(file);
+    }
   }
 
   wrap.appendChild(body);
@@ -2828,6 +2879,27 @@ function saveComposerDraft() {
   }
 }
 
+function formatFileSize(bytes) {
+  const value = Number(bytes) || 0;
+  if (value < 1024) return `${value} Б`;
+  if (value < 1024 ** 2) return `${Math.round(value / 1024)} КБ`;
+  return `${(value / 1024 ** 2).toFixed(value < 10 * 1024 ** 2 ? 1 : 0)} МБ`;
+}
+
+function attachmentKind(file) {
+  const mime = String(file?.type || '').toLowerCase();
+  if (mime.startsWith('image/')) return 'Фото';
+  if (mime === 'audio/mpeg' || /\.mp3$/i.test(file?.name || '')) return 'Аудио';
+  if (mime === 'video/mp4' || /\.mp4$/i.test(file?.name || '')) return 'Видео';
+  return 'ZIP';
+}
+
+function isSupportedAttachment(file) {
+  if (!file || typeof file.size !== 'number' || file.size <= 0) return false;
+  const mime = String(file.type || '').toLowerCase();
+  return (!mime || ATTACHMENT_MIME_TYPES.has(mime)) && ATTACHMENT_EXTENSIONS.test(String(file.name || ''));
+}
+
 function renderAttachmentPreview(group) {
   const key = attachmentKey(group);
   const box = $(group ? 'group-attach-preview' : 'msg-attach-preview');
@@ -2849,15 +2921,17 @@ function renderAttachmentPreview(group) {
 
   box.classList.add('show');
 
-  const label = uiNode(
-    'span',
-    'attach-preview-label',
-    file ? `Изображение: ${file.name || 'image'}` : 'Изображение готово к отправке',
+  const label = uiNode('span', 'attach-preview-label');
+  const shownFile = file || attempt?.file;
+  label.append(
+    uiNode('b', 'attach-preview-kind', shownFile ? attachmentKind(shownFile) : 'Файл'),
+    uiNode('span', 'attach-preview-name', shownFile?.name || 'Файл готов к отправке'),
+    uiNode('small', 'attach-preview-size', shownFile ? formatFileSize(shownFile.size) : ''),
   );
 
   const remove = uiNode('button', 'attach-preview-remove', '×');
   remove.type = 'button';
-  remove.setAttribute('aria-label', 'Убрать изображение');
+  remove.setAttribute('aria-label', 'Убрать файл');
 
   /*
    * Удаление/замена вложения во время неопределённого результата отправки
@@ -2888,19 +2962,17 @@ function setComposerAttachment(group, file) {
     return false;
   }
 
-  if (!isSupportedImage(file)) {
-    showTransientNotice('Можно отправлять JPG, PNG, WEBP или GIF');
+  if (!isSupportedAttachment(file)) {
+    showTransientNotice('Можно отправлять JPG, PNG, WEBP, GIF, ZIP, MP3 и MP4');
     return false;
   }
 
-  if (file.size > MAX_AVATAR_SIZE) {
-    showTransientNotice(
-      `Изображение слишком большое: максимум ${Math.round(MAX_AVATAR_SIZE / 1024 / 1024)} МБ`,
-    );
+  if (file.size > MAX_CHAT_FILE_SIZE) {
+    showTransientNotice(`Файл слишком большой: максимум ${MAX_CHAT_FILE_SIZE / 1024 / 1024} МБ`);
     return false;
   }
 
-  composerAttachments.set(key, normalizeImageFile(file));
+  composerAttachments.set(key, file);
 
   // Новое вложение — новая отправка, старый imageUrl не переиспользуем.
   retryMessages.delete(key);
@@ -2909,28 +2981,24 @@ function setComposerAttachment(group, file) {
   return true;
 }
 
-async function uploadChatImage(file) {
-  if (!isSupportedImage(file)) throw new Error('Некорректное изображение');
-  if (file.size > MAX_AVATAR_SIZE) throw new Error('Изображение слишком большое');
+async function uploadChatFile(file) {
+  if (!isSupportedAttachment(file)) throw new Error('Некорректный формат файла');
+  if (file.size > MAX_CHAT_FILE_SIZE) throw new Error('Файл слишком большой');
 
-  const normalized = normalizeImageFile(file);
   const form = new FormData();
+  form.append('file', file, file.name || 'file');
 
-  form.append('image', normalized, normalized.name || 'image.png');
-
-  const response = await authFetch(`${BACKEND_URL}/api/upload/image`, {
+  const response = await authFetch(`${BACKEND_URL}/api/upload/file`, {
     method: 'POST',
     body: form,
   });
-
   const data = await safeJson(response);
 
   if (!response.ok || !uiUploadUrl(data?.url)) {
-    const error = new Error(uiErrorText(data, 'Не удалось загрузить изображение'));
-    error.reason = response.status === 413 ? 'image_too_large' : data?.reason;
+    const error = new Error(uiErrorText(data, 'Не удалось загрузить файл'));
+    error.reason = response.status === 413 ? 'file_too_large' : data?.reason;
     throw error;
   }
-
   return data.url;
 }
 
@@ -2961,15 +3029,37 @@ for (const group of [false, true]) {
   });
 }
 
-function pastedImage(event) {
+for (const group of [false, true]) {
+  const bar = $(group ? 'group-msg-input' : 'msg-input')?.closest('.msg-bar');
+  if (!bar) continue;
+
+  for (const eventName of ['dragenter', 'dragover']) {
+    bar.addEventListener(eventName, event => {
+      if (!event.dataTransfer?.types?.includes('Files')) return;
+      event.preventDefault();
+      bar.classList.add('is-dragging');
+    });
+  }
+  bar.addEventListener('dragleave', event => {
+    if (!bar.contains(event.relatedTarget)) bar.classList.remove('is-dragging');
+  });
+  bar.addEventListener('drop', event => {
+    bar.classList.remove('is-dragging');
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) return;
+    event.preventDefault();
+    setComposerAttachment(group, file);
+  });
+}
+
+function pastedAttachment(event) {
   for (const item of [...(event.clipboardData?.items || [])]) {
-    if (item.kind === 'file' && /^image\//i.test(item.type || '')) {
+    if (item.kind === 'file') {
       const file = item.getAsFile();
-      if (file) return file;
+      if (isSupportedAttachment(file)) return file;
     }
   }
-
-  return [...(event.clipboardData?.files || [])].find(isSupportedImage) || null;
+  return [...(event.clipboardData?.files || [])].find(isSupportedAttachment) || null;
 }
 
 document.addEventListener('paste', event => {
@@ -2982,13 +3072,13 @@ document.addEventListener('paste', event => {
 
   if (!group && !dm) return;
 
-  const file = pastedImage(event);
+  const file = pastedAttachment(event);
   if (!file) return;
 
   event.preventDefault();
 
   if (setComposerAttachment(group, file)) {
-    showTransientNotice('Изображение добавлено к сообщению');
+    showTransientNotice('Файл добавлен к сообщению');
   }
 });
 
@@ -3025,8 +3115,8 @@ function refreshComposer(group) {
 }
 
 function uiSendError(error) {
-  if (error?.reason === 'image_too_large') {
-    return 'Изображение слишком большое';
+  if (error?.reason === 'image_too_large' || error?.reason === 'file_too_large') {
+    return 'Файл слишком большой';
   }
 
   try {
@@ -3101,7 +3191,7 @@ async function sendComposer(group) {
 
   try {
     if (!attempt.imageUrl && file) {
-      const imageUrl = await uploadChatImage(file);
+      const imageUrl = await uploadChatFile(file);
 
       if (!ownsAttempt()) return;
       attempt.imageUrl = imageUrl;

@@ -489,6 +489,15 @@ whenDomReady(() => {
 function switchSidebarTab(value) {
   const name = value === 'groups' ? 'groups' : 'dm';
   const isGroups = name === 'groups';
+  document.body.dataset.sidebarTab = name;
+
+  const search = $('search-input');
+  if (search) {
+    search.placeholder = isGroups ? 'Найти группу' : 'Найти друга по @ID';
+    search.setAttribute('aria-label', isGroups ? 'Поиск групп' : 'Поиск пользователей');
+    search.value = '';
+  }
+  closeDrop(false);
 
   document.querySelectorAll('.sidebar-tab').forEach(tab => {
     const active = tab.dataset.stab === name;
@@ -1173,6 +1182,11 @@ async function doSearch(rawQuery) {
 on('search-input', 'input', event => {
   closeDrop(false);
 
+  if (document.body.dataset.sidebarTab === 'groups') {
+    renderGroupsList();
+    return;
+  }
+
   const query = event.target.value.trim();
   if (!query || !state.me) return;
 
@@ -1184,6 +1198,7 @@ on('search-input', 'input', event => {
 
 on('search-input', 'focus', event => {
   clearTimeout(searchBlurTimer);
+  if (document.body.dataset.sidebarTab === 'groups') return;
 
   const query = event.target.value.trim();
   if (query && state.me) auRun(() => doSearch(query));

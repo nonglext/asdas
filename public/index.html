@@ -5,25 +5,25 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, viewport-fit=cover" name="viewport"/>
 <title>ChatApp</title>
-<meta content="#232135" name="theme-color"/>
-<meta content="dark" name="color-scheme"/>
+<meta content="#f4f2f8" name="theme-color"/>
+<meta content="light" name="color-scheme"/>
 <meta content="yes" name="mobile-web-app-capable"/>
 <meta content="yes" name="apple-mobile-web-app-capable"/>
-<meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"/>
+<meta content="default" name="apple-mobile-web-app-status-bar-style"/>
 <link href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%235865f2'/%3E%3Cpath fill='%23fff' d='M18 14.5a1.5 1.5 0 0 1-1.5 1.5H8.3L5 19V7.5A1.5 1.5 0 0 1 6.5 6h10A1.5 1.5 0 0 1 18 7.5z'/%3E%3C/svg%3E" rel="icon"/>
-<script src="/js/runtime-guard.js?v=1.7.0"></script>
-<script src="/js/document-0.js?v=1.7.0"></script>
+<script src="/js/runtime-guard.js?v=1.8.0"></script>
+<script src="/js/document-0.js?v=1.8.0"></script>
 <!-- Каркас: base → layout → chat → calls → утилиты/адаптив. Всё оформление — в theme.css -->
-<link href="/css/base.css?v=1.7.0" rel="stylesheet"/>
-<link href="/css/layout.css?v=1.7.0" rel="stylesheet"/>
-<link href="/css/chat.css?v=1.7.0" rel="stylesheet"/>
-<link href="/css/calls-responsive.css?v=1.7.0" rel="stylesheet"/>
-<link href="/css/style.css?v=1.7.0" rel="stylesheet"/>
-<link href="/css/theme.css?v=1.7.0" rel="stylesheet"/>
+<link href="/css/base.css?v=1.8.0" rel="stylesheet"/>
+<link href="/css/layout.css?v=1.8.0" rel="stylesheet"/>
+<link href="/css/chat.css?v=1.8.0" rel="stylesheet"/>
+<link href="/css/calls-responsive.css?v=1.8.0" rel="stylesheet"/>
+<link href="/css/style.css?v=1.8.0" rel="stylesheet"/>
+<link href="/css/theme.css?v=1.8.0" rel="stylesheet"/>
 </head>
 <body>
 <noscript>
-<div style="padding:24px;text-align:center;font-family:system-ui,sans-serif;color:#dbdee1;background:#313338">
+<div style="padding:24px;text-align:center;font-family:system-ui,sans-serif;color:#332f3d;background:#f4f2f8">
     Для работы ChatApp нужен включённый JavaScript.
   </div>
 </noscript>
@@ -153,7 +153,7 @@
 <!-- Группы панель -->
 <div id="groups-panel" style="display:none">
 <div class="section-label">
-            Мои группы
+            Группы
             <button aria-label="Создать группу" class="section-add" data-action="5" title="Создать группу" type="button">
 <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24" width="16"><path d="M12 5v14M5 12h14"></path></svg>
 </button>
@@ -215,12 +215,12 @@
 <div class="msg-bar-wrap">
 <div class="msg-bar">
 <textarea aria-label="Текст сообщения" autocomplete="off" enterkeyhint="enter" id="msg-input" maxlength="4000" placeholder="Написать сообщение…" rows="1"></textarea>
-<button aria-label="Прикрепить изображение" class="attach-btn" id="btn-attach-image" title="Прикрепить изображение" type="button"><svg aria-hidden="true" fill="none" height="22" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="22"><path d="M21 15V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14h14"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m3 17 5-5 4 4 3-3 6 6"/></svg></button><input accept="image/jpeg,image/jpg,image/png" aria-label="Выбрать изображение" class="visually-hidden-input" id="msg-image-input" type="file"><button aria-label="Отправить" class="send-btn" id="btn-send" title="Отправить" type="button">
+<button aria-label="Прикрепить файл" class="attach-btn" id="btn-attach-image" title="Фото, ZIP, MP3 или MP4" type="button"><svg aria-hidden="true" fill="none" height="22" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="22"><path d="M21 15V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14h14"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m3 17 5-5 4 4 3-3 6 6"/></svg></button><input accept=".jpg,.jpeg,.png,.webp,.gif,.zip,.mp3,.mp4,image/jpeg,image/png,image/webp,image/gif,application/zip,audio/mpeg,video/mp4" aria-label="Выбрать файл" class="visually-hidden-input" id="msg-image-input" type="file"><button aria-label="Отправить" class="send-btn" id="btn-send" title="Отправить" type="button">
 <svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24"><path d="M22 2L11 13"></path><path d="M22 2L15 22L11 13L2 9L22 2Z"></path></svg>
 </button>
 </div>
 <div aria-live="polite" class="attach-preview" id="msg-attach-preview"></div>
-<div aria-hidden="true" class="composer-hint"><kbd>Enter</kbd> отправить · <kbd>Shift + Enter</kbd> новая строка</div></div>
+<div aria-hidden="true" class="composer-hint"><span>Перетащите сюда фото, ZIP, MP3 или MP4</span><span><kbd>Enter</kbd> отправить · <kbd>Shift + Enter</kbd> новая строка</span></div></div>
 </section>
 <!-- Group Chat Window -->
 <section aria-label="Групповой чат" class="chat-window" id="group-chat-window" style="display:none">
@@ -264,13 +264,13 @@
 <div aria-label="Сообщения группы" class="messages group-messages" id="group-messages" role="log"></div>
 <div class="msg-bar-wrap">
 <div class="msg-bar">
-<textarea aria-label="Текст сообщения" autocomplete="off" enterkeyhint="enter" id="group-msg-input" maxlength="4000" placeholder="Написать в группу…" rows="1"></textarea><button aria-label="Прикрепить изображение в группу" class="attach-btn" id="btn-group-attach-image" title="Прикрепить изображение в группу" type="button"><svg aria-hidden="true" fill="none" height="22" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="22"><path d="M21 15V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m3 17 5-5 4 4 3-3 6 6"/></svg></button><input accept="image/jpeg,image/jpg,image/png" aria-label="Выбрать изображение" class="visually-hidden-input" id="group-image-input" type="file">
+<textarea aria-label="Текст сообщения" autocomplete="off" enterkeyhint="enter" id="group-msg-input" maxlength="4000" placeholder="Сообщение для всей группы…" rows="1"></textarea><button aria-label="Прикрепить файл в группу" class="attach-btn" id="btn-group-attach-image" title="Фото, ZIP, MP3 или MP4" type="button"><svg aria-hidden="true" fill="none" height="22" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="22"><path d="M21 15V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m3 17 5-5 4 4 3-3 6 6"/></svg></button><input accept=".jpg,.jpeg,.png,.webp,.gif,.zip,.mp3,.mp4,image/jpeg,image/png,image/webp,image/gif,application/zip,audio/mpeg,video/mp4" aria-label="Выбрать файл" class="visually-hidden-input" id="group-image-input" type="file">
 <button aria-label="Отправить" class="send-btn" id="btn-group-send" title="Отправить" type="button">
 <svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24"><path d="M22 2L11 13"></path><path d="M22 2L15 22L11 13L2 9L22 2Z"></path></svg>
 </button>
 </div>
 <div aria-live="polite" class="attach-preview" id="group-attach-preview"></div>
-<div aria-hidden="true" class="composer-hint"><kbd>Enter</kbd> отправить · <kbd>Shift + Enter</kbd> новая строка</div></div>
+<div aria-hidden="true" class="composer-hint"><span>Перетащите сюда фото, ZIP, MP3 или MP4</span><span><kbd>Enter</kbd> отправить · <kbd>Shift + Enter</kbd> новая строка</span></div></div>
 </div>
 <!-- Правая панель участников -->
 <aside aria-label="Участники группы" class="group-members-panel" id="group-members-panel">
@@ -498,14 +498,14 @@
      Не требует правок chat-ui.js: следит за открытием чата и прячет сайдбар на ≤640px,
      закрывает панель участников по тапу на щиток.
      ═════════════════════════════════════════════════════════════════════════ -->
-<script src="/js/document-1.js?v=1.7.0"></script>
+<script src="/js/document-1.js?v=1.8.0"></script>
 <script src="/socket.io/socket.io.js"></script>
 
-<script defer="" src="/js/core.js?v=1.7.0"></script>
-<script defer="" src="/js/auth-ui.js?v=1.7.0"></script>
-<script defer="" src="/js/chat-ui.js?v=1.7.0"></script>
-<script defer="" src="/js/calls.js?v=1.7.0"></script>
-<script defer="" src="/js/document-actions.js?v=1.7.0"></script>
-<script defer="" src="/js/accessibility.js?v=1.7.0"></script>
+<script defer="" src="/js/core.js?v=1.8.0"></script>
+<script defer="" src="/js/auth-ui.js?v=1.8.0"></script>
+<script defer="" src="/js/chat-ui.js?v=1.8.0"></script>
+<script defer="" src="/js/calls.js?v=1.8.0"></script>
+<script defer="" src="/js/document-actions.js?v=1.8.0"></script>
+<script defer="" src="/js/accessibility.js?v=1.8.0"></script>
 </body>
 </html>

@@ -218,9 +218,15 @@ if (!inside(fs.realpathSync(UPLOAD_DIR), fs.realpathSync(TMP_DIR))) {
 }
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_FILE_BYTES = intEnv(
+  'MAX_FILE_BYTES',
+  50 * 1024 * 1024,
+  MAX_IMAGE_BYTES,
+  1024 * 1024 * 1024
+);
 const MAX_USER_MEDIA_BYTES = intEnv(
   'MAX_USER_MEDIA_BYTES',
-  100 * 1024 * 1024,
+  500 * 1024 * 1024,
   MAX_IMAGE_BYTES,
   10 * 1024 ** 3
 );
@@ -252,7 +258,7 @@ const UUID_PATTERN =
 
 const UUID_RE = new RegExp(`^${UUID_PATTERN}$`);
 const FILE_RE = new RegExp(
-  `^/uploads/${UUID_PATTERN}\\.(?:jpg|png|webp|gif)$`
+  `^/uploads/${UUID_PATTERN}\\.(?:jpg|png|webp|gif|zip|mp3|mp4)$`
 );
 const TMP_RE = new RegExp(`^${UUID_PATTERN}\\.tmp$`);
 
@@ -442,6 +448,9 @@ const Message = sequelize.define(
       allowNull: false
     },
     image: DataTypes.TEXT,
+    attachmentName: DataTypes.STRING(180),
+    attachmentMime: DataTypes.STRING(80),
+    attachmentSize: DataTypes.BIGINT,
     type: {
       type: DataTypes.ENUM('text', 'image'),
       defaultValue: 'text',
@@ -552,7 +561,9 @@ const Upload = sequelize.define(
       type: DataTypes.BIGINT,
       allowNull: false,
       defaultValue: 0
-    }
+    },
+    originalName: DataTypes.STRING(180),
+    mime: DataTypes.STRING(80)
   },
   {
     ...common,
@@ -1146,6 +1157,9 @@ function serializeMessage(message) {
     groupId: message.groupId,
     text: message.deleted ? '' : message.text,
     image: message.deleted ? null : message.image,
+    attachmentName: message.deleted ? null : message.attachmentName,
+    attachmentMime: message.deleted ? null : message.attachmentMime,
+    attachmentSize: message.deleted ? 0 : Number(message.attachmentSize || 0),
     type: message.type,
     deleted: message.deleted,
     read: message.read,
@@ -1333,6 +1347,40 @@ const upload = multer({
   }
 });
 
+const attachmentUpload = multer({
+  storage: multer.diskStorage({
+    destination: TMP_DIR,
+    filename(req, file, callback) {
+      const name = `${crypto.randomUUID()}.tmp`;
+      trackTmp(req, name);
+      callback(null, name);
+    }
+  }),
+  limits: {
+    fileSize: MAX_FILE_BYTES,
+    files: 1,
+    fields: 0,
+    parts: 1,
+    fieldNameSize: 64,
+    headerPairs: 100
+  },
+  fileFilter(req, file, callback) {
+    const mime = String(file.mimetype || '').toLowerCase();
+    const name = String(file.originalname || '').toLowerCase();
+    const allowedMime = new Set([
+      'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif',
+      'application/zip', 'application/x-zip-compressed',
+      'audio/mpeg', 'audio/mp3', 'video/mp4', 'application/octet-stream'
+    ]);
+
+    if (!allowedMime.has(mime) || !/\.(?:jpe?g|png|webp|gif|zip|mp3|mp4)$/.test(name)) {
+      return callback(new ApiError(400, 'Поддерживаются JPG, PNG, WEBP, GIF, ZIP, MP3 и MP4'));
+    }
+
+    callback(null, true);
+  }
+});
+
 async function uploadGuard(req, res, next) {
   let release;
 
@@ -1472,7 +1520,9 @@ async function finalizeUpload(req) {
       path: publicPath,
       ownerId: req.user.id,
       state: 'pending',
-      bytes: size
+      bytes: size,
+      originalName: 'image.webp',
+      mime: 'image/webp'
     });
   } catch (error) {
     await unlinkMedia(publicPath).catch(cleanupError => {
@@ -1487,35 +1537,106 @@ async function finalizeUpload(req) {
   return publicPath;
 }
 
+function cleanFileName(value) {
+  const base = path.basename(String(value || 'file'))
+    .replace(/[\x00-\x1f\x7f]/g, '')
+    .replace(/[<>:"/\\|?*]/g, '_')
+    .trim();
+  return (base || 'file').slice(0, 180);
+}
+
+async function inspectAttachment(file) {
+  const handle = await fs.promises.open(file.path, 'r');
+  const head = Buffer.alloc(32);
+  let bytesRead = 0;
+  try { ({ bytesRead } = await handle.read(head, 0, head.length, 0)); }
+  finally { await handle.close(); }
+
+  const b = head.subarray(0, bytesRead);
+  const ascii = b.toString('ascii');
+  const original = cleanFileName(file.originalname);
+  const extension = original.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
+  const signatures = {
+    jpg: b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+    png: b.length >= 8 && b.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])),
+    webp: b.length >= 12 && ascii.slice(0, 4) === 'RIFF' && ascii.slice(8, 12) === 'WEBP',
+    gif: ascii.startsWith('GIF87a') || ascii.startsWith('GIF89a'),
+    zip: b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b &&
+      [[0x03,0x04],[0x05,0x06],[0x07,0x08]].some(pair => b[2] === pair[0] && b[3] === pair[1]),
+    mp3: ascii.startsWith('ID3') || (b.length >= 2 && b[0] === 0xff && (b[1] & 0xe0) === 0xe0),
+    mp4: b.length >= 12 && ascii.slice(4, 8) === 'ftyp'
+  };
+  const normalizedExtension = extension === 'jpeg' ? 'jpg' : extension;
+  if (!signatures[normalizedExtension]) {
+    reject(400, 'Содержимое файла не соответствует его формату', 'invalid_file');
+  }
+  const mime = {
+    jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif',
+    zip: 'application/zip', mp3: 'audio/mpeg', mp4: 'video/mp4'
+  }[normalizedExtension];
+  return { extension: normalizedExtension, mime, original };
+}
+
+async function finalizeAttachment(req) {
+  if (!req.file) reject(400, 'Выберите файл JPG, PNG, WEBP, GIF, ZIP, MP3 или MP4');
+  const pending = await Upload.count({ where: { ownerId: req.user.id, state: 'pending' } });
+  if (pending >= MAX_PENDING_UPLOADS) reject(429, 'Слишком много неотправленных файлов');
+
+  const [usage] = await sequelize.query(
+    `SELECT COALESCE(SUM(bytes), 0)::text AS used FROM uploads WHERE owner_id = :u`,
+    { replacements: { u: req.user.id }, type: QueryTypes.SELECT }
+  );
+  const metadata = await inspectAttachment(req.file);
+  const size = (await fs.promises.stat(req.file.path)).size;
+  if (size > MAX_FILE_BYTES) reject(400, 'Файл слишком большой', 'file_too_large');
+  if (BigInt(usage.used) + BigInt(size) > BigInt(MAX_USER_MEDIA_BYTES)) {
+    reject(429, 'Достигнут лимит хранилища файлов', 'storage_limit');
+  }
+
+  const name = `${crypto.randomUUID()}.${metadata.extension}`;
+  const publicPath = `/uploads/${name}`;
+  const destination = path.join(UPLOAD_DIR, name);
+  await fs.promises.chmod(req.file.path, 0o600);
+  await fs.promises.rename(req.file.path, destination);
+  activeTmp.delete(req.file.path);
+  req.tmpPaths?.delete(req.file.path);
+
+  try {
+    await Upload.create({
+      path: publicPath, ownerId: req.user.id, state: 'pending', bytes: size,
+      originalName: metadata.original, mime: metadata.mime
+    });
+  } catch (error) {
+    await fs.promises.unlink(destination).catch(() => {});
+    throw error;
+  }
+  return { url: publicPath, name: metadata.original, mime: metadata.mime, size };
+}
+
 async function claimUpload(publicPath, userId, transaction) {
   if (!publicPath) return;
 
   if (!FILE_RE.test(publicPath)) {
-    reject(400, 'Недопустимое изображение', 'invalid_image');
+    reject(400, 'Недопустимый файл', 'invalid_file');
   }
 
-  const [count] = await Upload.update(
-    { state: 'attached' },
-    {
-      where: {
-        path: publicPath,
-        ownerId: userId,
-        state: 'pending',
-        createdAt: {
-          [Op.gte]: new Date(Date.now() - PENDING_TTL)
-        }
-      },
-      transaction
-    }
-  );
-
+  const where = {
+    path: publicPath,
+    ownerId: userId,
+    state: 'pending',
+    createdAt: { [Op.gte]: new Date(Date.now() - PENDING_TTL) }
+  };
+  const entry = await Upload.findOne({
+    where, transaction, lock: transaction.LOCK.UPDATE
+  });
+  if (!entry) {
+    reject(400, 'Файл не принадлежит вам, просрочен или уже использован', 'invalid_file');
+  }
+  const [count] = await Upload.update({ state: 'attached' }, { where, transaction });
   if (count !== 1) {
-    reject(
-      400,
-      'Изображение не принадлежит вам, просрочено или уже использовано',
-      'invalid_image'
-    );
+    reject(400, 'Файл не принадлежит вам, просрочен или уже использован', 'invalid_file');
   }
+  return entry;
 }
 
 async function retireMedia(publicPath, ownerId, transaction) {
@@ -2051,6 +2172,16 @@ route(
 
 route(
   'post',
+  '/api/upload/file',
+  [authenticate, uploadRate, uploadGuard, attachmentUpload.single('file')],
+  async (req, res) => {
+    const attachment = await finalizeAttachment(req);
+    res.json({ success: true, ...attachment });
+  }
+);
+
+route(
+  'post',
   '/api/upload/avatar',
   [authenticate, uploadRate, uploadGuard, upload.single('avatar')],
   async (req, res) => {
@@ -2235,7 +2366,7 @@ route(
       await retireMedia(message.image, message.from, transaction);
 
       await message.update(
-        { deleted: true, text: '', image: null },
+        { deleted: true, text: '', image: null, attachmentName: null, attachmentMime: null, attachmentSize: null },
         { transaction }
       );
     });
@@ -2468,7 +2599,7 @@ route(
   }
 );
 
-// Images are never exposed through express.static.
+// Message files are never exposed through express.static.
 app.get('/uploads/:filename', (req, res, next) => {
   res.set('Cache-Control', 'private, no-store');
   res.vary('Cookie');
@@ -2578,16 +2709,24 @@ app.get('/uploads/:filename', (req, res, next) => {
 
     if (res.destroyed) return;
 
+    const fallbackMime = {
+      jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif',
+      zip: 'application/zip', mp3: 'audio/mpeg', mp4: 'video/mp4'
+    }[path.extname(req.params.filename).slice(1).toLowerCase()] || 'application/octet-stream';
+    const responseMime = ledger?.mime || fallbackMime;
+
     res.set({
       'X-Content-Type-Options': 'nosniff',
-      'Cross-Origin-Resource-Policy': 'cross-origin'
+      'Cross-Origin-Resource-Policy': 'same-origin',
+      'Content-Type': responseMime,
+      'Content-Disposition': `${responseMime === 'application/zip' ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(ledger?.originalName || req.params.filename)}`
     });
 
     res.sendFile(
       absolute,
       {
         dotfiles: 'deny',
-        acceptRanges: false,
+        acceptRanges: true,
         cacheControl: false,
         lastModified: false,
         headers: { 'Cache-Control': 'private, no-store' }
@@ -3154,7 +3293,7 @@ async function sendMessage(socket, data, isGroup) {
     image !== null &&
     (typeof image !== 'string' || !FILE_RE.test(image))
   ) {
-    reject(400, 'Недопустимое изображение', 'invalid_image');
+    reject(400, 'Недопустимый файл', 'invalid_file');
   }
 
   if (!text && !image) {
@@ -3220,7 +3359,7 @@ async function sendMessage(socket, data, isGroup) {
 
   if (!message) {
     message = await sequelize.transaction(async transaction => {
-      await claimUpload(image, uid, transaction);
+      const attachment = await claimUpload(image, uid, transaction);
 
       return Message.create(
         {
@@ -3228,6 +3367,9 @@ async function sendMessage(socket, data, isGroup) {
           from: uid,
           text,
           image,
+          attachmentName: attachment?.originalName || null,
+          attachmentMime: attachment?.mime || null,
+          attachmentSize: attachment?.bytes || null,
           type: image ? 'image' : 'text',
           clientId: cid || null,
           createdAt: nextTime()
@@ -4269,7 +4411,10 @@ async function ensureSchema() {
     await sequelize.query(
       `ALTER TABLE messages
        ADD COLUMN IF NOT EXISTS group_id UUID,
-       ADD COLUMN IF NOT EXISTS client_id VARCHAR(64)`
+       ADD COLUMN IF NOT EXISTS client_id VARCHAR(64),
+       ADD COLUMN IF NOT EXISTS attachment_name VARCHAR(180),
+       ADD COLUMN IF NOT EXISTS attachment_mime VARCHAR(80),
+       ADD COLUMN IF NOT EXISTS attachment_size BIGINT`
     );
 
     const columns = await qi.describeTable('messages');
@@ -4287,7 +4432,9 @@ async function ensureSchema() {
     await sequelize.query(
       `ALTER TABLE uploads
        ADD COLUMN IF NOT EXISTS state VARCHAR(16) NOT NULL DEFAULT 'pending',
-       ADD COLUMN IF NOT EXISTS bytes BIGINT NOT NULL DEFAULT 0`
+       ADD COLUMN IF NOT EXISTS bytes BIGINT NOT NULL DEFAULT 0,
+       ADD COLUMN IF NOT EXISTS original_name VARCHAR(180),
+       ADD COLUMN IF NOT EXISTS mime VARCHAR(80)`
     );
   }
 
