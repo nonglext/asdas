@@ -904,7 +904,7 @@ function closeActiveChat() {
 
 on('me-card', 'click', event => {
   if (!(event.target instanceof Element)) return;
-  if (event.target.closest('#btn-logout')) return;
+  if (event.target.closest('#btn-logout, #btn-settings')) return;
 
   if (state.me) auRun(() => openEditProfileModal());
 });

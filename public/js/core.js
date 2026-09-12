@@ -1139,6 +1139,7 @@ const MODAL_IDS = [
   'profile-modal',
   'edit-profile-modal',
   'blocked-users-modal',
+  'settings-modal',
   'delete-confirm',
   'create-group-modal',
   'group-info-modal',

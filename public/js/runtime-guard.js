@@ -1,4 +1,11 @@
 'use strict';
+
+(function applySavedTheme() {
+  let theme = 'white';
+  try { theme = localStorage.getItem('chatapp_theme') || 'white'; } catch (_) {}
+  document.documentElement.dataset.theme = theme === 'gray' ? 'gray' : 'white';
+})();
+
 // A runtime exception must never hide an already authenticated workspace.
 (() => {
   function report() {

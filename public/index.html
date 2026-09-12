@@ -11,15 +11,15 @@
 <meta content="yes" name="apple-mobile-web-app-capable"/>
 <meta content="default" name="apple-mobile-web-app-status-bar-style"/>
 <link href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%235865f2'/%3E%3Cpath fill='%23fff' d='M18 14.5a1.5 1.5 0 0 1-1.5 1.5H8.3L5 19V7.5A1.5 1.5 0 0 1 6.5 6h10A1.5 1.5 0 0 1 18 7.5z'/%3E%3C/svg%3E" rel="icon"/>
-<script src="/js/runtime-guard.js?v=1.8.0"></script>
-<script src="/js/document-0.js?v=1.8.0"></script>
+<script src="/js/runtime-guard.js?v=1.8.1"></script>
+<script src="/js/document-0.js?v=1.8.1"></script>
 <!-- Каркас: base → layout → chat → calls → утилиты/адаптив. Всё оформление — в theme.css -->
-<link href="/css/base.css?v=1.8.0" rel="stylesheet"/>
-<link href="/css/layout.css?v=1.8.0" rel="stylesheet"/>
-<link href="/css/chat.css?v=1.8.0" rel="stylesheet"/>
-<link href="/css/calls-responsive.css?v=1.8.0" rel="stylesheet"/>
-<link href="/css/style.css?v=1.8.0" rel="stylesheet"/>
-<link href="/css/theme.css?v=1.8.0" rel="stylesheet"/>
+<link href="/css/base.css?v=1.8.1" rel="stylesheet"/>
+<link href="/css/layout.css?v=1.8.1" rel="stylesheet"/>
+<link href="/css/chat.css?v=1.8.1" rel="stylesheet"/>
+<link href="/css/calls-responsive.css?v=1.8.1" rel="stylesheet"/>
+<link href="/css/style.css?v=1.8.1" rel="stylesheet"/>
+<link href="/css/theme.css?v=1.8.1" rel="stylesheet"/>
 </head>
 <body>
 <noscript>
@@ -171,9 +171,14 @@
 <div class="me-nick" id="my-nick">—</div>
 <div class="me-id" id="my-id">—</div>
 </div>
+<div class="me-actions">
+<button aria-label="Настройки" class="icon-btn settings-btn" id="btn-settings" title="Настройки" type="button">
+<svg aria-hidden="true" fill="none" height="20" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="20"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 00.34 1.88l.06.06a2 2 0 01-2.83 2.83l-.06-.06A1.7 1.7 0 0015 19.4a1.7 1.7 0 00-1 .6 1.7 1.7 0 00-.4 1.1V21a2 2 0 01-4 0v-.09A1.7 1.7 0 008.6 19.4a1.7 1.7 0 00-1.88.34l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.7 1.7 0 004.6 15a1.7 1.7 0 00-.6-1 1.7 1.7 0 00-1.1-.4H3a2 2 0 010-4h.09A1.7 1.7 0 004.6 8.6a1.7 1.7 0 00-.34-1.88L4.2 6.66a2 2 0 012.83-2.83l.06.06A1.7 1.7 0 009 4.6a1.7 1.7 0 001-.6 1.7 1.7 0 00.4-1.1V3a2 2 0 014 0v.09A1.7 1.7 0 0015.4 4.6a1.7 1.7 0 001.88-.34l.06-.06a2 2 0 012.83 2.83l-.06.06A1.7 1.7 0 0019.4 9c.1.38.3.72.6 1 .3.25.68.4 1.1.4h.09a2 2 0 010 4h-.09c-.42 0-.8.15-1.1.4-.3.28-.5.62-.6 1z"></path></svg>
+</button>
 <button aria-label="Выйти" class="icon-btn logout-btn" data-action="6" id="btn-logout" title="Выйти" type="button">
 <svg aria-hidden="true" fill="none" height="20" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="20"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"></path></svg>
 </button>
+</div>
 </div>
 </div>
 </div>
@@ -366,6 +371,34 @@
 </div>
 </div>
 </div>
+<!-- Settings -->
+<div aria-labelledby="settings-title" aria-modal="true" class="modal-overlay" id="settings-modal" role="dialog" style="display:none">
+<div class="modal-box settings-modal-box">
+<button aria-label="Закрыть настройки" class="modal-close-btn" id="btn-close-settings" type="button">
+<svg aria-hidden="true" fill="none" height="18" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24" width="18"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+</button>
+<div class="settings-heading">
+<div aria-hidden="true" class="settings-heading-icon"><svg fill="none" height="22" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="22"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 00.34 1.88l.06.06a2 2 0 01-2.83 2.83l-.06-.06A1.7 1.7 0 0015 19.4a1.7 1.7 0 00-1 .6 1.7 1.7 0 00-.4 1.1V21a2 2 0 01-4 0v-.09A1.7 1.7 0 008.6 19.4a1.7 1.7 0 00-1.88.34l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.7 1.7 0 004.6 15a1.7 1.7 0 00-.6-1 1.7 1.7 0 00-1.1-.4H3a2 2 0 010-4h.09A1.7 1.7 0 004.6 8.6a1.7 1.7 0 00-.34-1.88L4.2 6.66a2 2 0 012.83-2.83l.06.06A1.7 1.7 0 009 4.6a1.7 1.7 0 001-.6 1.7 1.7 0 00.4-1.1V3a2 2 0 014 0v.09A1.7 1.7 0 0015.4 4.6a1.7 1.7 0 001.88-.34l.06-.06a2 2 0 012.83 2.83l-.06.06A1.7 1.7 0 0019.4 9c.1.38.3.72.6 1 .3.25.68.4 1.1.4h.09a2 2 0 010 4h-.09c-.42 0-.8.15-1.1.4-.3.28-.5.62-.6 1z"></path></svg></div>
+<div><h2 class="modal-title" id="settings-title">Настройки</h2><p class="settings-sub">Выберите оформление приложения</p></div>
+</div>
+<fieldset class="theme-picker">
+<legend>Тема</legend>
+<label class="theme-option" data-theme-option="gray">
+<input name="app-theme" type="radio" value="gray"/>
+<span aria-hidden="true" class="theme-preview preview-gray"><i></i><b></b><em></em></span>
+<span class="theme-option-copy"><strong>Серая</strong><small>Знакомая тёмно-серая тема в стиле Discord</small></span>
+<span aria-hidden="true" class="theme-check"><svg fill="none" height="16" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" viewbox="0 0 24 24" width="16"><path d="m5 12 4 4L19 6"></path></svg></span>
+</label>
+<label class="theme-option" data-theme-option="white">
+<input name="app-theme" type="radio" value="white"/>
+<span aria-hidden="true" class="theme-preview preview-white"><i></i><b></b><em></em></span>
+<span class="theme-option-copy"><strong>Белая</strong><small>Светлая и чистая тема для работы днём</small></span>
+<span aria-hidden="true" class="theme-check"><svg fill="none" height="16" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" viewbox="0 0 24 24" width="16"><path d="m5 12 4 4L19 6"></path></svg></span>
+</label>
+</fieldset>
+<p aria-live="polite" class="settings-status" id="settings-status">Тема сохраняется на этом устройстве</p>
+</div>
+</div>
 <!-- Blocked Users -->
 <div aria-labelledby="blocked-users-title" aria-modal="true" class="modal-overlay" id="blocked-users-modal" role="dialog" style="display:none">
 <div class="modal-box">
@@ -498,14 +531,15 @@
      Не требует правок chat-ui.js: следит за открытием чата и прячет сайдбар на ≤640px,
      закрывает панель участников по тапу на щиток.
      ═════════════════════════════════════════════════════════════════════════ -->
-<script src="/js/document-1.js?v=1.8.0"></script>
+<script src="/js/document-1.js?v=1.8.1"></script>
 <script src="/socket.io/socket.io.js"></script>
 
-<script defer="" src="/js/core.js?v=1.8.0"></script>
-<script defer="" src="/js/auth-ui.js?v=1.8.0"></script>
-<script defer="" src="/js/chat-ui.js?v=1.8.0"></script>
-<script defer="" src="/js/calls.js?v=1.8.0"></script>
-<script defer="" src="/js/document-actions.js?v=1.8.0"></script>
-<script defer="" src="/js/accessibility.js?v=1.8.0"></script>
+<script defer="" src="/js/core.js?v=1.8.1"></script>
+<script defer="" src="/js/auth-ui.js?v=1.8.1"></script>
+<script defer="" src="/js/chat-ui.js?v=1.8.1"></script>
+<script defer="" src="/js/calls.js?v=1.8.1"></script>
+<script defer="" src="/js/document-actions.js?v=1.8.1"></script>
+<script defer="" src="/js/settings.js?v=1.8.1"></script>
+<script defer="" src="/js/accessibility.js?v=1.8.1"></script>
 </body>
 </html>
