@@ -1608,6 +1608,52 @@ function tryPlayCallMedia(element) {
   }
 }
 
+function createScreenFullscreenButton(tile) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'call-screen-fullscreen';
+  button.innerHTML = '<svg aria-hidden="true" fill="none" height="20" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="20"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>';
+
+  const sync = () => {
+    const expanded = document.fullscreenElement === tile;
+    button.classList.toggle('is-exit', expanded);
+    button.querySelector('path')?.setAttribute('d', expanded
+      ? 'M8 8H3V3M16 8h5V3M8 16H3v5M16 16h5v5'
+      : 'M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3');
+    button.setAttribute('aria-label', expanded
+      ? 'Выйти из полноэкранного режима'
+      : 'Открыть демонстрацию на весь экран');
+    button.title = button.getAttribute('aria-label');
+  };
+
+  button.addEventListener('click', async event => {
+    event.stopPropagation();
+
+    try {
+      if (document.fullscreenElement === tile) {
+        await document.exitFullscreen();
+      } else {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        await tile.requestFullscreen();
+      }
+    } catch (_) {
+      showTransientNotice('Не удалось изменить полноэкранный режим');
+    }
+  });
+
+  button._syncFullscreen = sync;
+  sync();
+  return button;
+}
+
+function syncScreenFullscreenButtons() {
+  for (const button of document.querySelectorAll('.call-screen-fullscreen')) {
+    button._syncFullscreen?.();
+  }
+}
+
+document.addEventListener('fullscreenchange', syncScreenFullscreenButtons);
+
 function updateCallTile(tile, entry) {
   const {
     nick,
@@ -1667,6 +1713,19 @@ function updateCallTile(tile, entry) {
     } catch (_) {}
 
     video.remove();
+  }
+
+  let fullscreenButton = tile.querySelector('.call-screen-fullscreen');
+
+  if (hasVideo && screenOn) {
+    if (!fullscreenButton) {
+      fullscreenButton = createScreenFullscreenButton(tile);
+      tile.appendChild(fullscreenButton);
+    }
+    fullscreenButton._syncFullscreen?.();
+  } else if (fullscreenButton) {
+    if (document.fullscreenElement === tile) document.exitFullscreen().catch(() => {});
+    fullscreenButton.remove();
   }
 
   const hasAudio = !isLocal &&

@@ -16,6 +16,10 @@ test('Electron uses isolated preload and a local server process', () => {
   assert.match(main, /frame: true/);
   assert.match(main, /setPermissionRequestHandler/);
   assert.match(main, /setDisplayMediaRequestHandler/);
+  assert.match(main, /request\.securityOrigin/);
+  assert.match(main, /callback\(null\)/);
+  assert.doesNotMatch(main, /request\.webContents/);
+  assert.doesNotMatch(main, /callback\(\{\}\)/);
   assert.match(main, /mainWindow\.on\('close'/);
 });
 test('Electron package commands and desktop docs exist', () => {

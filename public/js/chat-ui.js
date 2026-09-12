@@ -3189,6 +3189,11 @@ async function sendComposer(group) {
   }
 
   attempt.inFlight = true;
+
+  // Чат очищается сразу после нажатия Enter. Повторные быстрые нажатия
+  // больше не оставляют уже отправленный текст в поле ввода.
+  if (input.value === raw) input.value = '';
+  if (composerDrafts.get(key) === raw) composerDrafts.delete(key);
   refreshComposer(group);
 
   const ownsAttempt = () =>
@@ -3229,8 +3234,15 @@ async function sendComposer(group) {
       input.value = '';
     }
   } catch (error) {
-    if (ownsAttempt() && !uiSilentError(error)) {
-      showTransientNotice(uiSendError(error));
+    if (ownsAttempt()) {
+      if (error?.reason === 'rate_limited') {
+        retryMessages.delete(key);
+      } else if (!input.value && raw) {
+        input.value = raw;
+        composerDrafts.set(key, raw);
+      }
+
+      if (!uiSilentError(error)) showTransientNotice(uiSendError(error));
     }
   } finally {
     attempt.inFlight = false;
