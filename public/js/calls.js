@@ -1116,6 +1116,38 @@ function broadcastMediaState() {
   Object.keys(callState.peers).forEach(sendMediaState);
 }
 
+/*
+ * Chromium/Electron иногда создаёт живой local track, но первый RTP-пакет
+ * начинает уходить только после следующего renderer-события. Прогреваем
+ * отправителей явно, не меняя состояние кнопки микрофона.
+ */
+async function primeOutgoingAudio() {
+  if (!callState.active || !callState.localStream) return;
+
+  const track = callState.localStream.getAudioTracks().find(isLiveTrack);
+  if (!track) return;
+
+  track.enabled = !!callState.micOn;
+
+  await Promise.allSettled(Object.values(callState.peers).map(async peer => {
+    const sender = peer.pc.getSenders().find(item =>
+      item.track?.kind === 'audio',
+    );
+
+    if (sender && sender.track !== track) {
+      await sender.replaceTrack(track);
+    } else if (!sender) {
+      peer.pc.addTrack(track, callState.localStream);
+      requestPeerNegotiation(
+        Object.keys(callState.peers).find(id => callState.peers[id] === peer),
+        peer,
+      );
+    }
+
+    await applyAudioBitrate(peer.pc);
+  }));
+}
+
 function applyRemoteMediaState(peerId, data) {
   const peer = callState.peers[peerId];
 
@@ -2450,6 +2482,7 @@ function createPeerConnection(peerId) {
       sendMediaState(peerId);
 
       applyAudioBitrate(pc).catch(() => {});
+      primeOutgoingAudio().catch(() => {});
       scheduleCallGrid();
       return;
     }
@@ -3597,6 +3630,9 @@ function unlockCallAudio() {
   if (audioCtx?.state === 'suspended') {
     audioCtx.resume().catch(() => {});
   }
+
+  // Первый pointerdown/keydown в Electron разблокирует и исходящий RTP.
+  primeOutgoingAudio().catch(() => {});
 
   const grid = $('call-video-grid');
   if (!grid) return;
