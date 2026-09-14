@@ -64,6 +64,8 @@ let screenShareStopping = false;
 let screenShareSequence = 0;
 
 let audioCtx = null;
+let micRecoveryTimer = null;
+let micRecoveryInFlight = false;
 
 callState.peers ||= Object.create(null);
 state.dmVoiceCalls ||= Object.create(null);
@@ -109,6 +111,11 @@ function stopStream(stream) {
 
 function isLiveTrack(track) {
   return !!track && track.readyState === 'live';
+}
+
+function clearMicRecoveryTimer() {
+  clearTimeout(micRecoveryTimer);
+  micRecoveryTimer = null;
 }
 
 function localCameraTrack() {
@@ -376,6 +383,91 @@ async function acquireLocalStream(video, { signal } = {}) {
   return stream;
 }
 
+async function recoverLocalMicrophone(session) {
+  if (!currentSessionMatches(session) || micRecoveryInFlight) return;
+
+  micRecoveryInFlight = true;
+  clearMicRecoveryTimer();
+
+  let replacementStream = null;
+
+  try {
+    replacementStream = await navigator.mediaDevices.getUserMedia({
+      audio: RAW_AUDIO_CONSTRAINTS,
+      video: false,
+    });
+
+    if (!currentSessionMatches(session)) return;
+
+    const replacement = replacementStream.getAudioTracks().find(isLiveTrack);
+    if (!replacement) throw new Error('No live replacement microphone track');
+
+    replacement.enabled = !!callState.micOn;
+
+    const oldTracks = callState.localStream?.getAudioTracks() || [];
+    for (const oldTrack of oldTracks) {
+      try {
+        callState.localStream.removeTrack(oldTrack);
+        oldTrack.stop();
+      } catch (_) {}
+    }
+
+    callState.localStream.addTrack(replacement);
+    watchLocalMicrophone(replacement, session);
+
+    const updates = Object.entries(callState.peers).map(async ([peerId, peer]) => {
+      const sender = peer.pc.getSenders().find(item =>
+        item.track?.kind === 'audio',
+      );
+
+      if (sender) {
+        await sender.replaceTrack(replacement);
+      } else {
+        peer.pc.addTrack(replacement, callState.localStream);
+        requestPeerNegotiation(peerId, peer);
+      }
+    });
+
+    await Promise.allSettled(updates);
+
+    if (!currentSessionMatches(session)) return;
+
+    replacementStream = null;
+    refreshCallMediaUI();
+    broadcastMediaState();
+    showTransientNotice('Микрофон восстановлен');
+  } catch (error) {
+    if (currentSessionMatches(session)) {
+      console.warn('[call] microphone recovery failed', error);
+      callState.micOn = false;
+      refreshCallMediaUI();
+      broadcastMediaState();
+      showTransientNotice('Микрофон отключился. Переподключите устройство');
+    }
+  } finally {
+    stopStream(replacementStream);
+    micRecoveryInFlight = false;
+  }
+}
+
+function scheduleMicrophoneRecovery(session, delay = 1500) {
+  if (!currentSessionMatches(session) || micRecoveryInFlight) return;
+
+  clearMicRecoveryTimer();
+  micRecoveryTimer = setTimeout(() => {
+    micRecoveryTimer = null;
+    recoverLocalMicrophone(session);
+  }, delay);
+}
+
+function watchLocalMicrophone(track, session) {
+  if (!track) return;
+
+  track.onmute = () => scheduleMicrophoneRecovery(session);
+  track.onunmute = clearMicRecoveryTimer;
+  track.onended = () => scheduleMicrophoneRecovery(session, 0);
+}
+
 function beginMediaOperation(kind, incomingCallId = null) {
   if (pendingMediaOperation) return null;
 
@@ -472,18 +564,15 @@ function beginCallSession({
   const session = captureCallSession();
 
   for (const track of stream.getTracks()) {
+    if (track.kind === 'audio') {
+      watchLocalMicrophone(track, session);
+      continue;
+    }
+
     track.addEventListener('ended', () => {
       if (!currentSessionMatches(session)) return;
 
-      if (track.kind === 'audio') {
-        callState.micOn = stream.getAudioTracks().some(isLiveTrack);
-        if (!callState.micOn) {
-          showTransientNotice('Микрофон отключён или недоступен');
-        }
-      } else {
-        callState.camOn = !!localCameraTrack() && callState.camOn;
-      }
-
+      callState.camOn = !!localCameraTrack() && callState.camOn;
       refreshCallMediaUI();
       broadcastMediaState();
     });
@@ -799,6 +888,8 @@ function closeCallOverlay() {
   screenShareSequence++;
 
   cancelMediaOperation();
+  clearMicRecoveryTimer();
+  micRecoveryInFlight = false;
   clearCallAckTimers();
 
   clearTimeout(callReconnectTimer);

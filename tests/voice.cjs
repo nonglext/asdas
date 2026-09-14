@@ -175,6 +175,13 @@ test('Client: voice-only remote streams create an audible autoplay sink',()=>{
  assert.match(source,/audio\.muted\s*=\s*false/);
  assert.match(source,/audio\.play\?\.\(\)\.catch/);
 });
+test('Client: a muted or ended local microphone is reacquired and replaces the sender track',()=>{
+ const source=fs.readFileSync(path.join(root,'public/js/calls.js'),'utf8');
+ assert.match(source,/track\.onmute\s*=\s*\(\)\s*=>\s*scheduleMicrophoneRecovery/);
+ assert.match(source,/track\.onended\s*=\s*\(\)\s*=>\s*scheduleMicrophoneRecovery/);
+ assert.match(source,/sender\.replaceTrack\(replacement\)/);
+ assert.match(source,/showTransientNotice\('Микрофон восстановлен'\)/);
+});
 test('Client: audio sink is removed when a peer stream disappears',()=>{
  const source=fs.readFileSync(path.join(root,'public/js/calls.js'),'utf8');
  assert.match(source,/audio\.pause\?\.\(\); audio\.srcObject = null/);

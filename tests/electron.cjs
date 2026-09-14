@@ -15,12 +15,18 @@ test('Electron uses isolated preload and a local server process', () => {
   assert.doesNotMatch(preload, /electron-titlebar/);
   assert.match(main, /frame: true/);
   assert.match(main, /setPermissionRequestHandler/);
+  assert.match(main, /askForMediaAccess/);
+  assert.match(main, /autoplay-policy/);
+  assert.match(main, /backgroundThrottling: false/);
   assert.match(main, /setDisplayMediaRequestHandler/);
   assert.match(main, /request\.securityOrigin/);
   assert.match(main, /callback\(null\)/);
   assert.doesNotMatch(main, /request\.webContents/);
   assert.doesNotMatch(main, /callback\(\{\}\)/);
   assert.match(main, /mainWindow\.on\('close'/);
+  assert.match(main, /event\.preventDefault\(\)/);
+  assert.match(main, /mainWindow\.hide\(\)/);
+  assert.match(main, /createFromDataURL/);
 });
 test('Electron package commands and desktop docs exist', () => {
   const pkg = JSON.parse(read('package.json'));
