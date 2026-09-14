@@ -3,6 +3,16 @@
 const THEME_STORAGE_KEY = 'chatapp_theme';
 const APP_THEMES = new Set(['gray', 'white']);
 
+function formatDb(value) { return `${String(value).replace('-', '−')} dB`; }
+function syncVoiceThresholdControl() {
+  const input = document.getElementById('voice-threshold');
+  const output = document.getElementById('voice-threshold-value');
+  if (!input || !output) return;
+  const value = window.getVoiceSpeakingThresholdDb?.() ?? -48;
+  input.value = String(value);
+  output.textContent = formatDb(value);
+}
+
 function currentAppTheme() {
   return APP_THEMES.has(document.documentElement.dataset.theme)
     ? document.documentElement.dataset.theme
@@ -54,6 +64,7 @@ function openSettings() {
     if (avatar && typeof renderAv === 'function') renderAv(avatar, user.nickname || user.id, user.avatar || null);
   }
   syncThemeControls();
+  syncVoiceThresholdControl();
   const status = document.getElementById('settings-status');
   if (status) status.textContent = 'Тема сохраняется на этом устройстве';
   setDisplay('settings-modal', 'flex');
@@ -81,6 +92,14 @@ document.querySelectorAll('input[name="app-theme"]').forEach(input => {
 
 applyAppTheme(currentAppTheme());
 
+on('voice-threshold', 'input', event => {
+  const value = window.saveVoiceSpeakingThresholdDb?.(event.target.value) ?? Number(event.target.value);
+  const output = document.getElementById('voice-threshold-value');
+  const status = document.getElementById('voice-settings-status');
+  if (output) output.textContent = formatDb(value);
+  if (status) status.textContent = 'Порог сохранён на этом устройстве';
+});
+
 
 document.querySelectorAll('[data-settings-section]').forEach(button => {
   button.addEventListener('click', () => {
@@ -89,9 +108,9 @@ document.querySelectorAll('[data-settings-section]').forEach(button => {
     document.querySelectorAll('[data-settings-panel]').forEach(panel => panel.classList.toggle('active', panel.dataset.settingsPanel === section));
     const title = document.getElementById('settings-title');
     const crumb = document.getElementById('settings-current-section');
-    const labels = { account: 'Информация об аккаунте', security: 'Пароль и безопасность', privacy: 'Конфиденциальность', notifications: 'Уведомления', appearance: 'Темы' };
+    const labels = { account: 'Информация об аккаунте', security: 'Пароль и безопасность', privacy: 'Конфиденциальность', notifications: 'Уведомления', voice: 'Голос', appearance: 'Темы' };
     if (title) title.textContent = labels[section] || 'Настройки';
-    if (crumb) crumb.textContent = section === 'appearance' ? 'Оформление' : section === 'account' || section === 'security' ? 'Аккаунт' : labels[section] || 'Настройки';
+    if (crumb) crumb.textContent = section === 'appearance' ? 'Оформление' : section === 'voice' ? 'Голос' : section === 'account' || section === 'security' ? 'Аккаунт' : labels[section] || 'Настройки';
   });
 });
 

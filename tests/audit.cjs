@@ -26,3 +26,13 @@ test('package and VERSION agree', () => {
   assert.equal(pkg.version, fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim());
   assert.equal(pkg.version, '1.10.6');
 });
+
+test('voice threshold setting is wired to the speaking indicator', () => {
+  const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+  const settings = fs.readFileSync(path.join(root, 'public/js/settings.js'), 'utf8');
+  const calls = fs.readFileSync(path.join(root, 'public/js/calls.js'), 'utf8');
+  assert.match(html, /data-settings-section=\"voice\"/);
+  assert.match(html, /id=\"voice-threshold\"/);
+  assert.match(settings, /saveVoiceSpeakingThresholdDb/);
+  assert.match(calls, /getVoiceSpeakingThresholdDb/);
+});

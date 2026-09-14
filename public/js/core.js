@@ -11,6 +11,26 @@ const TOKEN_STORAGE_KEY = 'chatapp_token';
 const USER_ID_STORAGE_KEY = 'chatapp_id';
 const PROFILE_STORAGE_KEY = 'chatapp_profile';
 const SOUNDS_STORAGE_KEY = 'chatapp_sounds';
+const VOICE_THRESHOLD_STORAGE_KEY = 'chatapp_voice_threshold_db';
+const DEFAULT_VOICE_THRESHOLD_DB = -48;
+
+function getVoiceSpeakingThresholdDb() {
+  try {
+    const value = Number(localStorage.getItem(VOICE_THRESHOLD_STORAGE_KEY));
+    return Number.isFinite(value) ? Math.min(-10, Math.max(-60, value)) : DEFAULT_VOICE_THRESHOLD_DB;
+  } catch (_) {
+    return DEFAULT_VOICE_THRESHOLD_DB;
+  }
+}
+
+function saveVoiceSpeakingThresholdDb(value) {
+  const next = Math.min(-10, Math.max(-60, Number(value) || DEFAULT_VOICE_THRESHOLD_DB));
+  try { localStorage.setItem(VOICE_THRESHOLD_STORAGE_KEY, String(next)); } catch (_) {}
+  return next;
+}
+
+window.getVoiceSpeakingThresholdDb = getVoiceSpeakingThresholdDb;
+window.saveVoiceSpeakingThresholdDb = saveVoiceSpeakingThresholdDb;
 
 const MAX_MESSAGE_LENGTH = 4000;
 const MAX_AVATAR_SIZE = 10 * 1024 * 1024;

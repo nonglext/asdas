@@ -1220,7 +1220,16 @@ h1, h2, h3 { text-wrap: balance; }
 .settings-info-row button:hover { background: var(--accent); color: oklch(99% .004 277); }
 .settings-divider { height: 1px; margin: 36px 0 32px; background: var(--border-subtle); }
 .settings-placeholder { margin-top: 24px; padding: 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg1); color: var(--text3); }
-.settings-section .theme-picker { max-width: 600px; }
+ .settings-section .theme-picker { max-width: 600px; }
+.voice-threshold-control { max-width: 640px; padding: 20px 18px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg1); box-shadow: var(--shadow-low); }
+.voice-threshold-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.voice-threshold-head strong { display: block; color: var(--text-h); font-size: .92rem; }
+.voice-threshold-head small { display: block; max-width: 52ch; margin-top: 5px; color: var(--text3); font-size: .78rem; line-height: 1.45; }
+.voice-threshold-head output { flex: 0 0 auto; min-width: 62px; padding: 6px 8px; border-radius: 7px; background: var(--selected); color: var(--text-brand); font-size: .8rem; font-variant-numeric: tabular-nums; font-weight: 800; text-align: center; }
+#voice-threshold { width: 100%; margin: 24px 0 8px; accent-color: var(--accent); cursor: pointer; }
+.voice-threshold-scale { display: flex; justify-content: space-between; gap: 12px; color: var(--text4); font-size: .7rem; }
+.voice-threshold-scale span:last-child { text-align: right; }
+@media (max-width: 620px) { .voice-threshold-head { flex-direction: column; gap: 12px; } .voice-threshold-head output { align-self: flex-start; } }
 @keyframes settings-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 760px) {
   .settings-shell { grid-template-columns: 1fr; width: calc(100vw - 20px); height: calc(100vh - 20px); border-radius: 12px; }

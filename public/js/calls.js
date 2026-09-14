@@ -28,6 +28,7 @@ const AUDIO_MAX_BITRATE = 128_000;
 
 const SPEAKING_THRESHOLD_ON = 0.06;
 const SPEAKING_THRESHOLD_OFF = 0.035;
+const DEFAULT_SPEAKING_THRESHOLD_DB = -48;
 
 const CALL_VIDEO_CONSTRAINTS = Object.freeze({
   width: { ideal: 1280 },
@@ -2076,12 +2077,20 @@ function startSpeakingMonitor(id, stream) {
     let speaking = false;
 
     if (!muted && track.readyState === 'live' && !document.hidden) {
+      // Оставляем frequency API для совместимости старых WebAudio-движков.
       analyser.getByteFrequencyData(data);
+      analyser.getByteTimeDomainData(data);
 
-      let sum = 0;
-      for (const value of data) sum += value;
-      const averageEnergy = sum / data.length;
-      speaking = averageEnergy >= 12;
+      let sumSquares = 0;
+      for (const value of data) {
+        const normalized = (value - 128) / 128;
+        sumSquares += normalized * normalized;
+      }
+      const rms = Math.sqrt(sumSquares / data.length);
+      const db = 20 * Math.log10(Math.max(rms, 0.00001));
+      const threshold = window.getVoiceSpeakingThresholdDb?.() ?? DEFAULT_SPEAKING_THRESHOLD_DB;
+      const adjustedThreshold = speaking ? threshold - 3 : threshold;
+      speaking = db >= adjustedThreshold;
     }
 
     if (speaking !== wasSpeaking) {
