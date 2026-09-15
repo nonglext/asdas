@@ -22,6 +22,7 @@
 <link href="/css/theme.css?v=1.10.6" rel="stylesheet"/>
 </head>
 <body>
+<a class="skip-link" href="#chat-main">Перейти к чату</a>
 <noscript>
 <div style="padding:24px;text-align:center;font-family:system-ui,sans-serif;color:#332f3d;background:#f4f2f8">
     Для работы ChatApp нужен включённый JavaScript.
@@ -183,7 +184,7 @@
 </div>
 </div>
 </aside>
-<main class="chat-main">
+<main class="chat-main" id="chat-main" tabindex="-1">
 <!-- Плейсхолдер -->
 <div class="chat-empty" id="chat-placeholder">
 <div aria-hidden="true" class="chat-empty-icon">

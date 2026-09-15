@@ -10,7 +10,7 @@ const crypto = require('node:crypto');
 
 const { Server } = require('socket.io');
 const { Client: PgClient } = require('pg');
-const { Sequelize, DataTypes, Op, QueryTypes } = require('sequelize');
+const { Op, QueryTypes } = require('sequelize');
 
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
@@ -19,236 +19,44 @@ const multer = require('multer');
 const sharp = require('sharp');
 const helmet = require('helmet');
 const cors = require('cors');
-const winston = require('winston');
 const proxyaddr = require('proxy-addr');
 
 // -----------------------------------------------------------------------------
 // Configuration
 // -----------------------------------------------------------------------------
 
-const production = process.env.NODE_ENV === 'production';
-
-const logger = winston.createLogger({
-  level: process.env.LOG_LEVEL || 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.errors({ stack: true }),
-    winston.format.json()
-  ),
-  transports: [new winston.transports.Console()]
-});
-
-function fail(message) {
-  throw new Error(message);
-}
-
-function intEnv(name, fallback, min, max) {
-  const raw = process.env[name];
-  const value = raw === undefined ? fallback : Number(raw);
-
-  if (
-    raw === '' ||
-    !Number.isSafeInteger(value) ||
-    value < min ||
-    value > max
-  ) {
-    fail(`Invalid ${name}`);
-  }
-
-  return value;
-}
-
-function boolEnv(name, fallback = false) {
-  const raw = process.env[name];
-
-  if (raw === undefined) return fallback;
-  if (raw === 'true') return true;
-  if (raw === 'false') return false;
-
-  fail(`${name} must be true or false`);
-}
-
-const PORT = intEnv('PORT', 3000, 1, 65535);
-const HOST = process.env.HOST || '0.0.0.0';
-
-const JWT_SECRET =
-  process.env.JWT_SECRET ||
-  (production ? '' : crypto.randomBytes(48).toString('base64url'));
-
-if (
-  Buffer.byteLength(JWT_SECRET) < 32 ||
-  JWT_SECRET === 'changethissecretinproduction'
-) {
-  fail('Set JWT_SECRET to a random secret of at least 32 bytes');
-}
-
-if (!process.env.JWT_SECRET) {
-  logger.warn('Temporary JWT secret: restarting invalidates all sessions');
-}
-
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
-
-const tokenProbe = jwt.decode(
-  jwt.sign({ test: true }, JWT_SECRET, {
-    algorithm: 'HS256',
-    expiresIn: JWT_EXPIRES_IN
-  })
-);
-
-if (
-  !tokenProbe ||
-  !Number.isFinite(tokenProbe.exp) ||
-  tokenProbe.exp <= Math.floor(Date.now() / 1000)
-) {
-  fail('JWT_EXPIRES_IN must specify a positive lifetime, for example 7d');
-}
-
-const origins = [
-  ...new Set(
-    (
-      process.env.CLIENT_URL ||
-      (production
-        ? ''
-        : `http://localhost:${PORT},http://127.0.0.1:${PORT}`)
-    )
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean)
-  )
-];
-
-if (!origins.length) {
-  fail('Set CLIENT_URL to exact frontend origins');
-}
-
-for (const origin of origins) {
-  let parsed;
-
-  try {
-    parsed = new URL(origin);
-  } catch {
-    fail(`Invalid CLIENT_URL origin: ${origin}`);
-  }
-
-  if (
-    !['http:', 'https:'].includes(parsed.protocol) ||
-    parsed.origin !== origin
-  ) {
-    fail('CLIENT_URL must contain exact HTTP(S) origins without trailing slash');
-  }
-
-  if (production && parsed.protocol !== 'https:') {
-    fail('Production CLIENT_URL must use HTTPS');
-  }
-}
-
-const originSet = new Set(origins);
-
-const DATABASE_URL =
-  process.env.DATABASE_URL ||
-  (production
-    ? ''
-    : 'postgresql://user:password@localhost:5432/chatapp');
-
-if (!DATABASE_URL) fail('Set DATABASE_URL');
-
-const parsedDatabaseUrl = new URL(DATABASE_URL);
-
-if (!['postgres:', 'postgresql:'].includes(parsedDatabaseUrl.protocol)) {
-  fail('DATABASE_URL must be a PostgreSQL URL');
-}
-
-// SSL is configured explicitly, not guessed from a provider hostname.
-// Avoid connection-string SSL options overriding certificate verification.
-for (const key of parsedDatabaseUrl.searchParams.keys()) {
-  if (/^ssl/i.test(key)) {
-    fail(
-      'Remove SSL parameters from DATABASE_URL; use DATABASE_SSL and DATABASE_CA'
-    );
-  }
-}
-
-const DATABASE_SSL = boolEnv('DATABASE_SSL', production);
-
-const pgSsl = DATABASE_SSL
-  ? {
-      rejectUnauthorized: true,
-      ...(process.env.DATABASE_CA
-        ? { ca: process.env.DATABASE_CA.replace(/\\n/g, '\n') }
-        : {})
-    }
-  : undefined;
-
-const PUBLIC_DIR = path.resolve(__dirname, 'public');
-const UPLOAD_DIR = path.resolve(
-  process.env.UPLOAD_DIR || path.join(__dirname, 'uploads')
-);
-
-function inside(parent, child) {
-  const relative = path.relative(parent, child);
-
-  return (
-    relative === '' ||
-    (
-      relative !== '..' &&
-      !relative.startsWith(`..${path.sep}`) &&
-      !path.isAbsolute(relative)
-    )
-  );
-}
-
-function realOrResolved(p) {
-  return fs.existsSync(p) ? fs.realpathSync(p) : path.resolve(p);
-}
-
-fs.mkdirSync(UPLOAD_DIR, { recursive: true, mode: 0o700 });
-
-if (
-  inside(realOrResolved(PUBLIC_DIR), fs.realpathSync(UPLOAD_DIR)) ||
-  inside(fs.realpathSync(UPLOAD_DIR), realOrResolved(PUBLIC_DIR))
-) {
-  fail('UPLOAD_DIR and public must be separate, non-nested directories');
-}
-
-const TMP_DIR = path.join(UPLOAD_DIR, '.tmp');
-fs.mkdirSync(TMP_DIR, { recursive: true, mode: 0o700 });
-
-if (!inside(fs.realpathSync(UPLOAD_DIR), fs.realpathSync(TMP_DIR))) {
-  fail('Upload temporary directory must not point outside UPLOAD_DIR');
-}
-
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-const MAX_FILE_BYTES = intEnv(
-  'MAX_FILE_BYTES',
-  50 * 1024 * 1024,
+const {
+  production,
+  logger,
+  fail,
+  intEnv,
+  boolEnv,
+  PORT,
+  HOST,
+  JWT_SECRET,
+  JWT_EXPIRES_IN,
+  origins,
+  originSet,
+  DATABASE_URL,
+  pgSsl,
+  PUBLIC_DIR,
+  UPLOAD_DIR,
+  TMP_DIR,
   MAX_IMAGE_BYTES,
-  1024 * 1024 * 1024
-);
-const MAX_USER_MEDIA_BYTES = intEnv(
-  'MAX_USER_MEDIA_BYTES',
-  500 * 1024 * 1024,
-  MAX_IMAGE_BYTES,
-  10 * 1024 ** 3
-);
-
-const MIN_FREE_DISK_BYTES = 128 * 1024 * 1024;
-const MAX_PENDING_UPLOADS = 20;
-const PENDING_TTL = 24 * 3600_000;
-
-const MAX_FRIENDS = 500;
-const MAX_REQUESTS = 200;
-const MAX_BLOCKED = 200;
-const MAX_MEMBERS = 50;
-const MAX_GROUPS = 100;
-
-const MAX_QUEUE = 128;
-const MAX_QUEUE_AGE = 10_000;
-const MAX_SOCKET_CONNECTIONS = intEnv(
-  'MAX_SOCKET_CONNECTIONS',
-  2000,
-  8,
-  100_000
-);
+  MAX_FILE_BYTES,
+  MAX_USER_MEDIA_BYTES,
+  MIN_FREE_DISK_BYTES,
+  MAX_PENDING_UPLOADS,
+  PENDING_TTL,
+  MAX_FRIENDS,
+  MAX_REQUESTS,
+  MAX_BLOCKED,
+  MAX_MEMBERS,
+  MAX_GROUPS,
+  MAX_QUEUE,
+  MAX_QUEUE_AGE,
+  MAX_SOCKET_CONNECTIONS
+} = require('./server/config');
 
 const USER_RE = /^[a-z0-9_]{3,30}$/;
 
@@ -357,220 +165,15 @@ function assertRequestId(data) {
 // Database
 // -----------------------------------------------------------------------------
 
-const sequelize = new Sequelize(DATABASE_URL, {
-  dialect: 'postgres',
-  logging: false,
-  pool: {
-    max: 5,
-    min: 0,
-    acquire: 20_000,
-    idle: 10_000
-  },
-  retry: { max: 0 },
-  dialectOptions: {
-    statement_timeout: 15_000,
-    idle_in_transaction_session_timeout: 15_000,
-    ...(pgSsl ? { ssl: pgSsl } : {})
-  }
-});
-
-const common = {
-  timestamps: true,
-  underscored: true
-};
-
-const User = sequelize.define(
-  'User',
-  {
-    id: {
-      type: DataTypes.STRING,
-      primaryKey: true
-    },
-    nickname: {
-      type: DataTypes.STRING(50),
-      allowNull: false
-    },
-    passwordHash: {
-      type: DataTypes.STRING,
-      allowNull: false
-    },
-    tokenVersion: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-      defaultValue: 0
-    },
-    avatar: DataTypes.STRING,
-    status: {
-      type: DataTypes.STRING(150),
-      defaultValue: 'Привет! Я использую ChatApp'
-    },
-    bio: {
-      type: DataTypes.TEXT,
-      defaultValue: ''
-    },
-    friends: {
-      type: DataTypes.ARRAY(DataTypes.STRING),
-      allowNull: false,
-      defaultValue: []
-    },
-    friendRequests: {
-      type: DataTypes.ARRAY(DataTypes.STRING),
-      allowNull: false,
-      defaultValue: []
-    },
-    blockedUsers: {
-      type: DataTypes.ARRAY(DataTypes.STRING),
-      allowNull: false,
-      defaultValue: []
-    }
-  },
-  { ...common, tableName: 'users' }
-);
-
-const Message = sequelize.define(
-  'Message',
-  {
-    id: {
-      type: DataTypes.UUID,
-      primaryKey: true,
-      defaultValue: DataTypes.UUIDV4
-    },
-    chatKey: DataTypes.STRING,
-    groupId: DataTypes.UUID,
-    from: {
-      type: DataTypes.STRING,
-      allowNull: false
-    },
-    to: DataTypes.STRING,
-    text: {
-      type: DataTypes.TEXT,
-      defaultValue: '',
-      allowNull: false
-    },
-    image: DataTypes.TEXT,
-    attachmentName: DataTypes.STRING(180),
-    attachmentMime: DataTypes.STRING(80),
-    attachmentSize: DataTypes.BIGINT,
-    type: {
-      type: DataTypes.ENUM('text', 'image'),
-      defaultValue: 'text',
-      allowNull: false
-    },
-    read: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: false,
-      allowNull: false
-    },
-    deleted: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: false,
-      allowNull: false
-    },
-    clientId: DataTypes.STRING(64)
-  },
-  { ...common, tableName: 'messages' }
-);
-
-const Group = sequelize.define(
-  'Group',
-  {
-    id: {
-      type: DataTypes.UUID,
-      primaryKey: true,
-      defaultValue: DataTypes.UUIDV4
-    },
-    name: {
-      type: DataTypes.STRING(50),
-      allowNull: false
-    },
-    avatar: DataTypes.STRING,
-    ownerId: {
-      type: DataTypes.STRING,
-      allowNull: false
-    }
-  },
-  { ...common, tableName: 'groups' }
-);
-
-const GroupMember = sequelize.define(
-  'GroupMember',
-  {
-    id: {
-      type: DataTypes.UUID,
-      primaryKey: true,
-      defaultValue: DataTypes.UUIDV4
-    },
-    groupId: {
-      type: DataTypes.UUID,
-      allowNull: false
-    },
-    userId: {
-      type: DataTypes.STRING,
-      allowNull: false
-    },
-    role: {
-      type: DataTypes.ENUM('owner', 'member'),
-      defaultValue: 'member',
-      allowNull: false
-    }
-  },
-  { ...common, tableName: 'group_members' }
-);
-
-const GroupReadState = sequelize.define(
-  'GroupReadState',
-  {
-    groupId: {
-      type: DataTypes.UUID,
-      primaryKey: true
-    },
-    userId: {
-      type: DataTypes.STRING,
-      primaryKey: true
-    },
-    lastReadAt: {
-      type: DataTypes.DATE,
-      allowNull: false,
-      defaultValue: DataTypes.NOW
-    }
-  },
-  {
-    timestamps: false,
-    underscored: true,
-    tableName: 'group_read_states'
-  }
-);
-
-const Upload = sequelize.define(
-  'Upload',
-  {
-    path: {
-      type: DataTypes.STRING,
-      primaryKey: true
-    },
-    ownerId: {
-      type: DataTypes.STRING,
-      allowNull: false
-    },
-    state: {
-      type: DataTypes.STRING(16),
-      allowNull: false,
-      defaultValue: 'pending'
-    },
-    bytes: {
-      type: DataTypes.BIGINT,
-      allowNull: false,
-      defaultValue: 0
-    },
-    originalName: DataTypes.STRING(180),
-    mime: DataTypes.STRING(80)
-  },
-  {
-    ...common,
-    updatedAt: false,
-    tableName: 'uploads'
-  }
-);
+const {
+  sequelize,
+  User,
+  Message,
+  Group,
+  GroupMember,
+  GroupReadState,
+  Upload
+} = require('./server/database');
 
 // All application DB mutations use this single-process queue.
 // Do not run other writers against the same database while this server runs.
@@ -4379,215 +3982,21 @@ io.on('connection', socket => {
 // Schema and startup
 // -----------------------------------------------------------------------------
 
+const ensureDatabaseSchema = require('./server/schema');
+
 async function ensureSchema() {
-  const qi = sequelize.getQueryInterface();
-
-  const tables = new Set(
-    (await qi.showAllTables()).map(table =>
-      typeof table === 'string' ? table : table.tableName
-    )
-  );
-
-  if (tables.has('users')) {
-    await sequelize.query(
-      `ALTER TABLE users
-       ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0,
-       ADD COLUMN IF NOT EXISTS friends VARCHAR(255)[] NOT NULL DEFAULT '{}',
-       ADD COLUMN IF NOT EXISTS friend_requests VARCHAR(255)[] NOT NULL DEFAULT '{}',
-       ADD COLUMN IF NOT EXISTS blocked_users VARCHAR(255)[] NOT NULL DEFAULT '{}'`
-    );
-
-    for (const column of ['friends', 'friend_requests', 'blocked_users']) {
-      await sequelize.query(
-        `UPDATE users SET "${column}" = '{}' WHERE "${column}" IS NULL`
-      );
-
-      await sequelize.query(
-        `ALTER TABLE users
-         ALTER COLUMN "${column}" SET DEFAULT '{}',
-         ALTER COLUMN "${column}" SET NOT NULL`
-      );
-    }
-
-    await sequelize.query(
-      'UPDATE users SET token_version = 0 WHERE token_version IS NULL'
-    );
-
-    await sequelize.query(
-      `ALTER TABLE users
-       ALTER COLUMN token_version SET DEFAULT 0,
-       ALTER COLUMN token_version SET NOT NULL`
-    );
-  }
-
-  if (tables.has('messages')) {
-    await sequelize.query(
-      `ALTER TABLE messages
-       ADD COLUMN IF NOT EXISTS group_id UUID,
-       ADD COLUMN IF NOT EXISTS client_id VARCHAR(64),
-       ADD COLUMN IF NOT EXISTS attachment_name VARCHAR(180),
-       ADD COLUMN IF NOT EXISTS attachment_mime VARCHAR(80),
-       ADD COLUMN IF NOT EXISTS attachment_size BIGINT`
-    );
-
-    const columns = await qi.describeTable('messages');
-
-    for (const column of ['chat_key', 'group_id', 'to', 'image']) {
-      if (columns[column]) {
-        await sequelize.query(
-          `ALTER TABLE messages ALTER COLUMN "${column}" DROP NOT NULL`
-        );
-      }
-    }
-  }
-
-  if (tables.has('uploads')) {
-    await sequelize.query(
-      `ALTER TABLE uploads
-       ADD COLUMN IF NOT EXISTS state VARCHAR(16) NOT NULL DEFAULT 'pending',
-       ADD COLUMN IF NOT EXISTS bytes BIGINT NOT NULL DEFAULT 0,
-       ADD COLUMN IF NOT EXISTS original_name VARCHAR(180),
-       ADD COLUMN IF NOT EXISTS mime VARCHAR(80)`
-    );
-  }
-
-  // Creates missing tables; does not alter or drop existing tables.
-  await sequelize.sync();
-
-  const models = [User, Message, Group, GroupMember, GroupReadState, Upload];
-
-  for (const model of models) {
-    const table = model.getTableName();
-    const actual = await qi.describeTable(table);
-
-    const missing = Object.values(model.rawAttributes)
-      .map(attribute => attribute.field)
-      .filter(field => !actual[field]);
-
-    if (missing.length) {
-      fail(
-        `Incompatible schema in ${table}: missing columns ${missing.join(', ')}. ` +
-        'Apply an explicit migration before starting.'
-      );
-    }
-  }
-
-  const indexes = [
-    `CREATE UNIQUE INDEX IF NOT EXISTS group_members_group_id_user_id
-     ON group_members(group_id, user_id)`,
-
-    `CREATE UNIQUE INDEX IF NOT EXISTS group_read_states_group_user_unique
-     ON group_read_states(group_id, user_id)`,
-
-    `CREATE INDEX IF NOT EXISTS group_members_user_id
-     ON group_members(user_id)`,
-
-    `CREATE INDEX IF NOT EXISTS messages_chat_key_created_at_id
-     ON messages(chat_key, created_at, id)`,
-
-    `CREATE INDEX IF NOT EXISTS messages_group_id_created_at_id
-     ON messages(group_id, created_at, id)`,
-
-    `CREATE INDEX IF NOT EXISTS messages_to_read
-     ON messages("to", read)`,
-
-    `CREATE INDEX IF NOT EXISTS messages_from
-     ON messages("from")`,
-
-    `CREATE UNIQUE INDEX IF NOT EXISTS messages_from_client_id_unique
-     ON messages("from", client_id) WHERE client_id IS NOT NULL`,
-
-    `CREATE INDEX IF NOT EXISTS messages_image_active
-     ON messages(image) WHERE image IS NOT NULL AND deleted = false`,
-
-    `CREATE INDEX IF NOT EXISTS users_avatar
-     ON users(avatar) WHERE avatar IS NOT NULL`,
-
-    `CREATE INDEX IF NOT EXISTS groups_avatar
-     ON groups(avatar) WHERE avatar IS NOT NULL`,
-
-    `CREATE INDEX IF NOT EXISTS uploads_owner_id
-     ON uploads(owner_id)`,
-
-    `CREATE INDEX IF NOT EXISTS uploads_state_created_at
-     ON uploads(state, created_at)`
-  ];
-
-  for (const sql of indexes) await sequelize.query(sql);
-
-  // Legacy media ledger backfill: do not rewrite message contents.
-  await sequelize.query(
-    `INSERT INTO uploads(path, owner_id, state, bytes, created_at)
-     SELECT image, MIN("from"), 'attached', 0, NOW()
-     FROM messages
-     WHERE deleted = false AND image LIKE '/uploads/%'
-     GROUP BY image
-     ON CONFLICT(path) DO NOTHING`
-  );
-
-  await sequelize.query(
-    `INSERT INTO uploads(path, owner_id, state, bytes, created_at)
-     SELECT avatar, MIN(id), 'attached', 0, NOW()
-     FROM users
-     WHERE avatar LIKE '/uploads/%'
-     GROUP BY avatar
-     ON CONFLICT(path) DO NOTHING`
-  );
-
-  await sequelize.query(
-    `INSERT INTO uploads(path, owner_id, state, bytes, created_at)
-     SELECT avatar, MIN(owner_id), 'attached', 0, NOW()
-     FROM groups
-     WHERE avatar LIKE '/uploads/%'
-     GROUP BY avatar
-     ON CONFLICT(path) DO NOTHING`
-  );
-
-  let after = '';
-
-  while (true) {
-    const rows = await Upload.findAll({
-      where: {
-        bytes: 0,
-        path: { [Op.gt]: after }
-      },
-      order: [['path', 'ASC']],
-      limit: 200
-    });
-
-    if (!rows.length) break;
-
-    for (const row of rows) {
-      if (!FILE_RE.test(row.path)) continue;
-
-      const stat = await fs.promises
-        .lstat(path.join(UPLOAD_DIR, path.basename(row.path)))
-        .catch(error => {
-          if (error.code === 'ENOENT') return null;
-          throw error;
-        });
-
-      if (stat?.isFile() && !stat.isSymbolicLink()) {
-        await row.update({ bytes: stat.size });
-      }
-    }
-
-    after = rows[rows.length - 1].path;
-  }
-
-  const [clock] = await sequelize.query(
-    `SELECT GREATEST(
-       COALESCE((SELECT MAX(created_at) FROM messages), NOW()),
-       COALESCE((SELECT MAX(last_read_at) FROM group_read_states), NOW())
-     ) AS latest`,
-    { type: QueryTypes.SELECT }
-  );
-
-  const latest = new Date(clock.latest).getTime();
-
-  if (!Number.isFinite(latest)) fail('Invalid timestamps in database');
-
-  logicalTime = Math.max(Date.now(), latest);
+  logicalTime = await ensureDatabaseSchema({
+    sequelize,
+    User,
+    Message,
+    Group,
+    GroupMember,
+    GroupReadState,
+    Upload,
+    FILE_RE,
+    UPLOAD_DIR,
+    fail
+  });
 }
 
 let instanceConnection;
