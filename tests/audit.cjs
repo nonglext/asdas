@@ -13,7 +13,7 @@ test('group voice markup is conditional on a live callId', () => {
 });
 test('exactly one presentation layer is shipped, with no competing override sheets', () => {
   const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
-  assert.match(html, /theme\.css\?v=1\.10\.6/);
+  assert.match(html, /theme\.css\?v=\d+\.\d+\.\d+/);
   for (const gone of ['refined.css', 'discord-reference.css', 'discord-refactor.css']) {
     assert.doesNotMatch(html, new RegExp(gone.replace('.', '\\.')), gone + ' still linked');
     assert.equal(fs.existsSync(path.join(root, 'public/css', gone)), false, gone + ' still present');
@@ -21,10 +21,18 @@ test('exactly one presentation layer is shipped, with no competing override shee
   const sheets = [...html.matchAll(/href="\/css\/([^"?]+)/g)].map(m => m[1]);
   assert.deepEqual(sheets, ['base.css', 'layout.css', 'chat.css', 'calls-responsive.css', 'style.css', 'theme.css']);
 });
-test('package and VERSION agree', () => {
+test('package, VERSION and asset cache-busting all agree', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.equal(pkg.version, fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim());
-  assert.equal(pkg.version, '1.10.6');
+
+  // Hard-coding the number here meant every release broke this test for no
+  // reason. What actually matters is that no asset keeps a stale ?v= tag,
+  // because a half-updated cache is what breaks clients after a deploy.
+  const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+  const tags = [...html.matchAll(/(?:href|src)="\/(?:css|js)\/[^"?]+\?v=([^"]+)"/g)].map(m => m[1]);
+
+  assert.ok(tags.length > 0, 'expected versioned asset links in index.html');
+  assert.deepEqual([...new Set(tags)], [pkg.version]);
 });
 
 test('voice threshold setting is wired to the speaking indicator', () => {

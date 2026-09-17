@@ -14,7 +14,7 @@ const { Op, QueryTypes } = require('sequelize');
 
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
-const { rateLimit } = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const multer = require('multer');
 const sharp = require('sharp');
 const helmet = require('helmet');
@@ -155,6 +155,24 @@ function boundedText(value, max, { required = false, min = 0 } = {}) {
   return value.trim();
 }
 
+// `req.aborted` has been deprecated since Node 16 and stays false on modern
+// runtimes, so an aborted upload was never actually detected. Socket state is.
+function clientGone(req, res) {
+  return Boolean(req.destroyed || res.destroyed || res.writableEnded);
+}
+
+function megabytes(bytes) {
+  return Math.round((bytes / (1024 * 1024)) * 10) / 10;
+}
+
+// Records which size limit applies so the error handler can name it accurately.
+function uploadLimit(bytes) {
+  return (req, res, next) => {
+    req.uploadLimitBytes = bytes;
+    next();
+  };
+}
+
 function assertRequestId(data) {
   if (data.requestId !== undefined && !clientId(data.requestId)) {
     reject(400, 'Некорректный requestId');
@@ -204,6 +222,27 @@ function serial(fn) {
   });
 
   return work;
+}
+
+// Media lookups only read. Putting them on `serial` made every avatar and
+// attachment request wait behind unrelated writes, so they get their own
+// bounded, concurrent lane with the same shutdown and backpressure behaviour.
+let readSize = 0;
+
+function readTask(fn) {
+  if (stopping || readSize >= MAX_QUEUE) {
+    return Promise.reject(new ApiError(503, 'Сервер занят', 'busy'));
+  }
+
+  readSize++;
+
+  return (async () => {
+    try {
+      return await fn();
+    } finally {
+      readSize--;
+    }
+  })();
 }
 
 // Distinct timestamps prevent a message written in the same millisecond as a
@@ -460,7 +499,9 @@ const uploadRate = rate(60_000, 20);
 const registerIpRate = rateLimit({
   windowMs: 60 * 60_000,
   limit: 5,
-  keyGenerator: req => requestIp(req),
+  // A raw IPv6 address is a single /128 host: without collapsing it to its /64
+  // prefix one client can walk a whole subnet and reset the counter each time.
+  keyGenerator: req => ipKeyGenerator(requestIp(req)),
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: 'Слишком много регистраций', reason: 'rate_limited' },
@@ -581,7 +622,7 @@ function route(
 ) {
   app[method](url, ...middleware, (req, res, next) => {
     serial(async () => {
-      if (req.aborted || res.destroyed) return;
+      if (clientGone(req, res)) return;
 
       if (!publicRoute) {
         const auth = await verifyToken(req.authToken);
@@ -1024,7 +1065,7 @@ async function uploadGuard(req, res, next) {
       reject(507, 'Недостаточно места на диске', 'storage_full');
     }
 
-    if (req.aborted || res.destroyed) {
+    if (clientGone(req, res)) {
       release();
       return;
     }
@@ -1046,7 +1087,7 @@ async function unlinkMedia(publicPath) {
     });
 }
 
-async function finalizeUpload(req) {
+async function finalizeUpload(req, res) {
   if (!req.file) {
     reject(400, 'Загрузите изображение JPEG, PNG, WEBP или GIF');
   }
@@ -1126,10 +1167,15 @@ async function finalizeUpload(req) {
     reject(429, 'Достигнут лимит хранилища изображений', 'storage_limit');
   }
 
-  if (req.aborted) reject(400, 'Загрузка прервана');
+  if (clientGone(req, res)) reject(400, 'Загрузка прервана');
 
   await fs.promises.chmod(output, 0o600);
   await fs.promises.rename(output, destination);
+
+  // The path no longer exists under TMP_DIR, so drop it from the pending sets
+  // instead of leaving cleanup to swallow an ENOENT on every request.
+  activeTmp.delete(output);
+  req.tmpPaths?.delete(output);
 
   try {
     await Upload.create({
@@ -1193,7 +1239,7 @@ async function inspectAttachment(file) {
   return { extension: normalizedExtension, mime, original };
 }
 
-async function finalizeAttachment(req) {
+async function finalizeAttachment(req, res) {
   if (!req.file) reject(400, 'Выберите файл JPG, PNG, WEBP, GIF, ZIP, MP3 или MP4');
   const pending = await Upload.count({ where: { ownerId: req.user.id, state: 'pending' } });
   if (pending >= MAX_PENDING_UPLOADS) reject(429, 'Слишком много неотправленных файлов');
@@ -1208,6 +1254,8 @@ async function finalizeAttachment(req) {
   if (BigInt(usage.used) + BigInt(size) > BigInt(MAX_USER_MEDIA_BYTES)) {
     reject(429, 'Достигнут лимит хранилища файлов', 'storage_limit');
   }
+
+  if (clientGone(req, res)) reject(400, 'Загрузка прервана');
 
   const name = `${crypto.randomUUID()}.${metadata.extension}`;
   const publicPath = `/uploads/${name}`;
@@ -1427,7 +1475,7 @@ route(
 
     const passwordHash = await bcrypt.hash(password, 12);
 
-    if (req.aborted || res.destroyed) return;
+    if (clientGone(req, res)) return;
 
     let user;
 
@@ -1779,9 +1827,9 @@ route(
 route(
   'post',
   '/api/upload/image',
-  [authenticate, uploadRate, uploadGuard, upload.single('image')],
+  [authenticate, uploadRate, uploadGuard, uploadLimit(MAX_IMAGE_BYTES), upload.single('image')],
   async (req, res) => {
-    const url = await finalizeUpload(req);
+    const url = await finalizeUpload(req, res);
     res.json({ success: true, url });
   }
 );
@@ -1789,9 +1837,9 @@ route(
 route(
   'post',
   '/api/upload/file',
-  [authenticate, uploadRate, uploadGuard, attachmentUpload.single('file')],
+  [authenticate, uploadRate, uploadGuard, uploadLimit(MAX_FILE_BYTES), attachmentUpload.single('file')],
   async (req, res) => {
-    const attachment = await finalizeAttachment(req);
+    const attachment = await finalizeAttachment(req, res);
     res.json({ success: true, ...attachment });
   }
 );
@@ -1799,9 +1847,9 @@ route(
 route(
   'post',
   '/api/upload/avatar',
-  [authenticate, uploadRate, uploadGuard, upload.single('avatar')],
+  [authenticate, uploadRate, uploadGuard, uploadLimit(MAX_IMAGE_BYTES), upload.single('avatar')],
   async (req, res) => {
-    const url = await finalizeUpload(req);
+    const url = await finalizeUpload(req, res);
     const user = req.user;
 
     await sequelize.transaction(async transaction => {
@@ -2175,6 +2223,7 @@ route(
     uploadRate,
     groupUploadAuth,
     uploadGuard,
+    uploadLimit(MAX_IMAGE_BYTES),
     upload.single('avatar')
   ],
   async (req, res) => {
@@ -2184,7 +2233,7 @@ route(
       true
     );
 
-    const url = await finalizeUpload(req);
+    const url = await finalizeUpload(req, res);
 
     await sequelize.transaction(async transaction => {
       await claimUpload(url, req.user.id, transaction);
@@ -2221,8 +2270,8 @@ app.get('/uploads/:filename', (req, res, next) => {
   res.vary('Cookie');
   res.vary('Authorization');
 
-  serial(async () => {
-    if (!ready || req.aborted || res.destroyed) {
+  readTask(async () => {
+    if (!ready || res.destroyed) {
       if (!res.destroyed) reject(503, 'Сервер не готов', 'unavailable');
       return;
     }
@@ -2397,7 +2446,16 @@ app.use((error, req, res, next) => {
     reason = error.reason;
   } else if (error instanceof multer.MulterError) {
     status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
-    message = 'Разрешён один файл до 10 МБ без дополнительных полей';
+
+    // The limit differs per route: images go through `upload`, everything else
+    // through `attachmentUpload`. Reporting a fixed 10 MB misled the user.
+    const limit = req.uploadLimitBytes || MAX_IMAGE_BYTES;
+
+    message =
+      error.code === 'LIMIT_FILE_SIZE'
+        ? `Файл больше ${megabytes(limit)} МБ`
+        : 'Разрешён один файл без дополнительных полей';
+
     reason = 'invalid_upload';
   } else if (
     error.type === 'entity.parse.failed' ||

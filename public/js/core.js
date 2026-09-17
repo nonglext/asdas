@@ -2295,6 +2295,9 @@ window.addEventListener('storage', event => {
     !storage.pending.has(SOUNDS_STORAGE_KEY)
   ) {
     sfx.syncEnabled(event.newValue !== 'off');
+
+    // Настройки могут быть открыты в этой вкладке — не оставляем тумблер врать.
+    if (typeof syncSoundsControl === 'function') syncSoundsControl();
   }
 
   if (

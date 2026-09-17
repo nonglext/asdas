@@ -11,15 +11,15 @@
 <meta content="yes" name="apple-mobile-web-app-capable"/>
 <meta content="default" name="apple-mobile-web-app-status-bar-style"/>
 <link href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%235865f2'/%3E%3Cpath fill='%23fff' d='M18 14.5a1.5 1.5 0 0 1-1.5 1.5H8.3L5 19V7.5A1.5 1.5 0 0 1 6.5 6h10A1.5 1.5 0 0 1 18 7.5z'/%3E%3C/svg%3E" rel="icon"/>
-<script src="/js/runtime-guard.js?v=1.10.6"></script>
-<script src="/js/document-0.js?v=1.10.6"></script>
+<script src="/js/runtime-guard.js?v=1.11.0"></script>
+<script src="/js/document-0.js?v=1.11.0"></script>
 <!-- Каркас: base → layout → chat → calls → утилиты/адаптив. Всё оформление — в theme.css -->
-<link href="/css/base.css?v=1.10.6" rel="stylesheet"/>
-<link href="/css/layout.css?v=1.10.6" rel="stylesheet"/>
-<link href="/css/chat.css?v=1.10.6" rel="stylesheet"/>
-<link href="/css/calls-responsive.css?v=1.10.6" rel="stylesheet"/>
-<link href="/css/style.css?v=1.10.6" rel="stylesheet"/>
-<link href="/css/theme.css?v=1.10.6" rel="stylesheet"/>
+<link href="/css/base.css?v=1.11.0" rel="stylesheet"/>
+<link href="/css/layout.css?v=1.11.0" rel="stylesheet"/>
+<link href="/css/chat.css?v=1.11.0" rel="stylesheet"/>
+<link href="/css/calls-responsive.css?v=1.11.0" rel="stylesheet"/>
+<link href="/css/style.css?v=1.11.0" rel="stylesheet"/>
+<link href="/css/theme.css?v=1.11.0" rel="stylesheet"/>
 </head>
 <body>
 <a class="skip-link" href="#chat-main">Перейти к чату</a>
@@ -402,7 +402,7 @@
 </section>
 <section class="settings-section" data-settings-panel="security"><h3>Пароль и безопасность</h3><p class="settings-section-note">Обновите пароль, чтобы сохранить аккаунт в безопасности.</p><div class="settings-password-card"><form id="password-change-form" novalidate><div class="field"><label for="current-password">Текущий пароль</label><input autocomplete="current-password" id="current-password" required type="password"/></div><div class="field"><label for="new-password">Новый пароль</label><input autocomplete="new-password" id="new-password" minlength="8" required type="password"/><small class="settings-field-hint">Минимум 8 символов</small></div><div class="field"><label for="confirm-password">Повторите новый пароль</label><input autocomplete="new-password" id="confirm-password" minlength="8" required type="password"/></div><div aria-live="polite" class="settings-form-message" id="password-form-message"></div><button class="btn-primary settings-save-password" id="btn-save-password" type="submit">Сохранить новый пароль</button></form></div></section>
 <section class="settings-section" data-settings-panel="privacy"><h3>Конфиденциальность</h3><p class="settings-section-note">Управление приватностью и доступом.</p><div class="settings-placeholder">Раздел подготовлен для следующих обновлений.</div></section>
-<section class="settings-section" data-settings-panel="notifications"><h3>Уведомления</h3><p class="settings-section-note">Настройте, когда ChatApp должен вас оповещать.</p><div class="settings-placeholder">Раздел подготовлен для следующих обновлений.</div></section>
+<section class="settings-section" data-settings-panel="notifications"><h3>Уведомления</h3><p class="settings-section-note">Настройте, когда ChatApp должен вас оповещать.</p><div class="settings-toggle-row"><label class="settings-toggle-copy" for="sounds-enabled"><strong>Звуки</strong><small>Сигнал при новом сообщении, заявке в друзья и входящем звонке.</small></label><input class="settings-switch" id="sounds-enabled" type="checkbox"/></div><p aria-live="polite" class="settings-status" id="notifications-status">Сохраняется на этом устройстве</p></section>
 <section class="settings-section" data-settings-panel="voice"><h3>Голос</h3><p class="settings-section-note">Настройте, насколько громко нужно говорить, чтобы вокруг аватара появился индикатор речи.</p><div class="voice-threshold-control"><div class="voice-threshold-head"><div><strong>Чувствительность индикатора</strong><small>Ближе к −10 dB, кружок загорается легче. Ближе к −60 dB, нужно говорить громче.</small></div><output id="voice-threshold-value" for="voice-threshold">−48 dB</output></div><input id="voice-threshold" type="range" min="-60" max="-10" step="1" value="-48" aria-label="Порог индикатора речи в децибелах"><div class="voice-threshold-scale"><span>−60 dB, чувствительнее</span><span>−10 dB, громче</span></div></div><p aria-live="polite" class="settings-status" id="voice-settings-status">Сохраняется на этом устройстве</p></section>
 <section class="settings-section" data-settings-panel="appearance"><h3>Темы</h3><p class="settings-section-note">Выберите оформление приложения. Изменение применяется сразу.</p><fieldset class="theme-picker"><legend>Цветовая схема</legend>
 <label class="theme-option" data-theme-option="gray"><input name="app-theme" type="radio" value="gray"/><span aria-hidden="true" class="theme-preview preview-gray"><i></i><b></b><em></em></span><span class="theme-option-copy"><strong>Серая</strong><small>Тёмная тема в стиле Discord</small></span><span aria-hidden="true" class="theme-check"><svg fill="none" height="16" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" viewbox="0 0 24 24" width="16"><path d="m5 12 4 4L19 6"></path></svg></span></label>
@@ -541,15 +541,15 @@
      Не требует правок chat-ui.js: следит за открытием чата и прячет сайдбар на ≤640px,
      закрывает панель участников по тапу на щиток.
      ═════════════════════════════════════════════════════════════════════════ -->
-<script src="/js/document-1.js?v=1.10.6"></script>
+<script src="/js/document-1.js?v=1.11.0"></script>
 <script src="/socket.io/socket.io.js"></script>
 
-<script defer="" src="/js/core.js?v=1.10.6"></script>
-<script defer="" src="/js/auth-ui.js?v=1.10.6"></script>
-<script defer="" src="/js/chat-ui.js?v=1.10.6"></script>
-<script defer="" src="/js/calls.js?v=1.10.6"></script>
-<script defer="" src="/js/document-actions.js?v=1.10.6"></script>
-<script defer="" src="/js/settings.js?v=1.10.6"></script>
-<script defer="" src="/js/accessibility.js?v=1.10.6"></script>
+<script defer="" src="/js/core.js?v=1.11.0"></script>
+<script defer="" src="/js/auth-ui.js?v=1.11.0"></script>
+<script defer="" src="/js/chat-ui.js?v=1.11.0"></script>
+<script defer="" src="/js/calls.js?v=1.11.0"></script>
+<script defer="" src="/js/document-actions.js?v=1.11.0"></script>
+<script defer="" src="/js/settings.js?v=1.11.0"></script>
+<script defer="" src="/js/accessibility.js?v=1.11.0"></script>
 </body>
 </html>

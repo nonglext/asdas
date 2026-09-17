@@ -4,6 +4,13 @@ const THEME_STORAGE_KEY = 'chatapp_theme';
 const APP_THEMES = new Set(['gray', 'white']);
 
 function formatDb(value) { return `${String(value).replace('-', '−')} dB`; }
+// sfx.setEnabled существовал с самого начала, но ни одна кнопка его не звала:
+// отключить звуки из интерфейса было невозможно.
+function syncSoundsControl() {
+  const input = document.getElementById('sounds-enabled');
+  if (input && typeof sfx !== 'undefined') input.checked = sfx.enabled();
+}
+
 function syncVoiceThresholdControl() {
   const input = document.getElementById('voice-threshold');
   const output = document.getElementById('voice-threshold-value');
@@ -65,6 +72,7 @@ function openSettings() {
   }
   syncThemeControls();
   syncVoiceThresholdControl();
+  syncSoundsControl();
   const status = document.getElementById('settings-status');
   if (status) status.textContent = 'Тема сохраняется на этом устройстве';
   setDisplay('settings-modal', 'flex');
@@ -91,6 +99,18 @@ document.querySelectorAll('input[name="app-theme"]').forEach(input => {
 });
 
 applyAppTheme(currentAppTheme());
+
+on('sounds-enabled', 'change', event => {
+  const enabled = typeof sfx !== 'undefined'
+    ? sfx.setEnabled(event.target.checked)
+    : event.target.checked;
+
+  const status = document.getElementById('notifications-status');
+  if (status) status.textContent = enabled ? 'Звуки включены' : 'Звуки выключены';
+
+  // Короткий сигнал подтверждает, что звук действительно слышно.
+  if (enabled && typeof sfx !== 'undefined') sfx.message();
+});
 
 on('voice-threshold', 'input', event => {
   const value = window.saveVoiceSpeakingThresholdDb?.(event.target.value) ?? Number(event.target.value);

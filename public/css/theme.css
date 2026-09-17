@@ -44,8 +44,8 @@
   --accent-modifier:   var(--accent-bg);
   --accent-gradient:   linear-gradient(155deg, oklch(62% .19 285), oklch(53% .20 272));
   --neutral-avatar-gradient: linear-gradient(155deg, oklch(62% .17 288), oklch(50% .17 272));
-  --mention-bg:        oklch(80% .14 85 / .12);
-  --mention-fg:        oklch(86% .12 85);
+  --mention-bg:        oklch(80% .14 85 / .18);
+  --mention-fg:        oklch(42% .11 85);
 
   /* Текст */
   --text-h:      oklch(22% .025 288);
@@ -55,9 +55,15 @@
   --text4:       oklch(62% .014 288);
   --text-active: oklch(19% .025 288);
   --text-brand:  oklch(48% .18 277);
-  --text-danger:   oklch(76% .14 22);
-  --text-positive: oklch(78% .15 152);
-  --text-warning:  oklch(84% .13 85);
+
+  /* Эти четыре токена достались от прежней тёмной базы и остались светлыми
+     после перехода на светлый фон. На --bg они давали 1.6–2.2:1, то есть
+     текст ошибки, статус «в сети» и предупреждения практически не читались.
+     Значения ниже дают 6.7–7.6:1 (WCAG AA с запасом); тёмная тема
+     возвращает исходные светлые варианты у себя. */
+  --text-danger:   oklch(48% .19 22);
+  --text-positive: oklch(45% .13 152);
+  --text-warning:  oklch(45% .11 85);
 
   /* Статусы */
   --green:       oklch(70% .155 152);
@@ -78,8 +84,10 @@
   --red-border:  oklch(63% .195 22 / .45);
   --grey-status: oklch(60% .012 288);
 
-  --link:  oklch(76% .125 235);
-  --focus: oklch(82% .115 235);
+  /* Кольцо фокуса на светлом фоне давало 1.5:1 — клавиатурная навигация была
+     вслепую. WCAG требует минимум 3:1 для нетекстовых индикаторов. */
+  --link:  oklch(48% .16 250);
+  --focus: oklch(52% .18 250);
   --info:  var(--link);
 
   --scrollbar-thumb: oklch(72% .016 288);
@@ -916,13 +924,25 @@ h1, h2, h3 { text-wrap: balance; }
   .section-add { opacity: 1; }
 }
 
+/* Этот блок тоже остался от тёмной базы: он осветлял текст, а фон теперь
+   светлый, так что включение «увеличить контраст» в системе роняло вторичный
+   текст до 1.13:1 — то есть делало его невидимым. Теперь каждая тема
+   усиливает контраст в свою сторону. */
 @media (prefers-contrast: more) {
   :root {
-    --text2: oklch(92% .006 288);
-    --text3: oklch(85% .008 288);
-    --text4: oklch(80% .010 288);
-    --border: oklch(100% 0 0 / .22);
-    --divider: oklch(100% 0 0 / .30);
+    --text2: oklch(30% .020 288);
+    --text3: oklch(34% .018 288);
+    --text4: oklch(38% .016 288);
+    --border: oklch(62% .020 288);
+    --divider: oklch(55% .022 288);
+  }
+
+  :root[data-theme="gray"] {
+    --text2: oklch(92% .006 275);
+    --text3: oklch(85% .008 275);
+    --text4: oklch(80% .010 275);
+    --border: oklch(100% 0 0 / .32);
+    --divider: oklch(100% 0 0 / .42);
   }
 }
 
@@ -1068,6 +1088,16 @@ h1, h2, h3 { text-wrap: balance; }
   --text4: oklch(60% .009 275);
   --text-active: oklch(99% .002 275);
   --text-brand: oklch(79% .13 277);
+
+  /* На тёмном фоне работают ровно противоположные значения. */
+  --text-danger:   oklch(76% .14 22);
+  --text-positive: oklch(78% .15 152);
+  --text-warning:  oklch(84% .13 85);
+  --mention-bg:    oklch(80% .14 85 / .12);
+  --mention-fg:    oklch(86% .12 85);
+  --link:          oklch(76% .125 235);
+  --focus:         oklch(82% .115 235);
+
   --scrollbar-thumb: oklch(100% .004 275 / .16);
   --shadow-stroke: 0 0 0 1px oklch(8% .01 275 / .2);
   --shadow-header: 0 1px 0 oklch(8% .01 275 / .24);
@@ -1220,6 +1250,33 @@ h1, h2, h3 { text-wrap: balance; }
 .settings-info-row button:hover { background: var(--accent); color: oklch(99% .004 277); }
 .settings-divider { height: 1px; margin: 36px 0 32px; background: var(--border-subtle); }
 .settings-placeholder { margin-top: 24px; padding: 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg1); color: var(--text3); }
+
+/* Переключатель в настройках (звуки уведомлений) */
+.settings-toggle-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  max-width: 640px; margin-top: 20px; padding: 16px 18px;
+  border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg1); box-shadow: var(--shadow-low);
+}
+.settings-toggle-copy { display: block; min-width: 0; cursor: pointer; }
+.settings-toggle-copy strong { display: block; color: var(--text-h); font-size: .92rem; font-weight: 650; }
+.settings-toggle-copy small { display: block; max-width: 52ch; margin-top: 5px; color: var(--text3); font-size: .78rem; line-height: 1.45; }
+.settings-switch {
+  flex: 0 0 auto; appearance: none; position: relative;
+  width: 44px; height: 26px; margin: 0; border-radius: 13px;
+  background: var(--bg4); cursor: pointer;
+  transition: background var(--ease-fast);
+}
+.settings-switch::after {
+  content: ''; position: absolute; top: 3px; left: 3px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: oklch(99% .004 277); box-shadow: var(--shadow-low);
+  transition: transform var(--ease-fast);
+}
+.settings-switch:checked { background: var(--accent); }
+.settings-switch:checked::after { transform: translateX(18px); }
+.settings-switch:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (max-width: 620px) { .settings-toggle-row { gap: 14px; padding: 14px; } }
  .settings-section .theme-picker { max-width: 600px; }
 .voice-threshold-control { max-width: 640px; padding: 20px 18px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg1); box-shadow: var(--shadow-low); }
 .voice-threshold-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
