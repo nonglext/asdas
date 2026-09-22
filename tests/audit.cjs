@@ -44,3 +44,13 @@ test('voice threshold setting is wired to the speaking indicator', () => {
   assert.match(settings, /saveVoiceSpeakingThresholdDb/);
   assert.match(calls, /getVoiceSpeakingThresholdDb/);
 });
+
+test('every data-action in index.html has a handler', () => {
+  const fs = require('node:fs'); const path = require('node:path');
+  const root = path.resolve(__dirname, '..');
+  const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+  const js = fs.readFileSync(path.join(root, 'public/js/document-actions.js'), 'utf8');
+  for (const [, name] of html.matchAll(/data-action="([^"]+)"/g)) {
+    assert.ok(js.includes(`[data-action="${name}"]`), `нет обработчика для data-action="${name}"`);
+  }
+});

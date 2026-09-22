@@ -68,7 +68,7 @@
 </div>
 <button class="btn-primary btn-block" id="btn-login" type="button">Войти</button>
 <p class="auth-switch">Нужна учётная запись?
-        <button class="auth-link" data-action="0" type="button">Зарегистрироваться</button>
+        <button class="auth-link" data-action="nav-register" type="button">Зарегистрироваться</button>
 </p>
 </div>
 <div class="tab-content" id="tab-register" role="tabpanel">
@@ -94,7 +94,7 @@
 </div>
 <button class="btn-primary btn-block" id="btn-register" type="button">Продолжить</button>
 <p class="auth-switch">
-<button class="auth-link" data-action="1" type="button">Уже зарегистрированы?</button>
+<button class="auth-link" data-action="nav-login" type="button">Уже зарегистрированы?</button>
 </p>
 </div>
 <div aria-live="assertive" class="error-msg" id="auth-error" role="alert"></div>
@@ -105,16 +105,16 @@
 <aside aria-label="Список бесед" class="sidebar">
 <!-- Рельса слева (как список серверов в Discord) -->
 <nav aria-label="Разделы" class="guild-rail">
-<button aria-label="Личные сообщения" class="rail-btn rail-home" data-action="2" data-rail="dm" title="Личные сообщения" type="button">
+<button aria-label="Личные сообщения" class="rail-btn rail-home" data-action="nav-dm" data-rail="dm" title="Личные сообщения" type="button">
 <span aria-hidden="true" class="rail-pill"></span>
 <svg aria-hidden="true" fill="currentColor" height="24" viewbox="0 0 24 24" width="24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"></path></svg>
 </button>
 <div class="rail-divider" role="separator"></div>
-<button aria-label="Группы" class="rail-btn" data-action="3" data-rail="groups" title="Группы" type="button">
+<button aria-label="Группы" class="rail-btn" data-action="nav-groups" data-rail="groups" title="Группы" type="button">
 <span aria-hidden="true" class="rail-pill"></span>
 <svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"></path></svg>
 </button>
-<button aria-label="Создать группу" class="rail-btn rail-add" data-action="4" title="Создать группу" type="button">
+<button aria-label="Создать группу" class="rail-btn rail-add" data-action="open-create-group" title="Создать группу" type="button">
 <span aria-hidden="true" class="rail-pill"></span>
 <svg aria-hidden="true" fill="none" height="24" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="24"><path d="M12 5v14M5 12h14"></path></svg>
 </button>
@@ -156,7 +156,7 @@
 <div id="groups-panel" style="display:none">
 <div class="section-label">
             Группы
-            <button aria-label="Создать группу" class="section-add" data-action="5" title="Создать группу" type="button">
+            <button aria-label="Создать группу" class="section-add" data-action="open-create-group" title="Создать группу" type="button">
 <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24" width="16"><path d="M12 5v14M5 12h14"></path></svg>
 </button>
 </div>
@@ -177,7 +177,7 @@
 <button aria-label="Настройки" class="icon-btn settings-btn" id="btn-settings" title="Настройки" type="button">
 <svg aria-hidden="true" fill="none" height="20" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="20"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 00.34 1.88l.06.06a2 2 0 01-2.83 2.83l-.06-.06A1.7 1.7 0 0015 19.4a1.7 1.7 0 00-1 .6 1.7 1.7 0 00-.4 1.1V21a2 2 0 01-4 0v-.09A1.7 1.7 0 008.6 19.4a1.7 1.7 0 00-1.88.34l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.7 1.7 0 004.6 15a1.7 1.7 0 00-.6-1 1.7 1.7 0 00-1.1-.4H3a2 2 0 010-4h.09A1.7 1.7 0 004.6 8.6a1.7 1.7 0 00-.34-1.88L4.2 6.66a2 2 0 012.83-2.83l.06.06A1.7 1.7 0 009 4.6a1.7 1.7 0 001-.6 1.7 1.7 0 00.4-1.1V3a2 2 0 014 0v.09A1.7 1.7 0 0015.4 4.6a1.7 1.7 0 001.88-.34l.06-.06a2 2 0 012.83 2.83l-.06.06A1.7 1.7 0 0019.4 9c.1.38.3.72.6 1 .3.25.68.4 1.1.4h.09a2 2 0 010 4h-.09c-.42 0-.8.15-1.1.4-.3.28-.5.62-.6 1z"></path></svg>
 </button>
-<button aria-label="Выйти" class="icon-btn logout-btn" data-action="6" id="btn-logout" title="Выйти" type="button">
+<button aria-label="Выйти" class="icon-btn logout-btn" data-action="stop-propagation" id="btn-logout" title="Выйти" type="button">
 <svg aria-hidden="true" fill="none" height="20" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="20"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"></path></svg>
 </button>
 </div>
@@ -298,7 +298,7 @@
 <!-- View Profile -->
 <div aria-labelledby="profile-modal-nick" aria-modal="true" class="modal-overlay" id="profile-modal" role="dialog" style="display:none">
 <div class="modal-box modal-profile">
-<button aria-label="Закрыть" class="modal-close-btn" data-action="7" type="button">
+<button aria-label="Закрыть" class="modal-close-btn" data-action="close-profile" type="button">
 <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24" width="18"><path d="M18 6L6 18M6 6l12 12"></path></svg>
 </button>
 <div class="modal-profile-header">
@@ -326,7 +326,7 @@
 <!-- Edit Profile -->
 <div aria-labelledby="edit-profile-title" aria-modal="true" class="modal-overlay" id="edit-profile-modal" role="dialog" style="display:none">
 <div class="modal-box">
-<button aria-label="Закрыть" class="modal-close-btn" data-action="8" type="button">
+<button aria-label="Закрыть" class="modal-close-btn" data-action="close-edit-profile" type="button">
 <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24" width="18"><path d="M18 6L6 18M6 6l12 12"></path></svg>
 </button>
 <h2 class="modal-title" id="edit-profile-title">Мой профиль</h2>
@@ -368,7 +368,7 @@
 </button>
 </div>
 <div class="edit-profile-actions modal-footer">
-<button class="btn-ghost" data-action="9" type="button">Отмена</button>
+<button class="btn-ghost" data-action="close-edit-profile" type="button">Отмена</button>
 <button class="btn-primary" id="btn-save-profile" type="button">Сохранить изменения</button>
 </div>
 </div>
@@ -412,7 +412,7 @@
 <!-- Blocked Users -->
 <div aria-labelledby="blocked-users-title" aria-modal="true" class="modal-overlay" id="blocked-users-modal" role="dialog" style="display:none">
 <div class="modal-box">
-<button aria-label="Закрыть" class="modal-close-btn" data-action="10" type="button">
+<button aria-label="Закрыть" class="modal-close-btn" data-action="close-blocked-users" type="button">
 <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24" width="18"><path d="M18 6L6 18M6 6l12 12"></path></svg>
 </button>
 <h2 class="modal-title" id="blocked-users-title">Заблокированные</h2>
@@ -422,7 +422,7 @@
 <!-- Create Group -->
 <div aria-labelledby="create-group-title" aria-modal="true" class="modal-overlay" id="create-group-modal" role="dialog" style="display:none">
 <div class="modal-box">
-<button aria-label="Закрыть" class="modal-close-btn" data-action="11" type="button">
+<button aria-label="Закрыть" class="modal-close-btn" data-action="close-create-group" type="button">
 <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24" width="18"><path d="M18 6L6 18M6 6l12 12"></path></svg>
 </button>
 <h2 class="modal-title" id="create-group-title">Создать группу</h2>
@@ -442,7 +442,7 @@
 </div>
 </div>
 <div class="modal-footer">
-<button class="btn-ghost" data-action="12" type="button">Отмена</button>
+<button class="btn-ghost" data-action="close-create-group" type="button">Отмена</button>
 <button class="btn-primary" id="btn-confirm-create-group" type="button">Создать группу</button>
 </div>
 </div>
@@ -450,7 +450,7 @@
 <!-- Group Info -->
 <div aria-labelledby="group-info-name" aria-modal="true" class="modal-overlay" id="group-info-modal" role="dialog" style="display:none">
 <div class="modal-box modal-profile">
-<button aria-label="Закрыть" class="modal-close-btn" data-action="13" type="button">
+<button aria-label="Закрыть" class="modal-close-btn" data-action="close-group-info" type="button">
 <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24" width="18"><path d="M18 6L6 18M6 6l12 12"></path></svg>
 </button>
 <div class="modal-profile-header">
@@ -473,7 +473,7 @@
 <!-- Add Members -->
 <div aria-labelledby="add-members-title" aria-modal="true" class="modal-overlay" id="add-members-modal" role="dialog" style="display:none">
 <div class="modal-box">
-<button aria-label="Закрыть" class="modal-close-btn" data-action="14" type="button">
+<button aria-label="Закрыть" class="modal-close-btn" data-action="close-add-members" type="button">
 <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24" width="18"><path d="M18 6L6 18M6 6l12 12"></path></svg>
 </button>
 <h2 class="modal-title" id="add-members-title">Добавить участников</h2>
@@ -484,7 +484,7 @@
 </div>
 </div>
 <div class="modal-footer">
-<button class="btn-ghost" data-action="15" type="button">Отмена</button>
+<button class="btn-ghost" data-action="close-add-members" type="button">Отмена</button>
 <button class="btn-primary" id="btn-confirm-add-members" type="button">Добавить</button>
 </div>
 </div>
@@ -536,7 +536,7 @@
 <div aria-label="Удалить сообщение?" class="delete-confirm-popup" id="delete-confirm" role="alertdialog" style="display:none">
 <span>Удалить сообщение?</span>
 <button class="btn-danger-sm" id="btn-confirm-delete" type="button">Удалить</button>
-<button class="btn-ghost-sm" data-action="16" type="button">Отмена</button>
+<button class="btn-ghost-sm" data-action="close-delete-confirm" type="button">Отмена</button>
 </div>
 <!-- ═══════════════════════════ MOBILE NAV GLUE ═══════════════════════════
      Не требует правок chat-ui.js: следит за открытием чата и прячет сайдбар на ≤640px,

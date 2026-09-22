@@ -210,7 +210,7 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
  await page.evaluate(()=>hangupCall());
  await page.setViewportSize({width:1440,height:900});await page.evaluate(()=>{openGroupChat('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');document.activeElement?.blur()});await page.waitForTimeout(200);
  await page.screenshot({path:path.join(screenshotDir,'group-desktop.png')});
- const authPage=await browser.newPage({viewport:{width:390,height:480}});await authPage.goto(origin);await authPage.waitForLoadState('load');await authPage.click('[data-action="0"]');
+ const authPage=await browser.newPage({viewport:{width:390,height:480}});await authPage.goto(origin);await authPage.waitForLoadState('load');await authPage.click('[data-action="nav-register"]');
  await check('registration remains reachable on short screens',async()=>{
    await authPage.locator('#btn-register').scrollIntoViewIfNeeded();const button=await authPage.locator('#btn-register').boundingBox();assert.ok(button.y>=0&&button.y+button.height<=481);
    assert.equal(await authPage.locator('#app-screen').isVisible(),false);
@@ -263,7 +263,7 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
  });
  await page.evaluate(()=>{
    window.__response={ok:true};window.__socket.connected=true;
-   Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>({getTracks:()=>[],getAudioTracks:()=>[],getVideoTracks:()=>[]})}});
+   Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>{const ctx=new AudioContext();const dest=ctx.createMediaStreamDestination();ctx.createOscillator().connect(dest);return dest.stream},enumerateDevices:async()=>[],addEventListener(){},removeEventListener(){}}});
  });
  await page.click('#btn-join-group-voice');await page.waitForTimeout(100);
  await check('join action reuses the retained voice call',async()=>{
