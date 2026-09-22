@@ -63,3 +63,19 @@ test('Render trusts one proxy hop without disabling rate limiter validation', ()
   assert.match(render, /key: TRUST_PROXY\s+value: "1"/);
   assert.doesNotMatch(server, /skip:\s*\(req,\s*res\)/);
 });
+test('completed POST body is not mistaken for a disconnected client', () => {
+  const vm = require('node:vm');
+  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  const fn = server.match(/function clientGone\(req, res\) \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(fn, 'clientGone missing');
+  const clientGone = vm.runInNewContext(`${fn}; clientGone`);
+  assert.equal(clientGone({ destroyed: true, complete: true }, {
+    destroyed: false, writableEnded: false
+  }), false);
+  assert.equal(clientGone({ destroyed: true, complete: false }, {
+    destroyed: false, writableEnded: false
+  }), true);
+  assert.equal(clientGone({ destroyed: false, complete: true }, {
+    destroyed: true, writableEnded: false
+  }), true);
+});
