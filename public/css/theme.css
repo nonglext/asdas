@@ -648,8 +648,11 @@ h1, h2, h3 { text-wrap: balance; }
 }
 
 /* ─────────────────────────── 6. Авторизация ─────────────────────────── */
+/* display берётся из .screen/.screen.active: ID-селектор с display:flex
+   перебивал .screen { display:none }, и экран входа оставался в раскладке
+   под открытым приложением. */
 #auth-screen {
-  display: flex; align-items: center; justify-content: center;
+  align-items: center; justify-content: center;
   gap: clamp(32px, 6vw, 96px);
   padding: 48px 32px;
   background: oklch(30% .105 285);
@@ -1372,3 +1375,34 @@ h1, h2, h3 { text-wrap: balance; }
 @media (prefers-reduced-motion: reduce) {
   .skip-link, .friend-item, .group-item, .gm-item, .picker-item { transition: none; }
 }
+
+/* Баннер переподключения: компактная плашка по центру вместо полосы на всю
+   ширину. Раньше он перекрывал шапку чата (кнопку «Назад», звонок) и
+   перехватывал клики, пока шло переподключение. */
+.conn-banner {
+  left: 50%;
+  right: auto;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  padding: 7px 14px 7px 12px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+  box-shadow: var(--shadow-medium);
+  transform: translate(-50%, calc(-100% - 24px));
+}
+.conn-banner::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: conn-pulse 1.2s ease-in-out infinite;
+}
+.conn-banner.show { transform: translate(-50%, 0); }
+@keyframes conn-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .conn-banner::before { animation: none; } }

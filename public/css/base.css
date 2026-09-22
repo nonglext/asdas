@@ -17,75 +17,6 @@ ul, ol { list-style: none; }
 :root {
   color-scheme: dark;
 
-  /* ── Поверхности (Discord dark, точные токены) ── */
-  --bg:  #1e1f22;   /* background-tertiary: рельса, инпуты */
-  --bg1: #2b2d31;   /* background-secondary: сайдбар, панель участников */
-  --bg2: #313338;   /* background-primary: чат, модалки */
-  --bg3: #383a40;   /* channel-textarea-background */
-  --bg4: #404249;   /* background-secondary-alt / active */
-  --bg5: #4e5058;   /* button-secondary-background */
-  --bg6: #6d6f78;   /* button-secondary-background-hover */
-  --bg7: #80848e;   /* button-secondary-background-active */
-  --panel-user: #232428;      /* background-secondary-alt (user panel) */
-  --bg-floating: #111214;     /* background-floating: тултипы, поповеры */
-  --bg-modal-footer: #2b2d31; /* modal-footer-background */
-
-  /* Модификаторы (Discord background-modifier-*) */
-  --hover:    rgba(78,80,88,0.30);   /* background-modifier-hover */
-  --active:   rgba(78,80,88,0.48);   /* background-modifier-active */
-  --selected: rgba(78,80,88,0.60);   /* background-modifier-selected */
-  --accent-modifier: rgba(88,101,242,0.16);
-  --msg-hover: #2e3035;
-  --divider: #3f4147;
-  --border: rgba(255,255,255,0.06);
-  --border-subtle: rgba(78,80,88,0.48);
-
-  /* ── Акцент (brand) ── */
-  --accent: #5865f2;
-  --accent-h: #4752c4;
-  --accent-a: #3c45a5;
-  --accent-bg: rgba(88,101,242,0.16);
-  --accent-bg2: rgba(88,101,242,0.28);
-  --accent-border: rgba(88,101,242,0.4);
-  --accent-gradient: linear-gradient(135deg, #5865f2, #7289da);
-  --neutral-avatar-gradient: linear-gradient(135deg, #5865f2, #4752c4);
-  --link: #00a8fc;          /* text-link */
-  --focus: #00a8fc;         /* focus-primary */
-  --info: #00a8fc;
-  --mention-bg: rgba(88,101,242,0.3);
-  --mention-fg: #c9cdfb;
-
-  /* ── Текст ── */
-  --text-h: #f2f3f5;   /* header-primary */
-  --text:   #dbdee1;   /* text-normal */
-  --text2:  #b5bac1;   /* interactive-normal / header-secondary */
-  --text3:  #949ba4;   /* text-muted */
-  --text4:  #80848e;   /* text-muted-alt / placeholder */
-  --text-active: #ffffff; /* interactive-active */
-  --text-brand: #949cf7;  /* text-brand */
-  --text-danger: #fa777c;
-  --text-positive: #2dc770;
-  --text-warning: #f0b232;
-
-  /* ── Статусы ── */
-  --green: #23a559;         /* status-online */
-  --green-h: #1a6334;
-  --green-btn: #248046;     /* button-positive-background */
-  --green-btn-h: #1a6334;
-  --green-btn-a: #15562b;
-  --green-bg: rgba(35,165,89,0.16);
-  --green-border: rgba(35,165,89,0.4);
-  --yellow: #f0b232;        /* status-idle */
-  --red: #f23f43;           /* status-dnd / unread */
-  --red-h: #da373c;         /* button-danger-background */
-  --red-a: #a12828;         /* button-danger-background-hover */
-  --red-aa: #8e2a2e;        /* button-danger-background-active */
-  --red-bg: rgba(242,63,67,0.12);
-  --red-bg2: rgba(242,63,67,0.24);
-  --red-border: rgba(242,63,67,0.4);
-  --grey-status: #80848e;   /* status-offline */
-  --gold: #f0b132;
-
   /* ── Discord-палитра для голосовых/звонков (алиасы) ── */
   --dc-bg: #1e1f22;
   --dc-bg2: #313338;
@@ -175,54 +106,21 @@ html, body {
 }
 :is(input, textarea, select):focus-visible { outline: none; }
 
-/* ── Скроллбары ──
-   ВАЖНО: в Chromium 121+ любое `scrollbar-color` / `scrollbar-width` отключает
-   ::-webkit-scrollbar. Поэтому стандартные свойства — только для браузеров без
-   webkit-псевдоэлементов (Firefox). Иначе ломается 16px-скроллбар чата. */
-
-/* Тонкий (по умолчанию везде) */
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-corner { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb); border-radius: 4px;
-  border: 2px solid transparent; background-clip: padding-box; min-height: 40px;
-}
-
-/* Широкий — чат (scrollbar-auto) */
-.messages::-webkit-scrollbar, .group-messages::-webkit-scrollbar { width: 16px; }
-.messages::-webkit-scrollbar-track, .group-messages::-webkit-scrollbar-track {
-  background: var(--scrollbar-track); border: 4px solid var(--bg2); border-radius: 8px;
-  background-clip: padding-box;
-}
-.messages::-webkit-scrollbar-thumb, .group-messages::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb); border: 4px solid transparent;
-  background-clip: padding-box; border-radius: 8px; min-height: 40px;
-}
-
-/* Авто-скрытие в сайдбаре и панели участников */
-.sidebar-body::-webkit-scrollbar-thumb,
-#group-members-list::-webkit-scrollbar-thumb { background: transparent; }
-.sidebar-body:hover::-webkit-scrollbar-thumb,
-#group-members-list:hover::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb); background-clip: padding-box;
-}
+/* ── Скроллбары ── */
 
 .sidebar-body, .messages, .group-messages, .search-drop, .modal-box,
 #group-members-list, .friends-picker, .group-members-list,
 .blocked-users-list, .call-video-grid { overscroll-behavior: contain; }
 
-@supports not selector(::-webkit-scrollbar) {
-  .sidebar-body, .search-drop, .modal-box,
-  #group-members-list, .friends-picker, .group-members-list,
-  .blocked-users-list, .call-video-grid {
-    scrollbar-width: thin;
-    scrollbar-color: var(--scrollbar-thumb) transparent;
-  }
-  .messages, .group-messages { scrollbar-width: auto; scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); }
-  .sidebar-body, #group-members-list { scrollbar-color: transparent transparent; }
-  .sidebar-body:hover, #group-members-list:hover { scrollbar-color: var(--scrollbar-thumb) transparent; }
+.sidebar-body, .search-drop, .modal-box,
+#group-members-list, .friends-picker, .group-members-list,
+.blocked-users-list, .call-video-grid {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
+.messages, .group-messages { scrollbar-width: auto; scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); }
+.sidebar-body, #group-members-list { scrollbar-color: transparent transparent; }
+.sidebar-body:hover, #group-members-list:hover { scrollbar-color: var(--scrollbar-thumb) transparent; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Примитивы: аватары, кнопки, поля, бейджи

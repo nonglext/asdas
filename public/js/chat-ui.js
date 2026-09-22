@@ -1345,7 +1345,10 @@ function uiApplyDeletedMessage(id) {
     if (element) {
       element.classList.add('deleted');
       element.querySelector('.msg-del-btn')?.remove();
-      element.querySelectorAll('.message-image').forEach(image => image.remove());
+      element.querySelectorAll('.message-image, .message-audio, .message-video, .message-file').forEach(node => {
+        if (typeof node.pause === 'function') node.pause();
+        node.remove();
+      });
 
       const text = element.querySelector('.g-msg-text');
 
@@ -3084,7 +3087,9 @@ document.addEventListener('paste', event => {
   event.preventDefault();
 
   if (setComposerAttachment(group, file)) {
-    showTransientNotice('Файл добавлен к сообщению');
+    const isImage = String(file.type || '').toLowerCase().startsWith('image/');
+    const what = isImage ? 'Скриншот добавлен' : 'Файл добавлен';
+    showTransientNotice(`${what} к сообщению${group ? ' группы' : ''}`);
   }
 });
 

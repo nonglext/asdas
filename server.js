@@ -985,7 +985,11 @@ const upload = multer({
   fileFilter(req, file, callback) {
     const mime = String(file.mimetype || '').toLowerCase();
 
+    // Содержимое всё равно проверяет sharp; пустой MIME от браузера не повод
+    // отклонять валидный файл.
     const allowed = new Set([
+      '',
+      'image/pjpeg',
       'image/jpeg',
       'image/jpg',
       'image/png',
@@ -1026,8 +1030,10 @@ const attachmentUpload = multer({
     const name = String(file.originalname || '').toLowerCase();
     const allowedMime = new Set([
       'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif',
-      'application/zip', 'application/x-zip-compressed',
-      'audio/mpeg', 'audio/mp3', 'video/mp4', 'application/octet-stream'
+      '', 'image/pjpeg',
+      'application/zip', 'application/x-zip-compressed', 'application/x-zip', 'multipart/x-zip',
+      'audio/mpeg', 'audio/mp3', 'audio/x-mp3', 'audio/mpeg3', 'audio/x-mpeg-3',
+      'video/mp4', 'application/octet-stream'
     ]);
 
     if (!allowedMime.has(mime) || !/\.(?:jpe?g|png|webp|gif|zip|mp3|mp4)$/.test(name)) {
@@ -2862,6 +2868,24 @@ function socketError(socket, event, argument, error) {
   }
 }
 
+// Групповые звонки идут full-mesh: каждый участник держит RTCPeerConnection
+// с каждым. Без потолка группа на 50 человек кладёт браузеры всех участников.
+const MAX_CALL_PARTICIPANTS = Math.max(
+  2,
+  Number.parseInt(process.env.MAX_CALL_PARTICIPANTS || '', 10) || 10
+);
+
+function assertCallCapacity(call, uid) {
+  if (
+    call &&
+    call.type === 'group' &&
+    !call.participants.has(uid) &&
+    call.participants.size >= MAX_CALL_PARTICIPANTS
+  ) {
+    reject(409, 'Достигнут лимит участников звонка', 'limit_reached');
+  }
+}
+
 function installEvent(socket, event, shape, handler) {
   socket.on(event, (...args) => {
     const uid = socket.user.id;
@@ -3809,6 +3833,8 @@ io.on('connection', socket => {
       callsByChat.set(key, call);
     }
 
+    assertCallCapacity(call, uid);
+
     const peers = [...call.participants].filter(id => id !== uid);
 
     attachCall(socket, call);
@@ -3865,6 +3891,8 @@ io.on('connection', socket => {
     if (busyUser(uid, call.callId)) {
       reject(409, 'Занято', 'busy');
     }
+
+    assertCallCapacity(call, uid);
 
     if (!socket.connected) {
       reject(503, 'Соединение потеряно', 'disconnected');

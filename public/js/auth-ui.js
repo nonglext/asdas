@@ -1977,6 +1977,87 @@ auOnSocket('friendRemoved', payload => {
   auPersistProfile();
 });
 
+// Синхронизация профиля: сервер шлёт userUpdated друзьям и profileUpdated
+// во все вкладки владельца. Раньше эти события молча терялись.
+function auApplyUserUpdated(value, includeSelf) {
+  if (!auRecord(value) || !state.me) return;
+
+  const id = userIdOf(value);
+  if (!id) return;
+
+  const patch = {};
+  if (typeof value.nickname === 'string') patch.nickname = value.nickname;
+  if (Object.prototype.hasOwnProperty.call(value, 'avatar')) {
+    patch.avatar = typeof value.avatar === 'string' ? value.avatar : null;
+  }
+  if (typeof value.status === 'string') patch.status = value.status;
+  if (typeof value.online === 'boolean') patch.online = value.online;
+  if (typeof value.bio === 'string') patch.bio = value.bio;
+
+  if (includeSelf) {
+    if (id !== String(state.me.id)) return;
+    state.me = { ...state.me, ...patch, id };
+    auPersistProfile();
+    renderAv($('my-avatar'), state.me.nickname, state.me.avatar);
+    setText('my-nick', state.me.nickname || id);
+    return;
+  }
+
+  if (state.friends[id]) {
+    state.friends[id] = { ...state.friends[id], ...patch, id };
+    nicknameVersions.set(id, (nicknameVersions.get(id) || 0) + 1);
+  }
+
+  for (const [groupId, group] of Object.entries(state.groups || {})) {
+    const members = auMembers(group);
+    if (!members.some(member => String(member.id) === id)) continue;
+    state.groups[groupId] = {
+      ...group,
+      members: members.map(member =>
+        String(member.id) === id ? { ...member, ...patch, id } : member,
+      ),
+    };
+  }
+
+  renderFriendsList();
+  if (state.activeFriend === id) auRefreshActiveFriend();
+  if (typeof renderGroupsList === 'function') renderGroupsList();
+  if (state.activeGroup && state.groups[state.activeGroup]) {
+    syncActiveGroupUI(state.groups[state.activeGroup]);
+  }
+}
+
+auOnSocket('userUpdated', value => auApplyUserUpdated(value, false));
+auOnSocket('profileUpdated', value => auApplyUserUpdated(value, true));
+
+// Блокировки из другой вкладки того же аккаунта.
+auOnSocket('userBlocked', payload => {
+  if (!auRecord(payload) || !state.me) return;
+  const id = auId(payload.id);
+  state.me.blockedUsers = Array.isArray(payload.blockedUsers)
+    ? auIds(payload.blockedUsers)
+    : [...new Set([...auIds(state.me.blockedUsers), ...(id ? [id] : [])])];
+  if (id) auRefreshAddButtons(id);
+  auPersistProfile();
+});
+
+auOnSocket('userUnblocked', payload => {
+  if (!auRecord(payload) || !state.me) return;
+  const id = auId(payload.id);
+  if (Array.isArray(payload.blockedUsers)) {
+    state.me.blockedUsers = auIds(payload.blockedUsers);
+  } else if (id) {
+    state.me.blockedUsers = auIds(state.me.blockedUsers).filter(b => b !== id);
+  }
+  if (id) {
+    if (typeof blockedUsersCache !== 'undefined' && Array.isArray(blockedUsersCache)) {
+      blockedUsersCache = blockedUsersCache.filter(user => auId(user && user.id) !== id);
+    }
+    auRefreshAddButtons(id);
+  }
+  auPersistProfile();
+});
+
 function setFriendPresence(value, online) {
   const id = auId(value);
   if (!id || !state.me) return;
@@ -2159,8 +2240,9 @@ function auDeleteRenderedMessage(value) {
       wrap.classList.add('deleted');
       wrap.querySelector('.msg-del-btn')?.remove();
 
-      wrap.querySelectorAll('.message-image').forEach(image => {
-        image.remove();
+      wrap.querySelectorAll('.message-image, .message-audio, .message-video, .message-file').forEach(node => {
+        if (typeof node.pause === 'function') node.pause();
+        node.remove();
       });
 
       const text = wrap.querySelector('.g-msg-text');

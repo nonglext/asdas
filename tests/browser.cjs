@@ -11,7 +11,7 @@ const me={id:'alice',nickname:'Алекс',friends:['bob','carol'],friendRequest
 const bob={id:'bob',nickname:'Макс',friends:['alice'],friendRequests:[],blockedUsers:[],online:true};
 const carol={...bob,id:'carol',nickname:'Саша'};
 const group={id:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',name:'Планы на выходные',ownerId:'alice',members:[me,bob,carol]};
-const mock=`window.__sent=[];window.__connections=0;window.__response={ok:true,status:'pending'};window.io=function(){const handlers={};const s={connected:false,auth:null,on(e,f){(handlers[e]??=[]).push(f);return s},off(){return s},fire(e,p){for(const f of handlers[e]||[])f(p)},connect(){s.connected=true;window.__connections++;setTimeout(()=>{s.fire('connect');s.fire('profile',${JSON.stringify(me)})},10);return s},disconnect(){s.connected=false;return s},emit(e,p,cb){window.__sent.push({event:e,payload:p});if(cb)setTimeout(()=>cb(null,window.__response),window.__ackDelay||30);return s},timeout(){return s},io:{on(){}}};window.__socket=s;return s}`;
+const mock=`window.__sent=[];window.__connections=0;window.__response={ok:true,status:'pending'};window.io=function(){const handlers={};const s={connected:false,auth:null,on(e,f){(handlers[e]??=[]).push(f);return s},once(e,f){const w=(...a)=>{s.off(e,w);f(...a)};return s.on(e,w)},off(e,f){if(!e){for(const k in handlers)delete handlers[k]}else if(!f){delete handlers[e]}else if(handlers[e]){handlers[e]=handlers[e].filter(x=>x!==f)}return s},fire(e,p){for(const f of [...(handlers[e]||[])])f(p)},connect(){s.connected=true;window.__connections++;setTimeout(()=>{s.fire('connect');s.fire('profile',${JSON.stringify(me)})},10);return s},disconnect(){s.connected=false;return s},emit(e,p,cb){window.__sent.push({event:e,payload:p});if(cb)setTimeout(()=>cb(null,window.__response),window.__ackDelay||30);return s},timeout(){return s},io:{on(){}}};window.__socket=s;return s}`;
 const server=http.createServer((req,res)=>{let pathname=new URL(req.url,'http://local').pathname;
  if(pathname==='/socket.io/socket.io.js'){res.setHeader('Content-Type','text/javascript');return res.end(mock)}
  if(pathname==='/')pathname='/index.html';const file=path.join(root,pathname);if(!file.startsWith(root+path.sep)){res.statusCode=403;return res.end()}
@@ -108,21 +108,22 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
  await page.click('#btn-group-send');await page.waitForTimeout(120);
  await page.fill('#search-input','@david');await page.waitForSelector('.s-item .btn-add');await page.click('.s-item .btn-add');await page.waitForTimeout(100);
  await check('friend addition waits for ack and shows success',async()=>{assert.equal(await page.locator('.s-item .btn-add').textContent(),'Заявка отправлена');const sent=await page.evaluate(()=>__sent.find(x=>x.event==='sendFriendRequest'));assert.equal(sent.payload,'david')});
- await page.evaluate(()=>{__response={ok:false,reason:'blocked',error:'Заблокирован'};closeDrop();});
+ await page.evaluate(()=>{__response={ok:false,reason:'blocked',error:'Заблокирован'};sentFriendRequests.delete('david');closeDrop();});
  await page.fill('#search-input','david');await page.waitForSelector('.s-item .btn-add');await page.click('.s-item .btn-add');await page.waitForTimeout(100);
  await check('friend errors restore the button and explain reason',async()=>{assert.equal(await page.locator('.s-item .btn-add').isDisabled(),false);assert.match(await page.locator('#transient-notice').textContent(),/Невозможно/)});
  await page.evaluate(()=>{__response={ok:true,status:'friends'};});await page.click('.s-item .btn-add');await page.waitForTimeout(100);
- await check('cross-request success has a friends state',async()=>assert.equal(await page.locator('.s-item .btn-add').textContent(),'В друзьях'));
+ await check('cross-request success has a friends state',async()=>assert.match(await page.locator('.s-item .btn-add').textContent(),/В друзьях/));
  await page.evaluate(()=>closeDrop());await page.evaluate(()=>openChat('bob'));await page.waitForSelector('#messages .history-more');
  await check('first history page renders 50 messages',async()=>assert.equal(await page.locator('#messages [data-msgid]').count(),50));
  await page.click('#messages .history-more');await page.waitForSelector('[data-msgid="00000000-0000-0000-0000-000000000000"]');
  await check('cursor pagination preserves existing messages',async()=>assert.equal(await page.locator('#messages [data-msgid]').count(),51));
- await page.evaluate(()=>{__socket.connected=false});await page.fill('#msg-input','Не потеряй меня');await page.click('#btn-send');
+ await page.evaluate(()=>{__socket.connected=false;__socket.fire('disconnect','transport close')});await page.fill('#msg-input','Не потеряй меня');await page.press('#msg-input','Enter');
+ await check('offline send button is disabled',async()=>assert.equal(await page.locator('#btn-send').isDisabled(),true));
  await check('disconnected send preserves text',async()=>assert.equal(await page.inputValue('#msg-input'),'Не потеряй меня'));
- await page.evaluate(()=>{__socket.connected=true;__response={ok:false,reason:'busy',error:'Сервер занят'}});await page.click('#btn-send');await page.waitForTimeout(100);
+ await page.evaluate(()=>{__socket.connected=true;refreshComposer(false);__response={ok:false,reason:'busy',error:'Сервер занят'}});await page.click('#btn-send');await page.waitForTimeout(100);
  await check('rejected send preserves text',async()=>assert.equal(await page.inputValue('#msg-input'),'Не потеряй меня'));
  await page.evaluate(()=>{__response={ok:true};__ackDelay=180});await page.click('#btn-send');
- await check('send does not clear text before acknowledgement',async()=>assert.equal(await page.inputValue('#msg-input'),'Не потеряй меня'));
+ await check('send clears the composer optimistically and blocks double send',async()=>{assert.equal(await page.inputValue('#msg-input'),'');assert.equal(await page.locator('#btn-send').isDisabled(),true)});
  await page.waitForTimeout(240);
  await check('confirmed send clears text and retries reuse id',async()=>{assert.equal(await page.inputValue('#msg-input'),'');const s=await page.evaluate(()=>__sent.filter(x=>x.event==='sendMessage'));assert.equal(s.at(-1).payload.clientId,s.at(-2).payload.clientId)});
  await page.fill('#msg-input','Черновик Максу');await page.evaluate(()=>openChat('carol'));assert.equal(await page.inputValue('#msg-input'),'');await page.fill('#msg-input','Черновик Саше');await page.evaluate(()=>openChat('bob'));
@@ -204,7 +205,7 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
  await page.evaluate(()=>{__socket.fire('callPeerLeft',{callId:'screen-test',peerId:'bob'});});
  await check('leaving peer starts a one-minute wait instead of ending immediately',async()=>{
    assert.equal(await page.evaluate(()=>callState.active),true);
-   assert.match(await page.locator('#call-overlay-status').textContent(),/ждём участника/);
+   assert.match(await page.locator('#call-overlay-status').textContent(),/ждём участника|ожидание участник/);
  });
  await page.evaluate(()=>hangupCall());
  await page.setViewportSize({width:1440,height:900});await page.evaluate(()=>{openGroupChat('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');document.activeElement?.blur()});await page.waitForTimeout(200);

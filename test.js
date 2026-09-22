@@ -24,8 +24,9 @@ const eventCode=server.slice(server.indexOf('function installEvent('),server.ind
 class ApiError extends Error {constructor(status,message,reason='bad_request'){super(message);this.status=status;this.reason=reason}}
 function harness(opts={}) {
  const pendingEvents=new Map(), errors=[], handlers={};
- const socket={ user:user('alice'),connected:true,authToken:'test',on:(e,fn)=>handlers[e]=fn,disconnect(){this.connected=false} };
- const sandbox={ApiError,record:x=>!!x&&typeof x==='object'&&!Array.isArray(x),idOK:x=>typeof x==='string'&&/^[a-z0-9_]{3,30}$/.test(x),uuidOK:x=>typeof x==='string'&&/^[a-f0-9-]{36}$/.test(x),socketError:(...args)=>errors.push(args.at(-1)),pendingEvents,eventLimit:()=>opts.limit!==false,serial:fn=>Promise.resolve().then(fn),verifyToken:async()=>opts.auth===false?null:{user:user('alice')},socket,handler:opts.handler|| (async()=>({status:'pending'}))};
+ const socket={ user:user('alice'),connected:true,initialized:true,authToken:'test',on:(e,fn)=>handlers[e]=fn,disconnect(){this.connected=false} };
+ if(opts.limit===false)pendingEvents.set('alice',16);
+ const sandbox={ApiError,reject:(status,message,reason)=>{throw new ApiError(status,message,reason)},record:x=>!!x&&typeof x==='object'&&!Array.isArray(x),idOK:x=>typeof x==='string'&&/^[a-z0-9_]{3,30}$/.test(x),uuidOK:x=>typeof x==='string'&&/^[a-f0-9-]{36}$/.test(x),socketError:(...args)=>errors.push(args.at(-1)),pendingEvents,eventLimit:()=>opts.limit!==false,serial:fn=>Promise.resolve().then(fn),verifyToken:async()=>opts.auth===false?null:{user:user('alice')},socket,handler:opts.handler|| (async()=>({status:'pending'}))};
  vm.runInNewContext(eventCode+";installEvent(socket,'sendFriendRequest','userId',handler)",sandbox);
  return {socket,pendingEvents,errors,run:(...args)=>handlers.sendFriendRequest(...args)};
 }

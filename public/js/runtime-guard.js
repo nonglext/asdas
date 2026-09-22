@@ -1,9 +1,10 @@
 'use strict';
 
 (function applySavedTheme() {
-  let theme = 'white';
-  try { theme = localStorage.getItem('chatapp_theme') || 'white'; } catch (_) {}
-  document.documentElement.dataset.theme = theme === 'gray' ? 'gray' : 'white';
+  let theme = 'gray';
+  try { theme = localStorage.getItem('chatapp_theme') || 'gray'; } catch (_) {}
+  document.documentElement.dataset.theme = theme === 'white' ? 'white' : 'gray';
+  document.documentElement.classList.add('theme-ready');
 })();
 
 // A runtime exception must never hide an already authenticated workspace.
@@ -39,6 +40,11 @@
     if (event.target instanceof HTMLScriptElement || event.message) report();
   }, true);
   window.addEventListener('unhandledrejection', event => {
-    if (event.reason?.name !== 'AbortError') report();
+    if (event.reason?.name === 'AbortError') return;
+    if (event.reason?.status === 401 || event.reason?.status === 403) {
+      report();
+    } else {
+      console.warn('Unhandled promise rejection:', event.reason);
+    }
   });
 })();

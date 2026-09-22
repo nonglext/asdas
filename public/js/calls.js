@@ -2121,7 +2121,7 @@ function startSpeakingMonitor(id, stream) {
       const rms = Math.sqrt(sumSquares / data.length);
       const db = 20 * Math.log10(Math.max(rms, 0.00001));
       const threshold = window.getVoiceSpeakingThresholdDb?.() ?? DEFAULT_SPEAKING_THRESHOLD_DB;
-      const adjustedThreshold = speaking ? threshold - 3 : threshold;
+      const adjustedThreshold = wasSpeaking ? threshold - 3 : threshold;
       speaking = db >= adjustedThreshold;
     }
 
