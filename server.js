@@ -320,26 +320,12 @@ app.set('query parser', 'simple');
 
 // Never implicitly trust one proxy hop in production.
 // Configure explicit proxy IPs/subnets when using a reverse proxy.
+// TRUST_PROXY: если не задана, trust proxy = false (express-rate-limit сам определит IP)
 const trustProxyRaw = process.env.TRUST_PROXY?.trim();
-
-if (!trustProxyRaw || trustProxyRaw === 'false') {
-  app.set('trust proxy', false);
-} else {
-  if (
-    trustProxyRaw === 'true' ||
-    /^\d+$/.test(trustProxyRaw) ||
-    trustProxyRaw.split(',').some(s =>
-      ['0.0.0.0/0', '::/0'].includes(s.trim())
-    )
-  ) {
-    fail('TRUST_PROXY must list trusted proxy IPs/subnets, not true or hop count');
-  }
-
-  const entries = trustProxyRaw.split(',').map(s => s.trim());
-
-  if (entries.some(s => !s)) fail('Invalid TRUST_PROXY');
-
-  app.set('trust proxy', entries);
+if (trustProxyRaw && trustProxyRaw !== 'false') {
+  // Если задана непустая строка, парсим как список IP/подсетей
+  const entries = trustProxyRaw.split(',').map(s => s.trim()).filter(Boolean);
+  if (entries.length) app.set('trust proxy', entries);
 }
 
 function requestIp(req) {
