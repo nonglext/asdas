@@ -540,7 +540,7 @@ async function withButtonBusy(button, busyText, action) {
 
   const timer = setTimeout(() => {
     if (buttonBusyOperations.get(button) === operation && button.isConnected) {
-      button.textContent = 'Сервер запускается…';
+      button.textContent = 'Ждём ответа сервера…';
     }
   }, SLOW_SERVER_HINT_MS);
 
@@ -643,8 +643,12 @@ async function authRequest(path, body, fallbackError) {
 
     setErr(
       error?.name === 'TimeoutError'
-        ? 'Сервер не отвечает, попробуйте ещё раз'
-        : 'Не удалось выполнить вход. Проверьте соединение',
+        ? (path === '/api/register'
+          ? 'Нет ответа от сервера. Проверьте, создан ли аккаунт: попробуйте войти с этим ID.'
+          : 'Сервер не отвечает, попробуйте ещё раз')
+        : (path === '/api/register'
+          ? 'Не удалось подтвердить регистрацию. Проверьте соединение или попробуйте войти с этим ID.'
+          : 'Не удалось выполнить вход. Проверьте соединение'),
     );
   } finally {
     if (authOperation === operation) authOperation = null;

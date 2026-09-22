@@ -54,3 +54,12 @@ test('every data-action in index.html has a handler', () => {
     assert.ok(js.includes(`[data-action="${name}"]`), `нет обработчика для data-action="${name}"`);
   }
 });
+test('Render trusts one proxy hop without disabling rate limiter validation', () => {
+  const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  const render = fs.readFileSync(path.join(root, 'render.yaml'), 'utf8');
+  assert.match(server, /process\.env\.RENDER === 'true'/);
+  assert.match(server, /app\.set\('trust proxy', 1\)/);
+  assert.match(server, /app\.set\('trust proxy', Number\(trustProxyRaw\)\)/);
+  assert.match(render, /key: TRUST_PROXY\s+value: "1"/);
+  assert.doesNotMatch(server, /skip:\s*\(req,\s*res\)/);
+});

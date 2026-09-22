@@ -318,14 +318,21 @@ const server = http.createServer(app);
 app.disable('x-powered-by');
 app.set('query parser', 'simple');
 
-// Never implicitly trust one proxy hop in production.
-// Configure explicit proxy IPs/subnets when using a reverse proxy.
-// TRUST_PROXY: если не задана, trust proxy = false (express-rate-limit сам определит IP)
+// Render terminates HTTPS at its reverse proxy. Trust that single hop so
+// Express and express-rate-limit use the client IP instead of the proxy IP.
+// Other deployments must opt in with their own proxy hop count or CIDRs.
 const trustProxyRaw = process.env.TRUST_PROXY?.trim();
-if (trustProxyRaw && trustProxyRaw !== 'false') {
-  // Если задана непустая строка, парсим как список IP/подсетей
-  const entries = trustProxyRaw.split(',').map(s => s.trim()).filter(Boolean);
-  if (entries.length) app.set('trust proxy', entries);
+if (trustProxyRaw === 'true') {
+  fail('TRUST_PROXY=true is unsafe for rate limiting; use a hop count or proxy CIDRs');
+} else if (trustProxyRaw && trustProxyRaw !== 'false') {
+  if (/^[1-9]\d*$/.test(trustProxyRaw)) {
+    app.set('trust proxy', Number(trustProxyRaw));
+  } else {
+    const entries = trustProxyRaw.split(',').map(s => s.trim()).filter(Boolean);
+    if (entries.length) app.set('trust proxy', entries);
+  }
+} else if (!trustProxyRaw && process.env.RENDER === 'true') {
+  app.set('trust proxy', 1);
 }
 
 function requestIp(req) {
@@ -433,12 +440,7 @@ const rate = (windowMs, limit) =>
       error: 'Слишком много запросов',
       reason: 'rate_limited'
     },
-    skipFailedRequests: true,
-    skip: (req, res) => {
-      // Пропускаем валидацию X-Forwarded-For на Render/прокси
-      // (trust proxy не работает в production mode, но rate-limiting по IP идёт)
-      return false;
-    }
+    skipFailedRequests: true
   });
 
 app.use('/api', (req, res, next) => {
