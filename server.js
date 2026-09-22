@@ -432,6 +432,12 @@ const rate = (windowMs, limit) =>
     message: {
       error: 'Слишком много запросов',
       reason: 'rate_limited'
+    },
+    skipFailedRequests: true,
+    skip: (req, res) => {
+      // Пропускаем валидацию X-Forwarded-For на Render/прокси
+      // (trust proxy не работает в production mode, но rate-limiting по IP идёт)
+      return false;
     }
   });
 
@@ -491,6 +497,7 @@ const registerIpRate = rateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: 'Слишком много регистраций', reason: 'rate_limited' },
+  skipFailedRequests: true,
 });
 
 function signToken(
