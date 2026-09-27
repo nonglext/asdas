@@ -356,8 +356,8 @@ const server = http.createServer(app);
 app.disable('x-powered-by');
 app.set('query parser', 'simple');
 
-// Never implicitly trust one proxy hop in production.
-// Configure explicit proxy IPs/subnets when using a reverse proxy.
+// Render exposes one reverse-proxy hop. Keep this explicit instead of
+// accepting `true`, which would trust arbitrary client-supplied X-Forwarded-*.
 const trustProxyRaw = process.env.TRUST_PROXY?.trim();
 
 if (!trustProxyRaw || trustProxyRaw === 'false') {
@@ -365,19 +365,26 @@ if (!trustProxyRaw || trustProxyRaw === 'false') {
 } else {
   if (
     trustProxyRaw === 'true' ||
-    /^\d+$/.test(trustProxyRaw) ||
     trustProxyRaw.split(',').some(s =>
       ['0.0.0.0/0', '::/0'].includes(s.trim())
     )
   ) {
-    fail('TRUST_PROXY must list trusted proxy IPs/subnets, not true or hop count');
+    fail('Set TRUST_PROXY=1 on Render, or use explicit trusted IPs/subnets');
   }
 
-  const entries = trustProxyRaw.split(',').map(s => s.trim());
+  if (/^\d+$/.test(trustProxyRaw)) {
+    const hops = Number(trustProxyRaw);
+    if (!Number.isSafeInteger(hops) || hops < 0 || hops > 8) {
+      fail('TRUST_PROXY hop count must be an integer from 0 to 8');
+    }
+    app.set('trust proxy', hops);
+  } else {
+    const entries = trustProxyRaw.split(',').map(s => s.trim());
 
-  if (entries.some(s => !s)) fail('Invalid TRUST_PROXY');
+    if (entries.some(s => !s)) fail('Invalid TRUST_PROXY');
 
-  app.set('trust proxy', entries);
+    app.set('trust proxy', entries);
+  }
 }
 
 function requestIp(req) {
