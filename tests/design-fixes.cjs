@@ -45,3 +45,12 @@ test('Render proxy configuration accepts one explicit hop, not true', () => {
   assert.match(server, /Set TRUST_PROXY=1 on Render/);
   assert.match(server, /trustProxyRaw === 'true'/);
 });
+
+test('chat messages use a shared Discord-like timeline, not Telegram bubbles', () => {
+  const css = read('public/css/theme.css');
+  assert.match(css, /Discord-style conversation rows: shared timeline, no Telegram chat bubbles/);
+  assert.match(css, /\.messages \.g-msg\.mine,[\s\S]*?flex-direction: row;/);
+  assert.match(css, /\.g-msg\.mine \.g-msg-body,[\s\S]*?background: transparent;/);
+  assert.match(css, /\.messages \.g-msg:hover,[\s\S]*?background: var\(--msg-hover\);/);
+  assert.match(css, /\.msg-actions,[\s\S]*?top: -34px;[\s\S]*?background: var\(--bg-floating\);/);
+});
