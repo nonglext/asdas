@@ -1411,7 +1411,7 @@ body { -webkit-font-smoothing: antialiased; }
 .chat-head { background: var(--bg1); }
 .chat-head-nick { font-family: var(--font-display); letter-spacing: -.01em; }
 
-/* Пузыри */
+/* Legacy bubble rules are neutralized by the flat Discord timeline below. */
 .messages .g-msg, .group-messages .g-msg { padding: 1px 20px; gap: 10px; margin-top: 14px; background: transparent; }
 .g-msg.grouped { margin-top: 3px; }
 .g-msg:hover, .g-msg:focus-within { background: transparent; }
@@ -1652,6 +1652,9 @@ body { -webkit-font-smoothing: antialiased; }
 }
 .g-msg.grouped:hover .g-msg-hover-time,
 .g-msg.grouped:focus-within .g-msg-hover-time { opacity: 1; }
+.g-msg.grouped .g-msg-body { margin-left: 0; }
+.g-msg.grouped .g-msg-body::before { content: none; }
+.g-msg.grouped .g-msg-text { min-height: 1.45em; }
 .messages #messages .g-msg-av,
 .messages #messages .g-msg-av-slot,
 #messages .g-msg-av,
@@ -1682,6 +1685,27 @@ body { -webkit-font-smoothing: antialiased; }
 .msg-action.danger { color: var(--text-danger); }
 .g-msg.flash .g-msg-body { animation: none; }
 .g-msg.flash { box-shadow: inset 0 0 0 1px var(--accent-border); }
+.g-msg,
+.g-msg.mine,
+.g-msg.grouped,
+.g-msg.mine.grouped { border-radius: 0; }
+.g-msg.grouped .g-msg-body,
+.g-msg.mine .g-msg-body,
+.g-msg.mine.grouped .g-msg-body {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.messages .g-msg.mine,
+.group-messages .g-msg.mine { flex-direction: row; }
+.g-msg.grouped .g-msg-hover-time {
+  position: relative;
+  width: 38px;
+  min-width: 38px;
+}
+.message-image,
+.message-video { border-radius: 4px; }
 @media (max-width: 640px) {
   .messages .g-msg,
   .group-messages .g-msg { gap: 12px; padding-inline: 12px; }

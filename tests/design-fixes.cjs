@@ -51,6 +51,9 @@ test('chat messages use a shared Discord-like timeline, not Telegram bubbles', (
   assert.match(css, /Discord-style conversation rows: shared timeline, no Telegram chat bubbles/);
   assert.match(css, /\.messages \.g-msg\.mine,[\s\S]*?flex-direction: row;/);
   assert.match(css, /\.g-msg\.mine \.g-msg-body,[\s\S]*?background: transparent;/);
+  assert.match(css, /\.g-msg\.grouped \.g-msg-body,[\s\S]*?background: transparent;/);
+  assert.match(css, /\.g-msg\.grouped \.g-msg-hover-time \{[\s\S]*?width: 38px;/);
+  assert.match(css, /\.messages \.g-msg\.mine,[\s\S]*?flex-direction: row;/);
   assert.match(css, /\.messages \.g-msg:hover,[\s\S]*?background: var\(--msg-hover\);/);
   assert.match(css, /\.msg-actions,[\s\S]*?top: -34px;[\s\S]*?background: var\(--bg-floating\);/);
 });
