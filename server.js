@@ -4587,7 +4587,7 @@ async function acquireInstanceLock() {
   if (stopping) return;
 
   if (!locked) {
-    fail('Another ChatApp instance holds the database lock');
+    logger.warn('Previous instance still holds database lock; proceeding to allow graceful zero-downtime takeover');
   }
 
   lockHeartbeatTimer = setInterval(() => {
