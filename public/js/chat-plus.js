@@ -27,8 +27,6 @@ const CP_ICON = {
   trash: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>',
   close: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>',
   down: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12l7 7 7-7"/></svg>',
-  sent: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8.5 3 3 7-7"/></svg>',
-  read: '<svg viewBox="0 0 20 16" width="18" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m1.5 8.5 3 3 7-7M8.5 11.5l7-7M9.8 10.2l1.3 1.3"/></svg>',
 };
 
 /* ── Утилиты ─────────────────────────────────────────────────────────────── */
@@ -170,15 +168,6 @@ function cpRenderMeta(wrap, message, info) {
   time.title = new Date(info.timeMs).toLocaleString('ru-RU');
   meta.appendChild(time);
 
-  if (info.isMine && !info.group && !message.deleted && wrap.dataset.msgid) {
-    const read = message.read === true;
-    const receipt = cpEl('span', `msg-receipt${read ? ' is-read' : ''}`);
-
-    receipt.innerHTML = read ? CP_ICON.read : CP_ICON.sent;
-    receipt.title = read ? 'Прочитано' : 'Доставлено';
-    receipt.setAttribute('aria-label', receipt.title);
-    meta.appendChild(receipt);
-  }
 }
 
 function cpRenderReactions(wrap, reactions) {
@@ -917,29 +906,6 @@ function cpSetupJump(containerId) {
   container._cpJump = { sync, reset: () => { unseen = 0; sync(); } };
 }
 
-/* ── Отметки прочтения ───────────────────────────────────────────────────── */
-
-function cpMarkReadBy(peerId) {
-  if (!peerId || state.activeFriend !== peerId) return;
-
-  const container = document.getElementById('messages');
-  if (!container) return;
-
-  for (const wrap of container.querySelectorAll('.g-msg.mine[data-msgid]')) {
-    if (!wrap._msg || wrap._msg.read) continue;
-
-    wrap._msg = { ...wrap._msg, read: true };
-    const receipt = wrap.querySelector('.msg-receipt');
-
-    if (receipt) {
-      receipt.classList.add('is-read');
-      receipt.innerHTML = CP_ICON.read;
-      receipt.title = 'Прочитано';
-      receipt.setAttribute('aria-label', 'Прочитано');
-    }
-  }
-}
-
 /* ── Переключение чатов ──────────────────────────────────────────────────── */
 
 let cpRevision = null;
@@ -1060,7 +1026,6 @@ function cpOnSocket(event, handler) {
 cpOnSocket('messageEdited', cpApplyEdit);
 cpOnSocket('messageReactions', cpApplyReactions);
 cpOnSocket('typing', cpReceiveTyping);
-cpOnSocket('messagesRead', payload => cpMarkReadBy(cpId(payload?.by)));
 cpOnSocket('messageDeleted', payload => {
   const id = cpId(payload?.messageId);
   if (!id) return;
@@ -1073,7 +1038,6 @@ cpOnSocket('messageDeleted', payload => {
     wrap.querySelector(':scope > .msg-actions')?.remove();
     wrap.querySelector('.msg-reactions')?.remove();
     wrap.querySelector('.msg-reply')?.remove();
-    wrap.querySelector('.msg-receipt')?.remove();
     wrap.querySelector('.msg-edited')?.remove();
     wrap.querySelectorAll('.message-audio, .message-video, .message-file').forEach(node => node.remove());
   }

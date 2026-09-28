@@ -66,3 +66,11 @@ test('dark theme matches the supplied Discord-style reference', () => {
   assert.match(css, /\.msg-bar:focus-within \{[\s\S]*?box-shadow: 0 0 0 2px var\(--accent-bg\);/);
   assert.match(css, /\.msg-divider::before,[\s\S]*?\.msg-divider::after/);
 });
+
+test('message metadata never exposes delivered/read state', () => {
+  const js = read('public/js/chat-plus.js');
+  const css = read('public/css/theme.css');
+  assert.doesNotMatch(js, /msg-receipt|Прочитано|Доставлено|CP_ICON\.(?:sent|read)/);
+  assert.doesNotMatch(css, /\.msg-receipt/);
+  assert.doesNotMatch(js, /cpOnSocket\('messagesRead'/);
+});

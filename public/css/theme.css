@@ -1441,8 +1441,6 @@ body { -webkit-font-smoothing: antialiased; }
 
 .msg-meta { align-self: flex-end; display: inline-flex; align-items: center; gap: 5px; margin-top: 2px; font-size: 11px; color: var(--text3); font-variant-numeric: tabular-nums; user-select: none; }
 .msg-edited { font-style: italic; }
-.msg-receipt { display: inline-flex; color: var(--text4); }
-.msg-receipt.is-read { color: var(--text-brand); }
 
 .msg-reply { all: unset; cursor: pointer; display: grid; gap: 1px; margin: 2px 0 6px; padding: 6px 10px; border-radius: 10px; background: var(--accent-bg); min-width: 0; }
 .msg-reply:hover { background: var(--accent-bg2); }

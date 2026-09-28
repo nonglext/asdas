@@ -1,6 +1,6 @@
 {
   "name": "chatapp",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "private": true,
   "description": "Minimal private chat with groups, calls and secure photo, ZIP, MP3 and MP4 sharing",
   "main": "electron/main.cjs",
