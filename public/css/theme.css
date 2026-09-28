@@ -1439,7 +1439,7 @@ body { -webkit-font-smoothing: antialiased; }
 @keyframes cp-flash { 0%, 30% { box-shadow: 0 0 0 3px var(--accent-border); } 100% { box-shadow: var(--shadow-low); } }
 .message-image, .message-video { border-radius: 12px; margin-top: 6px; }
 
-.msg-meta { align-self: flex-end; display: inline-flex; align-items: center; gap: 5px; margin-top: 2px; font-size: 11px; color: var(--text3); font-variant-numeric: tabular-nums; user-select: none; }
+.msg-meta { display: none; }
 .msg-edited { font-style: italic; }
 
 .msg-reply { all: unset; cursor: pointer; display: grid; gap: 1px; margin: 2px 0 6px; padding: 6px 10px; border-radius: 10px; background: var(--accent-bg); min-width: 0; }

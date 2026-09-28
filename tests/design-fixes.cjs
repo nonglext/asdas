@@ -74,3 +74,11 @@ test('message metadata never exposes delivered/read state', () => {
   assert.doesNotMatch(css, /\.msg-receipt/);
   assert.doesNotMatch(js, /cpOnSocket\('messagesRead'/);
 });
+
+test('message time is shown only beside the author, not repeated at the far right', () => {
+  const js = read('public/js/chat-plus.js');
+  const css = read('public/css/theme.css');
+  assert.doesNotMatch(js, /cpEl\('time', 'msg-meta-time'/);
+  assert.match(css, /\.msg-meta \{ display: none; \}/);
+  assert.match(css, /\.g-msg-time,[\s\S]*?display: inline;/);
+});

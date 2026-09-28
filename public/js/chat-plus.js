@@ -163,11 +163,6 @@ function cpRenderMeta(wrap, message, info) {
     meta.appendChild(edited);
   }
 
-  const time = cpEl('time', 'msg-meta-time', typeof fmtTime === 'function' ? fmtTime(info.timeMs) : '');
-  time.dateTime = new Date(info.timeMs).toISOString();
-  time.title = new Date(info.timeMs).toLocaleString('ru-RU');
-  meta.appendChild(time);
-
 }
 
 function cpRenderReactions(wrap, reactions) {
