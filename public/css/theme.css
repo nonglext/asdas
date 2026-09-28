@@ -1069,17 +1069,17 @@ h1, h2, h3 { text-wrap: balance; }
 /* 1.8.1 settings and appearance */
 :root[data-theme="gray"] {
   color-scheme: dark;
-  --bg: oklch(19.5% .008 60);
-  --bg1: oklch(23% .008 60);
-  --bg2: oklch(25.5% .008 60);
-  --bg3: oklch(29.5% .009 60);
-  --bg4: oklch(34.5% .010 60);
-  --bg5: oklch(43% .010 60);
-  --bg6: oklch(55% .010 60);
-  --bg7: oklch(67% .009 60);
-  --panel-user: oklch(21% .008 60);
-  --bg-floating: oklch(27% .009 60);
-  --bg-modal-footer: oklch(22% .008 60);
+  --bg: oklch(20% .006 275);
+  --bg1: oklch(23% .006 275);
+  --bg2: oklch(25% .006 275);
+  --bg3: oklch(28% .007 275);
+  --bg4: oklch(32% .007 275);
+  --bg5: oklch(42% .008 275);
+  --bg6: oklch(55% .008 275);
+  --bg7: oklch(68% .007 275);
+  --panel-user: oklch(21.5% .006 275);
+  --bg-floating: oklch(30% .007 275);
+  --bg-modal-footer: oklch(22.5% .006 275);
   --hover: oklch(100% .004 60 / .055);
   --active: oklch(100% .004 60 / .09);
   --selected: oklch(74% .105 190 / .16);
@@ -1093,7 +1093,7 @@ h1, h2, h3 { text-wrap: balance; }
   --text3: oklch(68% .010 70);
   --text4: oklch(59% .010 70);
   --text-active: oklch(99% .002 60);
-  --text-brand: oklch(80% .1 190);
+  --text-brand: oklch(78% .13 278);
 
   /* На тёмном фоне работают ровно противоположные значения. */
   --text-danger:   oklch(76% .14 22);
@@ -1102,7 +1102,7 @@ h1, h2, h3 { text-wrap: balance; }
   --mention-bg:    oklch(80% .14 85 / .12);
   --mention-fg:    oklch(86% .12 85);
   --link:          oklch(78% .11 230);
-  --focus:         oklch(80% .1 190);
+  --focus:         oklch(72% .15 278);
 
   --scrollbar-thumb: oklch(100% .004 60 / .16);
   --shadow-stroke: 0 0 0 1px oklch(8% .010 60 / .2);
@@ -1112,13 +1112,13 @@ h1, h2, h3 { text-wrap: balance; }
   --shadow: 0 14px 36px oklch(8% .010 60 / .34);
   --shadow-lg: 0 20px 48px oklch(8% .010 60 / .42);
   --shadow-modal: 0 28px 72px oklch(8% .010 60 / .5), 0 0 0 1px var(--border);
-  --accent: oklch(74% .105 190);
-  --accent-h: oklch(79% .1 188);
-  --accent-a: oklch(69% .1 192);
-  --accent-bg: oklch(74% .105 190 / .14);
-  --accent-bg2: oklch(74% .105 190 / .24);
-  --accent-border: oklch(74% .105 190 / .45);
-  --on-accent: oklch(20% .03 200);
+  --accent: oklch(61% .19 278);
+  --accent-h: oklch(66% .18 278);
+  --accent-a: oklch(55% .18 278);
+  --accent-bg: oklch(61% .19 278 / .14);
+  --accent-bg2: oklch(61% .19 278 / .24);
+  --accent-border: oklch(61% .19 278 / .52);
+  --on-accent: oklch(99% .004 275);
   --on-strong: oklch(99% .004 60);
   --bubble-mine: oklch(36% .055 195);
   --bubble-mine-border: oklch(42% .06 195);
@@ -1580,6 +1580,8 @@ body { -webkit-font-smoothing: antialiased; }
 }
 .messages .g-msg.mine,
 .group-messages .g-msg.mine { flex-direction: row; }
+.messages,
+.group-messages { gap: 0; padding-top: 8px; }
 .g-msg-av,
 .g-msg-av-slot {
   flex: 0 0 38px;
@@ -1706,6 +1708,78 @@ body { -webkit-font-smoothing: antialiased; }
 }
 .message-image,
 .message-video { border-radius: 4px; }
+.chat-head {
+  background: var(--bg1);
+  box-shadow: 0 1px 0 var(--border-subtle);
+}
+.chat-head-actions { gap: 4px; }
+.chat-head .icon-btn { width: 36px; height: 36px; }
+.chat-head .icon-btn:hover { color: var(--text-h); background: var(--hover); }
+.msg-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 24px 18px 10px;
+  border: 0;
+  color: var(--text3);
+}
+.msg-divider::before,
+.msg-divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: var(--divider);
+}
+.msg-divider span {
+  padding: 0 4px;
+  background: transparent;
+  color: var(--text3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.msg-bar-wrap {
+  padding: 0 16px 12px;
+  background: var(--bg2);
+}
+.msg-bar {
+  min-height: 48px;
+  padding: 0 8px 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.msg-bar:focus-within {
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 2px var(--accent-bg);
+}
+.attach-btn,
+.send-btn {
+  flex-basis: 36px;
+  width: 36px;
+  height: 36px;
+  color: var(--text3);
+}
+.send-btn:not(:disabled) {
+  background: transparent;
+  color: var(--text-brand);
+}
+.send-btn:hover:not(:disabled) {
+  background: var(--accent-bg);
+  color: var(--accent-h);
+}
+.composer-hint {
+  padding: 4px 4px 0;
+  color: var(--text4);
+}
+.chat-welcome-av {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.msg-reaction {
+  border-radius: 7px;
+  background: var(--bg3);
+}
 @media (max-width: 640px) {
   .messages .g-msg,
   .group-messages .g-msg { gap: 12px; padding-inline: 12px; }

@@ -57,3 +57,12 @@ test('chat messages use a shared Discord-like timeline, not Telegram bubbles', (
   assert.match(css, /\.messages \.g-msg:hover,[\s\S]*?background: var\(--msg-hover\);/);
   assert.match(css, /\.msg-actions,[\s\S]*?top: -34px;[\s\S]*?background: var\(--bg-floating\);/);
 });
+
+test('dark theme matches the supplied Discord-style reference', () => {
+  const css = read('public/css/theme.css');
+  assert.match(css, /:root\[data-theme="gray"\][\s\S]*?--bg2: oklch\(25% \.006 275\)/);
+  assert.match(css, /--accent: oklch\(61% \.19 278\)/);
+  assert.match(css, /\.msg-bar \{[\s\S]*?border-radius: 8px;[\s\S]*?background: var\(--bg\);/);
+  assert.match(css, /\.msg-bar:focus-within \{[\s\S]*?box-shadow: 0 0 0 2px var\(--accent-bg\);/);
+  assert.match(css, /\.msg-divider::before,[\s\S]*?\.msg-divider::after/);
+});
