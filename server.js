@@ -692,7 +692,7 @@ function route(
   { publicRoute = false } = {}
 ) {
   app[method](url, ...middleware, (req, res, next) => {
-    serial(async () => {
+    const run = async () => {
       if (clientGone(req, res)) return;
 
       if (!publicRoute) {
@@ -708,7 +708,10 @@ function route(
       }
 
       await handler(req, res);
-    })
+    };
+
+    const task = publicRoute ? run() : serial(run);
+    task
       .catch(next)
       .finally(() => {
         void cleanupRequestTmp(req).catch(error => {
@@ -4656,7 +4659,7 @@ async function startInternal() {
   const cleanup = () => {
     if (stopping || queueSize > 16) return;
 
-    serial(cleanupUploads).catch(error => {
+    cleanupUploads().catch(error => {
       if (!stopping) {
         logger.warn('Upload cleanup failed', {
           error: error.message
