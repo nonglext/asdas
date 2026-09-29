@@ -188,7 +188,9 @@ function boundedText(value, max, { required = false, min = 0 } = {}) {
 // `req.aborted` has been deprecated since Node 16 and stays false on modern
 // runtimes, so an aborted upload was never actually detected. Socket state is.
 function clientGone(req, res) {
-  return Boolean(req.destroyed || res.destroyed || res.writableEnded);
+  // req.destroyed is true as soon as the request body has been fully read
+  // (Node >= 16 autoDestroy), so it must not be used to detect a dropped client.
+  return Boolean(res.destroyed || res.writableEnded || req.socket?.destroyed);
 }
 
 function megabytes(bytes) {
