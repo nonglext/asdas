@@ -1790,3 +1790,54 @@ body { -webkit-font-smoothing: antialiased; }
   .msg-action { width: 44px; height: 44px; }
   .msg-actions { top: -48px; }
 }
+
+/* ───────────────────── 2.0.9. Полировка (только оформление) ─────────────────────
+   Токены и контраст не менялись. Правила ниже мягко уточняют геометрию,
+   глубину и состояния; всё безопасно для тёмной темы, потому что цвета
+   берутся только из существующих токенов. */
+
+/* Карточка входа: чуть больше воздуха и мягкая обводка */
+.auth-box {
+  padding: 36px;
+  border-color: var(--border-subtle);
+  box-shadow: var(--shadow-lg), 0 0 0 1px oklch(100% 0 0 / .35) inset;
+}
+.auth-title { font-size: 26px; }
+.tab-content.active { gap: 20px; }
+
+/* Поля: единый плавный фокус-состояние вместо резкой смены рамки */
+.field input, .field textarea {
+  transition: border-color var(--ease), box-shadow var(--ease), background-color var(--ease);
+}
+.field input:hover:not(:focus):not(:disabled),
+.field textarea:hover:not(:focus):not(:disabled) { border-color: var(--divider); }
+.field input:focus, .field textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg2);
+  outline: none;
+}
+
+/* Кнопки: лёгкая глубина и отклик на нажатие */
+.btn-primary, .btn-secondary, .btn-danger { transition: background-color var(--ease), color var(--ease), opacity var(--ease), box-shadow var(--ease), transform var(--ease-fast); }
+.btn-primary:not(:disabled) { box-shadow: var(--shadow-low); }
+.btn-primary:hover:not(:disabled) { box-shadow: var(--shadow-medium); }
+.btn-primary:active:not(:disabled),
+.btn-secondary:active:not(:disabled),
+.btn-danger:active:not(:disabled) { transform: translateY(1px); box-shadow: none; }
+.btn-primary[aria-busy="true"] { cursor: progress; }
+
+/* Модальные окна: мягче углы и появление */
+.modal-box { border-radius: var(--radius-xl); animation: auth-in var(--ease-slow); }
+
+/* Уважаем системную настройку «меньше анимации» */
+@media (prefers-reduced-motion: reduce) {
+  .auth-box, .modal-box { animation: none; }
+  .btn-primary, .btn-secondary, .btn-danger { transition: none; }
+  .btn-primary:active:not(:disabled), .btn-secondary:active:not(:disabled), .btn-danger:active:not(:disabled) { transform: none; }
+}
+
+/* Узкие экраны: карточка входа без лишних отступов */
+@media (max-width: 640px) {
+  .auth-box { padding: 24px 18px; }
+  .auth-title { font-size: 24px; }
+}

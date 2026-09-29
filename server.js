@@ -393,9 +393,11 @@ function requestIp(req) {
   return proxyaddr(req, app.get('trust proxy fn'));
 }
 
-server.requestTimeout = 30_000;
-server.headersTimeout = 15_000;
-server.keepAliveTimeout = 5000;
+// Прокси Render/Cloudflare держит соединения дольше 5 с: если Node закрывает
+// keep-alive раньше, часть запросов получает случайный 502.
+server.requestTimeout = 120_000;
+server.headersTimeout = 66_000;
+server.keepAliveTimeout = 65_000;
 server.maxRequestsPerSocket = 1000;
 
 function corsOrigin(origin, callback) {

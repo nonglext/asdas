@@ -12,9 +12,19 @@ services:
         value: production
       - key: PORT
         value: "10000"
+      # Render даёт ровно один reverse-proxy hop; без этого все клиенты выглядят как один IP
+      # и общий rate limit регистрации/входа срабатывает для всех сразу.
+      - key: TRUST_PROXY
+        value: "1"
       - key: DATABASE_URL
         sync: false
       - key: JWT_SECRET
         sync: false
       - key: CLIENT_URL
         sync: false
+    # Для загрузок нужен постоянный диск (платный тариф), иначе файлы пропадают при рестарте:
+    # disk:
+    #   name: uploads
+    #   mountPath: /var/data
+    #   sizeGB: 1
+    # и добавьте переменную UPLOAD_DIR=/var/data/uploads
