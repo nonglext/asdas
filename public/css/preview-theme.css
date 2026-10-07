@@ -1,0 +1,89 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   preview-theme.css — перенос оформления chatapp-redesign-preview.html
+   в реальное приложение. Подключается последним и меняет только токены
+   тёмной темы (data-theme="gray") и размеры каркаса. Разметка, JS и
+   функционал не затрагиваются.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root[data-theme="gray"] {
+  color-scheme: dark;
+
+  /* Поверхности: рельса → список → чат → поля ввода → выделение → линии */
+  --bg:              oklch(19% .008 275);
+  --bg1:             oklch(23% .009 275);
+  --bg2:             oklch(27% .009 275);
+  --bg3:             oklch(31% .010 275);
+  --bg4:             oklch(36% .018 275);
+  --bg5:             oklch(38% .012 275);
+  --bg6:             oklch(52% .012 275);
+  --bg7:             oklch(68% .012 275);
+  --panel-user:      oklch(21% .008 275);
+  --bg-floating:     oklch(31% .010 275);
+  --bg-modal-footer: oklch(23% .009 275);
+
+  --hover:    oklch(31% .010 275);
+  --active:   oklch(36% .018 275);
+  --selected: oklch(36% .018 275);
+  --msg-hover: oklch(29% .010 275);
+  --border:   oklch(38% .012 275);
+  --divider:  oklch(38% .012 275);
+
+  /* Акцент: фиолетово-синий из превью */
+  --accent:          oklch(54% .205 277);
+  --accent-h:        oklch(59% .19 277);
+  --accent-a:        oklch(48% .19 277);
+  --accent-bg:       oklch(54% .205 277 / .18);
+  --accent-bg2:      oklch(54% .205 277 / .3);
+  --accent-border:   oklch(54% .205 277 / .5);
+  --accent-gradient: linear-gradient(155deg, oklch(58% .2 277), oklch(48% .2 277));
+  --link:            oklch(78% .11 240);
+  --focus:           oklch(85% .11 240);
+
+  /* Текст */
+  --text-h:      oklch(96% .005 275);
+  --text:        oklch(89% .007 275);
+  --text2:       oklch(82% .010 275);
+  --text3:       oklch(72% .012 275);
+  --text4:       oklch(62% .012 275);
+  --text-active: oklch(98% .004 275);
+  --text-brand:  oklch(78% .12 277);
+  --on-strong:   oklch(96% .005 275);
+  --on-accent:   oklch(96% .005 275);
+
+  /* Статусы */
+  --green:    oklch(78% .145 155);
+  --green-h:  oklch(72% .145 155);
+  --green-btn: oklch(56% .13 155);
+  --text-positive: oklch(78% .145 155);
+  --text-danger:   oklch(70% .17 25);
+  --text-warning:  oklch(82% .13 85);
+  --red: oklch(70% .17 25);
+
+  /* Пузыри: в превью сообщения без пузырей, фон остаётся ровным */
+  --bubble-mine:         oklch(31% .010 275);
+  --bubble-mine-border:  oklch(38% .012 275);
+  --bubble-other:        oklch(27% .009 275);
+  --bubble-other-border: oklch(38% .012 275);
+
+  /* Геометрия из превью */
+  --rail-w:       72px;
+  --sidebar-w:    256px;
+  --members-w:    232px;
+  --header-h:     56px;
+  --user-panel-h: 64px;
+  --radius-sm: 6px;
+  --radius:    8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  --scrollbar-thumb: oklch(38% .012 275);
+  --shadow-stroke: 0 0 0 1px oklch(38% .012 275);
+  --shadow-header: 0 1px 0 oklch(31% .010 275);
+}
+
+/* Геометрия каркаса для тех, кто читает переменные без data-theme */
+:root {
+  --rail-w: 72px;
+  --sidebar-w: 256px;
+  --members-w: 232px;
+}
