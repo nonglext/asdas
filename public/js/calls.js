@@ -345,7 +345,7 @@ async function acquireLocalStream(video, { signal } = {}) {
 
   const getStream = withVideo => acquireAbortableMedia(
     () => navigator.mediaDevices.getUserMedia({
-      audio: RAW_AUDIO_CONSTRAINTS,
+      audio: getCallAudioConstraints(),
       video: withVideo ? CALL_VIDEO_CONSTRAINTS : false,
     }),
     signal,
@@ -394,7 +394,7 @@ async function recoverLocalMicrophone(session) {
 
   try {
     replacementStream = await navigator.mediaDevices.getUserMedia({
-      audio: RAW_AUDIO_CONSTRAINTS,
+      audio: getCallAudioConstraints(),
       video: false,
     });
 
@@ -1043,6 +1043,11 @@ function resetCallControls() {
 
 function toggleMic() {
   if (!callState.active || !callState.localStream) return;
+
+  if (callState.deafened && !callState.micOn) {
+    showTransientNotice('Сначала включите звук собеседников');
+    return;
+  }
 
   const tracks = callState.localStream.getAudioTracks().filter(isLiveTrack);
 

@@ -50,6 +50,7 @@ const sharp = require('sharp');
 const helmet = require('helmet');
 const cors = require('cors');
 const proxyaddr = require('proxy-addr');
+const { validCallSignal } = require('./lib/call-signal');
 
 // -----------------------------------------------------------------------------
 // Configuration
@@ -4441,6 +4442,10 @@ io.on('connection', socket => {
 
     if (call.type === 'dm' && !call.answered) {
       reject(409, 'Звонок ещё не принят', 'not_answered');
+    }
+
+    if (!validCallSignal(data.data)) {
+      reject(400, 'Некорректный сигнал звонка', 'bad_request');
     }
 
     const encoded = JSON.stringify(data.data);

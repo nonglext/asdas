@@ -16,7 +16,8 @@ const DEFAULT_VOICE_THRESHOLD_DB = -48;
 
 function getVoiceSpeakingThresholdDb() {
   try {
-    const value = Number(localStorage.getItem(VOICE_THRESHOLD_STORAGE_KEY));
+    const raw = localStorage.getItem(VOICE_THRESHOLD_STORAGE_KEY);
+    const value = raw == null || raw.trim() === '' ? NaN : Number(raw);
     return Number.isFinite(value) ? Math.min(-10, Math.max(-60, value)) : DEFAULT_VOICE_THRESHOLD_DB;
   } catch (_) {
     return DEFAULT_VOICE_THRESHOLD_DB;
@@ -71,6 +72,23 @@ const RAW_AUDIO_CONSTRAINTS = Object.freeze({
   sampleRate: Object.freeze({ ideal: 48000 }),
   sampleSize: Object.freeze({ ideal: 16 }),
 });
+
+const VOICE_PROCESSING_KEY = 'chatapp_voice_processing';
+function voiceProcessingEnabled() {
+  try { return localStorage.getItem(VOICE_PROCESSING_KEY) !== 'false'; }
+  catch (_) { return true; }
+}
+function getCallAudioConstraints() {
+  return voiceProcessingEnabled() ? {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    channelCount: { ideal: 1 },
+    sampleRate: { ideal: 48000 },
+  } : { ...RAW_AUDIO_CONSTRAINTS };
+}
+window.voiceProcessingEnabled = voiceProcessingEnabled;
+window.getCallAudioConstraints = getCallAudioConstraints;
 
 const DEFAULT_ICE_SERVERS = Object.freeze([
   Object.freeze({ urls: 'stun:stun.l.google.com:19302' }),

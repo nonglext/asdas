@@ -13,6 +13,8 @@ const CPL_STATS_MS = 2000;
 
 let cplMicBeforeDeafen = null;
 let cplStatsTimer = null;
+let cplStatsGeneration = 0;
+let cplStatsInFlight = false;
 const cplPrevStats = new Map();
 const cplQuality = new Map();
 
@@ -75,11 +77,18 @@ function cplToggleDeafen() {
   // Как в Discord: заглушив собеседников, вы и сами замолкаете.
   if (callState.deafened) {
     cplMicBeforeDeafen = !!callState.micOn;
-    if (callState.micOn && tracks.length && typeof toggleMic === 'function') toggleMic();
-  } else if (cplMicBeforeDeafen && !callState.micOn && tracks.length && typeof toggleMic === 'function') {
-    toggleMic();
+    callState.micOn = false;
+  } else {
+    callState.micOn = !!cplMicBeforeDeafen;
     cplMicBeforeDeafen = null;
   }
+
+  // Also update intent when the microphone is being recovered and has no live
+  // track yet; its replacement must inherit the muted state.
+  for (const track of tracks) track.enabled = !!callState.micOn;
+  resetCallControls();
+  renderCallGrid();
+  broadcastMediaState();
 
   cplApplyDeafen();
 
@@ -89,6 +98,7 @@ function cplToggleDeafen() {
 }
 
 function callsPlusReset() {
+  cplStatsGeneration++;
   cplMicBeforeDeafen = null;
   cplPrevStats.clear();
   cplQuality.clear();
@@ -225,6 +235,7 @@ async function cplSamplePeer(peerId, peer) {
   if (!pc || pc.connectionState === 'closed' || typeof pc.getStats !== 'function') return null;
 
   const report = await pc.getStats();
+  if (!callState.active || callState.peers[peerId] !== peer) return null;
   let rtt = null;
   let received = 0;
   let lost = 0;
@@ -236,7 +247,7 @@ async function cplSamplePeer(peerId, peer) {
     if (stat.type === 'candidate-pair') pairs.set(stat.id, stat);
     if (stat.type === 'local-candidate' || stat.type === 'remote-candidate') candidates.set(stat.id, stat);
 
-    if (stat.type === 'inbound-rtp' && stat.kind === 'audio') {
+    if (stat.type === 'inbound-rtp' && (stat.kind || stat.mediaType) === 'audio') {
       received += Number(stat.packetsReceived) || 0;
       lost += Math.max(0, Number(stat.packetsLost) || 0);
     }
@@ -251,20 +262,21 @@ async function cplSamplePeer(peerId, peer) {
     if (!selected) continue;
 
     if (Number.isFinite(pair.currentRoundTripTime)) rtt = Math.round(pair.currentRoundTripTime * 1000);
-    relay = candidates.get(pair.localCandidateId)?.candidateType === 'relay';
+    relay = candidates.get(pair.localCandidateId)?.candidateType === 'relay' ||
+      candidates.get(pair.remoteCandidateId)?.candidateType === 'relay';
     break;
   }
 
   const previous = cplPrevStats.get(peerId);
-  cplPrevStats.set(peerId, { received, lost });
+  cplPrevStats.set(peerId, { pc, received, lost });
 
   let loss = null;
 
-  if (previous) {
+  if (previous?.pc === pc) {
     const deltaReceived = received - previous.received;
     const deltaLost = lost - previous.lost;
     const total = deltaReceived + deltaLost;
-    if (total > 20) loss = Math.round((Math.max(0, deltaLost) / total) * 1000) / 10;
+    if (deltaReceived >= 0 && deltaLost >= 0 && total > 20) loss = Math.round((deltaLost / total) * 1000) / 10;
   }
 
   if (rtt == null && loss == null) return null;
@@ -273,12 +285,14 @@ async function cplSamplePeer(peerId, peer) {
 }
 
 async function cplCollectStats() {
+  if (cplStatsInFlight) return;
   if (!callState.active) {
     callsPlusReset();
     return;
   }
 
   const peers = Object.entries(callState.peers || {});
+  const generation = cplStatsGeneration;
   const alive = new Set(peers.map(([id]) => id));
 
   for (const id of [...cplQuality.keys()]) {
@@ -288,12 +302,22 @@ async function cplCollectStats() {
     }
   }
 
-  await Promise.all(peers.map(async ([peerId, peer]) => {
-    try {
-      const info = await cplSamplePeer(peerId, peer);
-      if (info) cplQuality.set(peerId, info);
-    } catch (_) {}
-  }));
+  cplStatsInFlight = true;
+  try {
+    await Promise.all(peers.map(async ([peerId, peer]) => {
+      try {
+        const info = await cplSamplePeer(peerId, peer);
+        if (generation !== cplStatsGeneration || !callState.active || callState.peers[peerId] !== peer) return;
+        if (info) cplQuality.set(peerId, info);
+        else cplQuality.delete(peerId);
+      } catch (_) {
+        if (generation === cplStatsGeneration && callState.peers[peerId] === peer) cplQuality.delete(peerId);
+      }
+    }));
+  } finally {
+    cplStatsInFlight = false;
+  }
+  if (generation !== cplStatsGeneration || !callState.active) return;
 
   for (const [peerId] of peers) {
     const tile = typeof findCallTile === 'function' ? findCallTile(`peer:${peerId}`) : null;

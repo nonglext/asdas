@@ -3263,10 +3263,13 @@ async function sendComposer(group) {
     if (ownsAttempt()) {
       if (error?.reason === 'rate_limited') {
         retryMessages.delete(key);
-      } else if (!input.value && raw) {
-        input.value = raw;
-        composerDrafts.set(key, raw);
       }
+
+      // A response can arrive after navigation: restore only this conversation's
+      // draft, and never put failed text into another conversation's composer.
+      if (raw && !composerDrafts.get(key)) composerDrafts.set(key, raw);
+      const currentTarget = group ? state.activeGroup : state.activeFriend;
+      if (currentTarget === target && !input.value && raw) input.value = raw;
 
       if (!uiSilentError(error)) showTransientNotice(uiSendError(error));
     }

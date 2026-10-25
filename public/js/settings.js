@@ -72,6 +72,8 @@ function openSettings() {
   }
   syncThemeControls();
   syncVoiceThresholdControl();
+  const processing = document.getElementById('voice-processing');
+  if (processing) processing.checked = window.voiceProcessingEnabled?.() ?? true;
   syncSoundsControl();
   const search = document.getElementById('settings-search-input');
   if (search) {
@@ -93,6 +95,10 @@ on('btn-settings', 'click', event => {
 });
 on('btn-close-settings', 'click', closeSettings);
 on('btn-close-settings-top', 'click', closeSettings);
+on('btn-settings-blocked', 'click', () => {
+  closeSettings();
+  openBlockedUsersModal();
+});
 on('settings-modal', 'click', event => {
   if (event.target === $('settings-modal')) closeSettings();
 });
@@ -123,6 +129,12 @@ on('voice-threshold', 'input', event => {
   const status = document.getElementById('voice-settings-status');
   if (output) output.textContent = formatDb(value);
   if (status) status.textContent = 'Порог сохранён на этом устройстве';
+});
+
+on('voice-processing', 'change', event => {
+  try { localStorage.setItem(VOICE_PROCESSING_KEY, String(event.target.checked)); } catch (_) {}
+  const status = document.getElementById('voice-settings-status');
+  if (status) status.textContent = 'Режим звука применяется со следующего звонка';
 });
 
 
