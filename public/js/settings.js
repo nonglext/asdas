@@ -277,3 +277,20 @@ on('password-change-form', 'submit', event => {
   }).catch(error => showPasswordMessage(error.message || 'Не удалось изменить пароль'))
     .finally(() => { button.disabled = false; button.textContent = 'Сохранить новый пароль'; });
 });
+
+// Presets edit the draft; persistence still happens only with Save.
+document.querySelectorAll('[data-profile-colors]').forEach(button => {
+  button.addEventListener('click', () => {
+    if (document.getElementById('edit-profile-color').disabled) return;
+    const [primary, accent] = button.dataset.profileColors.split(',');
+    document.getElementById('edit-profile-color').value = primary;
+    document.getElementById('edit-profile-accent').value = accent;
+    updateProfilePreview();
+  });
+});
+const previewAvatarSource = document.getElementById('edit-avatar');
+if (previewAvatarSource) new MutationObserver(() => {
+  const target = document.getElementById('profile-preview-avatar');
+  target.replaceChildren(...[...previewAvatarSource.childNodes].map(node => node.cloneNode(true)));
+  target.style.background = previewAvatarSource.style.background;
+}).observe(previewAvatarSource, { childList: true, subtree: true, attributes: true });

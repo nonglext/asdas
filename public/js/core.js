@@ -81,7 +81,7 @@ function voiceProcessingEnabled() {
 function getCallAudioConstraints() {
   return voiceProcessingEnabled() ? {
     echoCancellation: true,
-    noiseSuppression: true,
+    noiseSuppression: false,
     autoGainControl: true,
     channelCount: { ideal: 1 },
     sampleRate: { ideal: 48000 },

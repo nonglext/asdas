@@ -1894,3 +1894,23 @@ body { -webkit-font-smoothing: antialiased; }
 #edit-profile-modal .modal-box { max-height: calc(100dvh - 32px); overflow-y: auto; }
 .settings-nav [hidden], .settings-sidebar [hidden] { display: none !important; }
 .settings-info-row strong { overflow-wrap: anywhere; min-width: 0; }
+
+/* 2.0.12: registration, profile editor and unobstructed voice diagnostics */
+#auth-screen.active { background: #10132b; background-image: radial-gradient(ellipse at 15% 10%, #3447a6 0, transparent 55%), radial-gradient(ellipse at 90% 95%, #292357 0, transparent 55%); }
+#auth-screen .btn-primary { background: #5865f2; color: white; }
+#auth-screen .btn-primary:hover { background: #4752c4; }
+.profile-presets { display: flex; flex-wrap: wrap; gap: 8px; }
+.profile-presets button { padding: 9px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg2); color: var(--text); cursor: pointer; }
+.profile-presets button:hover { border-color: #5865f2; }
+#profile-preview-avatar { margin: -46px 0 12px; border: 5px solid var(--bg1); position: relative; }
+.profile-preview { background: var(--bg1); }
+#edit-profile-modal .modal-footer { position: sticky; bottom: -24px; background: var(--bg1); padding: 16px 0; z-index: 3; }
+.call-tile-quality { display: flex; align-items: center; gap: 5px; font-size: 11px; white-space: nowrap; }
+.call-overlay.voice-mode .call-tile-quality { top: -26px; right: auto; left: 50%; transform: translateX(-50%); padding: 3px 6px; pointer-events: none; }
+.call-overlay.voice-mode .call-video-grid { padding-top: 36px; }
+@media (min-width: 850px) {
+ #edit-profile-modal .modal-box { width: 850px; max-width: calc(100vw - 48px); display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px 28px; }
+ #edit-profile-title, #edit-profile-modal .settings-section-note, #edit-profile-modal .modal-footer { grid-column: 1 / -1; }
+ #edit-profile-modal .profile-preview { grid-column: 2; grid-row: 3 / 5; align-self: start; position: sticky; top: 0; }
+ #edit-profile-modal .edit-avatar-block, #edit-profile-modal .form-stack { grid-column: 1; }
+}

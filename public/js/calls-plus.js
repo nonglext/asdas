@@ -158,6 +158,9 @@ function cplRenderTileQuality(tile, peerId) {
   badge.title = `${CPL_QUALITY_TEXT[info.level]}${details ? ` · ${details}` : ''}`;
   badge.setAttribute('aria-label', badge.title);
   badge.replaceChildren(cplQualityBars(info.level));
+  const value = document.createElement('span');
+  value.textContent = info.rtt == null ? '—' : `${info.rtt} мс`;
+  badge.append(value);
 }
 
 function cplRenderTileVolume(tile, entry) {
