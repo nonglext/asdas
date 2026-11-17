@@ -27,6 +27,9 @@ async function ensureSchema({
   if (tables.has('users')) {
     await sequelize.query(
       `ALTER TABLE users
+       ADD COLUMN IF NOT EXISTS pronouns VARCHAR(40) DEFAULT '',
+       ADD COLUMN IF NOT EXISTS profile_color VARCHAR(7) DEFAULT '#5865f2',
+       ADD COLUMN IF NOT EXISTS profile_accent VARCHAR(7) DEFAULT '#9b59b6',
        ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0,
        ADD COLUMN IF NOT EXISTS friends VARCHAR(255)[] NOT NULL DEFAULT '{}',
        ADD COLUMN IF NOT EXISTS friend_requests VARCHAR(255)[] NOT NULL DEFAULT '{}',

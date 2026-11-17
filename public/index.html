@@ -12,15 +12,15 @@
 <meta content="default" name="apple-mobile-web-app-status-bar-style"/>
 <link href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%235865f2'/%3E%3Cpath fill='%23fff' d='M18 14.5a1.5 1.5 0 0 1-1.5 1.5H8.3L5 19V7.5A1.5 1.5 0 0 1 6.5 6h10A1.5 1.5 0 0 1 18 7.5z'/%3E%3C/svg%3E" rel="icon"/>
 <style>html:not(.theme-ready) { visibility: hidden; } html.theme-ready { visibility: visible; }</style>
-<script src="/js/runtime-guard.js?v=2.0.10"></script>
-<script src="/js/document-0.js?v=2.0.10"></script>
+<script src="/js/runtime-guard.js?v=2.0.11"></script>
+<script src="/js/document-0.js?v=2.0.11"></script>
 <!-- Каркас: base → layout → chat → calls → утилиты/адаптив. Всё оформление — в theme.css -->
-<link href="/css/base.css?v=2.0.10" rel="stylesheet"/>
-<link href="/css/layout.css?v=2.0.10" rel="stylesheet"/>
-<link href="/css/chat.css?v=2.0.10" rel="stylesheet"/>
-<link href="/css/calls-responsive.css?v=2.0.10" rel="stylesheet"/>
-<link href="/css/style.css?v=2.0.10" rel="stylesheet"/>
-<link href="/css/theme.css?v=2.0.10" rel="stylesheet"/>
+<link href="/css/base.css?v=2.0.11" rel="stylesheet"/>
+<link href="/css/layout.css?v=2.0.11" rel="stylesheet"/>
+<link href="/css/chat.css?v=2.0.11" rel="stylesheet"/>
+<link href="/css/calls-responsive.css?v=2.0.11" rel="stylesheet"/>
+<link href="/css/style.css?v=2.0.11" rel="stylesheet"/>
+<link href="/css/theme.css?v=2.0.11" rel="stylesheet"/>
 </head>
 <body>
 <a class="skip-link" href="#chat-main">Перейти к чату</a>
@@ -301,10 +301,10 @@
 <button aria-label="Закрыть" class="modal-close-btn" data-action="close-profile" type="button">
 <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24" width="18"><path d="M18 6L6 18M6 6l12 12"></path></svg>
 </button>
-<div class="modal-profile-header">
+<div class="profile-banner" id="profile-modal-banner" aria-hidden="true"></div><div class="modal-profile-header">
 <div aria-hidden="true" class="modal-avatar" id="profile-modal-avatar"></div>
 <div class="modal-profile-name" id="profile-modal-nick">—</div>
-<div class="modal-profile-id" id="profile-modal-id">—</div>
+<div class="modal-profile-id" id="profile-modal-id">—</div><div id="profile-modal-pronouns" class="profile-pronouns"></div>
 <div class="modal-online-badge" id="profile-modal-online"></div>
 </div>
 <div class="modal-profile-body" id="profile-modal-body">
@@ -330,6 +330,8 @@
 <svg aria-hidden="true" fill="none" height="18" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24" width="18"><path d="M18 6L6 18M6 6l12 12"></path></svg>
 </button>
 <h2 class="modal-title" id="edit-profile-title">Мой профиль</h2>
+<p class="settings-section-note">Изменения видны друзьям после сохранения.</p>
+<div class="profile-preview" aria-label="Предпросмотр профиля"><div class="profile-banner" id="profile-preview-banner" aria-hidden="true"></div><div class="profile-preview-copy"><strong id="profile-preview-name"></strong><span id="profile-preview-pronouns"></span><p id="profile-preview-status"></p><p id="profile-preview-bio"></p></div></div>
 <div class="edit-avatar-block">
 <div class="edit-avatar-wrap">
 <div aria-hidden="true" class="edit-avatar" id="edit-avatar"></div>
@@ -351,15 +353,17 @@
 <div class="form-stack">
 <div class="field">
 <label for="edit-nick">Отображаемое имя</label>
-<input autocomplete="nickname" id="edit-nick" maxlength="32" placeholder="Как тебя зовут?" type="text"/>
+<input autocomplete="nickname" id="edit-nick" maxlength="50" placeholder="Как тебя зовут?" type="text"/>
 </div>
 <div class="field">
-<label for="edit-status">Статус</label>
-<input id="edit-status" maxlength="100" placeholder="Привет! Я использую ChatApp" type="text"/>
+<label for="edit-pronouns">Местоимения</label><input id="edit-pronouns" maxlength="40" placeholder="Например: он / его" type="text"/></div>
+<div class="profile-color-fields"><div class="field"><label for="edit-profile-color">Цвет баннера</label><input id="edit-profile-color" type="color" value="#5865f2"/></div><div class="field"><label for="edit-profile-accent">Акцент</label><input id="edit-profile-accent" type="color" value="#9b59b6"/></div></div>
+<div class="field"><label for="edit-status">Статус</label>
+<input id="edit-status" maxlength="150" placeholder="Привет! Я использую ChatApp" type="text"/>
 </div>
 <div class="field">
 <label for="edit-bio">Обо мне</label>
-<textarea id="edit-bio" maxlength="200" placeholder="Расскажи о себе…" rows="3"></textarea>
+<textarea id="edit-bio" maxlength="1000" placeholder="Расскажи о себе…" rows="3"></textarea>
 </div>
 <button class="btn-link-row" id="btn-open-blocked" type="button">
 <svg aria-hidden="true" fill="none" height="16" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" width="16"><circle cx="12" cy="12" r="10"></circle><path d="M4.9 4.9l14.2 14.2"></path></svg>
@@ -399,7 +403,7 @@
 <section class="settings-section active" data-settings-panel="account">
 <h3>Информация об аккаунте</h3><p class="settings-section-note">Основные данные вашего профиля в ChatApp.</p>
 <div class="settings-info-list"><div class="settings-info-row"><span>Имя пользователя</span><strong id="settings-account-name">—</strong></div><div class="settings-info-row"><span>Статус</span><strong id="settings-account-status">Активен</strong></div><div class="settings-info-row"><span>Обо мне</span><strong id="settings-account-bio">Не заполнено</strong></div></div>
-<div class="settings-divider"></div><h3>Безопасность</h3><div class="settings-info-row settings-password-row"><span><strong>Пароль</strong><small>Для смены потребуется текущий пароль и новый пароль дважды</small></span><button class="settings-password-btn" id="btn-open-password" type="button">Сменить пароль</button></div>
+<button class="btn-primary" id="btn-settings-profile" type="button">Редактировать профиль</button><div class="settings-divider"></div><h3>Безопасность</h3><div class="settings-info-row settings-password-row"><span><strong>Пароль</strong><small>Для смены потребуется текущий пароль и новый пароль дважды</small></span><button class="settings-password-btn" id="btn-open-password" type="button">Сменить пароль</button></div>
 </section>
 <section class="settings-section" data-settings-panel="security"><h3>Пароль и безопасность</h3><p class="settings-section-note">Обновите пароль, чтобы сохранить аккаунт в безопасности.</p><div class="settings-password-card"><form id="password-change-form" novalidate><div class="field"><label for="current-password">Текущий пароль</label><input autocomplete="current-password" id="current-password" required type="password"/></div><div class="field"><label for="new-password">Новый пароль</label><input autocomplete="new-password" id="new-password" minlength="8" required type="password"/><small class="settings-field-hint">Минимум 8 символов</small></div><div class="field"><label for="confirm-password">Повторите новый пароль</label><input autocomplete="new-password" id="confirm-password" minlength="8" required type="password"/></div><div aria-live="polite" class="settings-form-message" id="password-form-message"></div><button class="btn-primary settings-save-password" id="btn-save-password" type="submit">Сохранить новый пароль</button></form></div></section>
 <section class="settings-section" data-settings-panel="privacy"><h3>Конфиденциальность</h3><p class="settings-section-note">Управление приватностью и доступом.</p><div class="settings-toggle-row"><div class="settings-toggle-copy"><strong>Заблокированные пользователи</strong><small>Посмотрите список и управляйте блокировками.</small></div><button class="btn-secondary" id="btn-settings-blocked" type="button">Открыть список</button></div><div class="privacy-note"><strong>Как защищены разговоры</strong><p>История и вложения доступны участникам беседы. HTTPS защищает соединение с сервером; сервер хранит сообщения без сквозного шифрования. Аудио и видео WebRTC шифруются при передаче.</p></div></section>
@@ -551,17 +555,17 @@
      Не требует правок chat-ui.js: следит за открытием чата и прячет сайдбар на ≤640px,
      закрывает панель участников по тапу на щиток.
      ═════════════════════════════════════════════════════════════════════════ -->
-<script src="/js/document-1.js?v=2.0.10"></script>
+<script src="/js/document-1.js?v=2.0.11"></script>
 <script src="/socket.io/socket.io.js"></script>
 
-<script defer="" src="/js/core.js?v=2.0.10"></script>
-<script defer="" src="/js/auth-ui.js?v=2.0.10"></script>
-<script defer="" src="/js/chat-ui.js?v=2.0.10"></script>
-<script defer="" src="/js/calls.js?v=2.0.10"></script>
-<script defer="" src="/js/chat-plus.js?v=2.0.10"></script>
-<script defer="" src="/js/calls-plus.js?v=2.0.10"></script>
-<script defer="" src="/js/document-actions.js?v=2.0.10"></script>
-<script defer="" src="/js/settings.js?v=2.0.10"></script>
-<script defer="" src="/js/accessibility.js?v=2.0.10"></script>
+<script defer="" src="/js/core.js?v=2.0.11"></script>
+<script defer="" src="/js/auth-ui.js?v=2.0.11"></script>
+<script defer="" src="/js/chat-ui.js?v=2.0.11"></script>
+<script defer="" src="/js/calls.js?v=2.0.11"></script>
+<script defer="" src="/js/chat-plus.js?v=2.0.11"></script>
+<script defer="" src="/js/calls-plus.js?v=2.0.11"></script>
+<script defer="" src="/js/document-actions.js?v=2.0.11"></script>
+<script defer="" src="/js/settings.js?v=2.0.11"></script>
+<script defer="" src="/js/accessibility.js?v=2.0.11"></script>
 </body>
 </html>

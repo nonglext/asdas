@@ -46,6 +46,9 @@ const User = sequelize.define(
       defaultValue: 0
     },
     avatar: DataTypes.STRING,
+    pronouns: { type: DataTypes.STRING(40), defaultValue: '' },
+    profileColor: { type: DataTypes.STRING(7), defaultValue: '#5865f2' },
+    profileAccent: { type: DataTypes.STRING(7), defaultValue: '#9b59b6' },
     status: {
       type: DataTypes.STRING(150),
       defaultValue: 'Привет! Я использую ChatApp'

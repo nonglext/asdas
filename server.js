@@ -747,6 +747,9 @@ function online(userId) {
 
 function publicUser(user) {
   return {
+    pronouns: user.pronouns || '',
+    profileColor: user.profileColor || '#5865f2',
+    profileAccent: user.profileAccent || '#9b59b6',
     id: user.id,
     nickname: user.nickname,
     avatar: user.avatar,
@@ -2009,8 +2012,16 @@ route(
   [authenticate],
   async (req, res) => {
     const user = req.user;
-    const { nickname, status, bio, avatar } = req.body || {};
+    const { nickname, status, bio, avatar, pronouns, profileColor, profileAccent } = req.body || {};
     const values = {};
+    if (pronouns !== undefined) values.pronouns = boundedText(pronouns, 40);
+    for (const [key, value] of Object.entries({ profileColor, profileAccent })) {
+      if (value === undefined) continue;
+      if (typeof value !== 'string' || !/^#[0-9a-f]{6}$/i.test(value)) {
+        reject(400, 'Цвет профиля должен быть в формате #RRGGBB');
+      }
+      values[key] = value.toLowerCase();
+    }
 
     if (nickname !== undefined) {
       values.nickname = boundedText(nickname, 50, { min: 1 });

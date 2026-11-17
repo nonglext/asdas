@@ -43,6 +43,11 @@
   const observer = new MutationObserver(sync);
   dialogs.forEach(el => observer.observe(el, { attributes: true, attributeFilter: ['style', 'class', 'hidden'] }));
   document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && active && !e.isComposing && !e.defaultPrevented) {
+      const close = active.querySelector('.modal-close-btn, #btn-close-settings-top');
+      if (close) { e.preventDefault(); e.stopPropagation(); close.click(); }
+      return;
+    }
     if (e.key !== 'Tab' || !active) return;
     const items = focusable(active), first = items[0], last = items.at(-1);
     if (!first) { e.preventDefault(); active.focus(); return; }

@@ -1482,6 +1482,7 @@ async function showUserProfile(value) {
 
     setText('profile-modal-nick', user.nickname || userId);
     setText('profile-modal-id', `@${userId}`);
+    renderProfileDecoration(user);
 
     const badge = $('profile-modal-online');
 
@@ -1743,6 +1744,9 @@ function uiSetProfileSaving(saving) {
     'edit-nick',
     'edit-status',
     'edit-bio',
+    'edit-pronouns',
+    'edit-profile-color',
+    'edit-profile-accent',
     'avatar-input',
     'btn-avatar-remove',
     'btn-avatar-reset',
@@ -1781,9 +1785,11 @@ function openEditProfileModal() {
   if (nickname) nickname.value = state.me.nickname || '';
   if (status) status.value = state.me.status || '';
   if (bio) bio.value = state.me.bio || '';
+  initProfileCustomization(state.me);
 
   uiSetProfileSaving(!!profileSaveOperation);
   setDisplay('edit-profile-modal', 'flex');
+  $('edit-profile-modal')?.querySelector('.modal-box')?.scrollTo(0, 0);
 }
 
 function closeEditProfileModal() {
@@ -1932,6 +1938,7 @@ async function uiSaveProfile() {
   const nickname = ($('edit-nick')?.value || '').trim();
   const status = ($('edit-status')?.value || '').trim();
   const bio = ($('edit-bio')?.value || '').trim();
+  const decoration = readProfileCustomization();
 
   if (!nickname) {
     showTransientNotice('Никнейм не может быть пустым');
@@ -1956,7 +1963,7 @@ async function uiSaveProfile() {
       if (!uiCurrent(snapshot)) return;
     }
 
-    const payload = { nickname, status, bio };
+    const payload = { nickname, status, bio, ...decoration };
 
     if (operation.removeAvatar) payload.avatar = null;
     else if (uploadedAvatar) payload.avatar = uploadedAvatar;
@@ -1983,6 +1990,7 @@ async function uiSaveProfile() {
     state.me.nickname = typeof user.nickname === 'string' ? user.nickname : nickname;
     state.me.status = typeof user.status === 'string' ? user.status : status;
     state.me.bio = typeof user.bio === 'string' ? user.bio : bio;
+    for (const key of Object.keys(decoration)) state.me[key] = user[key] ?? decoration[key];
 
     if (Object.prototype.hasOwnProperty.call(user, 'avatar')) {
       state.me.avatar = typeof user.avatar === 'string' ? user.avatar : null;

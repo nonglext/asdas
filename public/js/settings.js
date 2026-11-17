@@ -87,7 +87,15 @@ function openSettings() {
 
 function closeSettings() {
   setDisplay('settings-modal', 'none');
+  document.getElementById('password-change-form')?.reset();
+  const message = document.getElementById('password-form-message');
+  if (message) message.textContent = '';
 }
+
+on('btn-settings-profile', 'click', () => {
+  closeSettings();
+  openEditProfileModal();
+});
 
 on('btn-settings', 'click', event => {
   event.stopPropagation();
@@ -141,7 +149,12 @@ on('voice-processing', 'change', event => {
 document.querySelectorAll('[data-settings-section]').forEach(button => {
   button.addEventListener('click', () => {
     const section = button.dataset.settingsSection;
-    document.querySelectorAll('[data-settings-section]').forEach(item => item.classList.toggle('active', item === button || item.dataset.settingsSection === section && item.classList.contains('settings-subitem')));
+    document.querySelectorAll('[data-settings-section]').forEach(item => {
+      const selected = item.dataset.settingsSection === section;
+      item.classList.toggle('active', selected);
+      if (selected) item.setAttribute('aria-current', 'page');
+      else item.removeAttribute('aria-current');
+    });
     document.querySelectorAll('[data-settings-panel]').forEach(panel => panel.classList.toggle('active', panel.dataset.settingsPanel === section));
     const title = document.getElementById('settings-title');
     const crumb = document.getElementById('settings-current-section');
@@ -168,7 +181,60 @@ settingsSearch?.addEventListener('input', () => {
   });
   const empty = document.getElementById('settings-search-empty');
   if (empty) empty.hidden = !query || matched.length > 0;
+  document.querySelectorAll('.settings-nav-divider, .settings-nav-label').forEach(item => { item.hidden = Boolean(query); });
 });
+
+settingsSearch?.addEventListener('keydown', event => {
+  if (event.key !== 'Enter') return;
+  const query = settingsSearch.value.trim().toLocaleLowerCase('ru');
+  const first = [...document.querySelectorAll('.settings-nav [data-settings-section]:not([hidden])')].find(item => item.textContent.toLocaleLowerCase('ru').includes(query));
+  if (first) { event.preventDefault(); first.click(); first.focus(); }
+});
+
+function profileColor(value, fallback) {
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
+}
+
+function readProfileCustomization() {
+  return {
+    pronouns: document.getElementById('edit-pronouns').value.trim(),
+    profileColor: profileColor(document.getElementById('edit-profile-color').value, '#5865f2'),
+    profileAccent: profileColor(document.getElementById('edit-profile-accent').value, '#9b59b6'),
+  };
+}
+
+function paintProfileBanner(element, user) {
+  if (!element) return;
+  element.style.background = `linear-gradient(120deg, ${profileColor(user.profileColor, '#5865f2')}, ${profileColor(user.profileAccent, '#9b59b6')})`;
+}
+
+function renderProfileDecoration(user) {
+  paintProfileBanner(document.getElementById('profile-modal-banner'), user);
+  const pronouns = document.getElementById('profile-modal-pronouns');
+  if (pronouns) pronouns.textContent = typeof user.pronouns === 'string' ? user.pronouns : '';
+}
+
+function updateProfilePreview() {
+  const user = readProfileCustomization();
+  paintProfileBanner(document.getElementById('profile-preview-banner'), user);
+  for (const [target, value] of Object.entries({
+    'profile-preview-name': document.getElementById('edit-nick').value || 'Ваше имя',
+    'profile-preview-pronouns': user.pronouns,
+    'profile-preview-status': document.getElementById('edit-status').value,
+    'profile-preview-bio': document.getElementById('edit-bio').value,
+  })) document.getElementById(target).textContent = value;
+}
+
+function initProfileCustomization(user) {
+  document.getElementById('edit-pronouns').value = user.pronouns || '';
+  document.getElementById('edit-profile-color').value = profileColor(user.profileColor, '#5865f2');
+  document.getElementById('edit-profile-accent').value = profileColor(user.profileAccent, '#9b59b6');
+  updateProfilePreview();
+}
+
+for (const id of ['edit-nick', 'edit-status', 'edit-bio', 'edit-pronouns', 'edit-profile-color', 'edit-profile-accent']) {
+  on(id, 'input', updateProfilePreview);
+}
 
 
 function showPasswordMessage(text, good = false) {
