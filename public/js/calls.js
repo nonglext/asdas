@@ -2071,6 +2071,31 @@ function stopAllSpeakingMonitors() {
   }
 }
 
+function readVoiceLevelDb(analyser, samples) {
+  analyser.getFloatTimeDomainData(samples);
+  let sum = 0;
+  let sumSquares = 0;
+  for (const sample of samples) {
+    sum += sample;
+    sumSquares += sample * sample;
+  }
+  const mean = sum / samples.length;
+  const power = Math.max(1e-10, sumSquares / samples.length - mean * mean);
+  return Math.min(0, 10 * Math.log10(power));
+}
+
+function createVoiceActivity() {
+  let activeUntil = -Infinity;
+  return (level, threshold, now = performance.now()) => {
+    if (level === null) {
+      activeUntil = -Infinity;
+      return false;
+    }
+    if (level >= threshold - (now < activeUntil ? 3 : 0)) activeUntil = now + 160;
+    return now < activeUntil;
+  };
+}
+
 function startSpeakingMonitor(id, stream) {
   const track = stream?.getAudioTracks().find(isLiveTrack);
   if (!track) return;
@@ -2085,8 +2110,7 @@ function startSpeakingMonitor(id, stream) {
     // Один конкретный живой трек: нет зависимости от порядка треков в stream.
     source = context.createMediaStreamSource(new MediaStream([track]));
     analyser = context.createAnalyser();
-    analyser.fftSize = 512;
-    analyser.smoothingTimeConstant = 0.65;
+    analyser.fftSize = 2048;
     source.connect(analyser);
   } catch (_) {
     try {
@@ -2095,7 +2119,7 @@ function startSpeakingMonitor(id, stream) {
     return;
   }
 
-  const data = new Uint8Array(analyser.fftSize);
+  const data = new Float32Array(analyser.fftSize);
 
   const monitor = {
     source,
@@ -2108,7 +2132,7 @@ function startSpeakingMonitor(id, stream) {
 
   speakingMonitors[id] = monitor;
 
-  let wasSpeaking = false;
+  const voiceActivity = createVoiceActivity();
 
   const tick = () => {
     if (speakingMonitors[id] !== monitor) return;
@@ -2118,33 +2142,14 @@ function startSpeakingMonitor(id, stream) {
       ? !callState.micOn
       : !callState.peers[peerId] || callState.peers[peerId].micOn === false;
 
-    let speaking = false;
-
-    if (!muted && track.readyState === 'live' && !document.hidden) {
-      // Оставляем frequency API для совместимости старых WebAudio-движков.
-      analyser.getByteFrequencyData(data);
-      analyser.getByteTimeDomainData(data);
-
-      let sumSquares = 0;
-      for (const value of data) {
-        const normalized = (value - 128) / 128;
-        sumSquares += normalized * normalized;
-      }
-      const rms = Math.sqrt(sumSquares / data.length);
-      const db = 20 * Math.log10(Math.max(rms, 0.00001));
-      const threshold = window.getVoiceSpeakingThresholdDb?.() ?? DEFAULT_SPEAKING_THRESHOLD_DB;
-      const adjustedThreshold = speaking ? threshold - 3 : threshold;
-      speaking = db >= adjustedThreshold;
-    }
-
-    if (speaking !== wasSpeaking) {
-      wasSpeaking = speaking;
-      setSpeakingUI(id, speaking);
-    }
-
+    const canMeasure = !muted && track.enabled && !track.muted && isLiveTrack(track)
+      && context.state === 'running' && !document.hidden;
+    const level = canMeasure ? readVoiceLevelDb(analyser, data) : null;
+    const threshold = window.getVoiceSpeakingThresholdDb?.() ?? DEFAULT_SPEAKING_THRESHOLD_DB;
+    setSpeakingUI(id, voiceActivity(level, threshold));
   };
 
-  monitor.timer = setInterval(tick, 100);
+  monitor.timer = setInterval(tick, 50);
   tick();
 }
 

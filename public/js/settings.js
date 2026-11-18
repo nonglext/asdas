@@ -3,7 +3,105 @@
 const THEME_STORAGE_KEY = 'chatapp_theme';
 const APP_THEMES = new Set(['gray', 'white']);
 
-function formatDb(value) { return `${String(value).replace('-', '−')} dB`; }
+let voiceCheck = null;
+
+function formatDb(value) { return `${String(value).replace('-', '−')} dBFS`; }
+function voiceMeterPercent(db) { return Math.max(0, Math.min(100, (db + 70) / 70 * 100)); }
+
+function renderVoiceCheck(level, active) {
+  const meter = $('voice-meter');
+  meter.style.setProperty('--voice-level', `${level === null ? 0 : voiceMeterPercent(level)}%`);
+  meter.classList.toggle('is-active', active);
+  const output = $('voice-meter-value');
+  const text = level === null ? '—' : formatDb(Math.round(level));
+  if (output.textContent !== text) output.textContent = text;
+}
+
+function stopVoiceCheck(message = 'Запустите проверку и скажите пару слов.') {
+  if (!voiceCheck) return;
+  const check = voiceCheck;
+  voiceCheck = null;
+  clearInterval(check.timer);
+  check.source?.disconnect();
+  check.stream?.getTracks().forEach(track => track.stop());
+  if (check.context && check.context.state !== 'closed') check.context.close().catch(() => {});
+  renderVoiceCheck(null, false);
+  $('voice-check-toggle').textContent = 'Проверить микрофон';
+  $('voice-check-status').textContent = message;
+}
+
+async function startVoiceCheck() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  const status = $('voice-check-status');
+  if (!AudioContextClass) {
+    status.textContent = 'Этот браузер не поддерживает проверку микрофона.';
+    return;
+  }
+  const check = {};
+  voiceCheck = check;
+  $('voice-check-toggle').textContent = 'Остановить проверку';
+  status.textContent = 'Подключаем микрофон…';
+  try {
+    const trackInCall = callState.active && callState.localStream?.getAudioTracks().find(isLiveTrack);
+    if (callState.active && (!trackInCall || !callState.micOn || !trackInCall.enabled)) {
+      stopVoiceCheck('Сначала включите микрофон в звонке.');
+      return;
+    }
+    check.context = new AudioContextClass();
+    const resumed = check.context.resume().then(() => true, () => false);
+    let track = trackInCall;
+    if (!track) {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        stopVoiceCheck('Микрофон недоступен. Откройте сайт по HTTPS.');
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: getCallAudioConstraints() });
+      if (voiceCheck !== check) {
+        stream.getTracks().forEach(item => item.stop());
+        return;
+      }
+      check.stream = stream;
+      [track] = stream.getAudioTracks();
+    }
+    const running = await resumed;
+    if (voiceCheck !== check) return;
+    if (!running || !track) throw new Error('Voice check unavailable');
+    const analyser = check.context.createAnalyser();
+    analyser.fftSize = 2048;
+    check.source = check.context.createMediaStreamSource(new MediaStream([track]));
+    check.source.connect(analyser);
+    const samples = new Float32Array(analyser.fftSize);
+    const activity = createVoiceActivity();
+    status.textContent = 'Скажите пару слов обычным голосом.';
+    const tick = () => {
+      if (!isLiveTrack(track) || (trackInCall && (!callState.active || !callState.micOn || !track.enabled))) {
+        stopVoiceCheck('Микрофон отключён. Запустите проверку снова.');
+        return;
+      }
+      const level = track.muted || !track.enabled || check.context.state !== 'running' ? null : readVoiceLevelDb(analyser, samples);
+      renderVoiceCheck(level, activity(level, getVoiceSpeakingThresholdDb()));
+    };
+    check.timer = setInterval(tick, 50);
+    tick();
+  } catch (error) {
+    if (voiceCheck !== check) return;
+    const problems = {
+      NotAllowedError: 'Разрешите этому сайту доступ к микрофону и попробуйте снова.',
+      NotFoundError: 'Микрофон не найден. Подключите его и попробуйте снова.',
+      NotReadableError: 'Не удалось открыть микрофон. Проверьте, доступен ли он системе.',
+    };
+    stopVoiceCheck(problems[error.name] || 'Не удалось проверить микрофон. Попробуйте снова.');
+  }
+}
+
+on('voice-check-toggle', 'click', () => voiceCheck ? stopVoiceCheck() : startVoiceCheck());
+const voiceCheckModal = $('settings-modal');
+if (voiceCheckModal) {
+  new MutationObserver(() => {
+    if (voiceCheckModal.style.display === 'none') stopVoiceCheck();
+  }).observe(voiceCheckModal, { attributes: true, attributeFilter: ['style'] });
+}
+window.addEventListener('pagehide', () => stopVoiceCheck());
 // sfx.setEnabled существовал с самого начала, но ни одна кнопка его не звала:
 // отключить звуки из интерфейса было невозможно.
 function syncSoundsControl() {
@@ -18,6 +116,7 @@ function syncVoiceThresholdControl() {
   const value = window.getVoiceSpeakingThresholdDb?.() ?? -48;
   input.value = String(value);
   output.textContent = formatDb(value);
+  $('voice-meter')?.style.setProperty('--voice-threshold', `${voiceMeterPercent(value)}%`);
 }
 
 function currentAppTheme() {
@@ -86,6 +185,7 @@ function openSettings() {
 }
 
 function closeSettings() {
+  stopVoiceCheck();
   setDisplay('settings-modal', 'none');
   document.getElementById('password-change-form')?.reset();
   const message = document.getElementById('password-form-message');
@@ -132,10 +232,9 @@ on('sounds-enabled', 'change', event => {
 });
 
 on('voice-threshold', 'input', event => {
-  const value = window.saveVoiceSpeakingThresholdDb?.(event.target.value) ?? Number(event.target.value);
-  const output = document.getElementById('voice-threshold-value');
+  window.saveVoiceSpeakingThresholdDb?.(event.target.value);
+  syncVoiceThresholdControl();
   const status = document.getElementById('voice-settings-status');
-  if (output) output.textContent = formatDb(value);
   if (status) status.textContent = 'Порог сохранён на этом устройстве';
 });
 
@@ -149,6 +248,7 @@ on('voice-processing', 'change', event => {
 document.querySelectorAll('[data-settings-section]').forEach(button => {
   button.addEventListener('click', () => {
     const section = button.dataset.settingsSection;
+    if (section !== 'voice') stopVoiceCheck();
     document.querySelectorAll('[data-settings-section]').forEach(item => {
       const selected = item.dataset.settingsSection === section;
       item.classList.toggle('active', selected);
