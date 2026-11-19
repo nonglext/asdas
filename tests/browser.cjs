@@ -190,6 +190,21 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
   assert.match(await page.evaluate(()=>document.querySelector('#my-avatar img')?.src||''),/11111111-1111-1111-1111-111111111111/);
  });
  await page.evaluate(()=>openChat('bob'));await page.waitForTimeout(100);
+ await check('one account keeps the same fallback avatar color everywhere', async()=>{
+   const colors = await page.evaluate(()=>{
+     const classes=['f-av','chat-head-avatar','modal-avatar','chat-welcome-av'];
+     return classes.map(className=>{
+       const avatar=document.createElement('div');
+       avatar.className=className;
+       renderAv(avatar,'rock',null);
+       document.body.append(avatar);
+       const color=getComputedStyle(avatar).backgroundColor;
+       avatar.remove();
+       return color;
+     });
+   });
+   assert.ok(colors.every(color=>color===colors[0]), JSON.stringify(colors));
+ });
  await check('screen sharing stays compact when changing chats', async()=>{
    await page.evaluate(()=>{
      callState.active=true; callState.peerFriendId='bob'; callState.isGroup=false; screenShareTrack={readyState:'live'};

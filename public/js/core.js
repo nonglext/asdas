@@ -1838,6 +1838,13 @@ function renderAv(element, nickname, avatarUrl) {
 
   element.replaceChildren();
 
+  let hash = 0;
+  for (const char of String(nickname || 'user').toLocaleLowerCase('ru')) {
+    hash = (hash * 31 + char.codePointAt(0)) >>> 0;
+  }
+  const colors = ['#5865f2', '#e06c3a', '#008c95', '#a05bc8', '#2f9e69', '#c05b72'];
+  element.style.setProperty('--avatar-color', colors[hash % colors.length]);
+
   const source = avatarSrc(avatarUrl);
 
   if (!source) {
