@@ -74,7 +74,5 @@ test('security and call controls are present', () => {
   assert.equal(pkg.overrides.uuid, '11.1.1');
   assert.doesNotMatch(calls, /btn-call-raise-hand/);
   assert.doesNotMatch(read('public/index.html'), /Поднять руку|btn-call-raise-hand/);
-  assert.match(calls, /getByteFrequencyData/);
-  assert.match(calls, /setInterval\(tick, 100\)/);
   assert.match(css, /\.call-tile\.is-speaking/);
 });

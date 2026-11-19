@@ -11,8 +11,9 @@ const me={id:'alice',nickname:'Алекс',friends:['bob','carol'],friendRequest
 const bob={id:'bob',nickname:'Макс',friends:['alice'],friendRequests:[],blockedUsers:[],online:true};
 const carol={...bob,id:'carol',nickname:'Саша'};
 const group={id:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',name:'Планы на выходные',ownerId:'alice',members:[me,bob,carol]};
-const mock=`window.__sent=[];window.__connections=0;window.__response={ok:true,status:'pending'};window.io=function(){const handlers={};const s={connected:false,auth:null,on(e,f){(handlers[e]??=[]).push(f);return s},off(){return s},fire(e,p){for(const f of handlers[e]||[])f(p)},connect(){s.connected=true;window.__connections++;setTimeout(()=>{s.fire('connect');s.fire('profile',${JSON.stringify(me)})},10);return s},disconnect(){s.connected=false;return s},emit(e,p,cb){window.__sent.push({event:e,payload:p});if(cb)setTimeout(()=>cb(null,window.__response),window.__ackDelay||30);return s},timeout(){return s},io:{on(){}}};window.__socket=s;return s}`;
+const mock=`window.__sent=[];window.__connections=0;window.__response={ok:true,status:'pending'};window.io=function(){const handlers={};const s={connected:false,auth:null,on(e,f){(handlers[e]??=[]).push(f);return s},once(e,f){const once=(p)=>{s.off(e,once);f(p)};return s.on(e,once)},off(e,f){if(handlers[e])handlers[e]=handlers[e].filter(x=>x!==f);return s},fire(e,p){for(const f of handlers[e]||[])f(p)},connect(){s.connected=true;window.__connections++;setTimeout(()=>{s.fire('connect');s.fire('profile',${JSON.stringify(me)})},10);return s},disconnect(){s.connected=false;return s},emit(e,p,cb){window.__sent.push({event:e,payload:p});if(cb)setTimeout(()=>cb(null,window.__response),window.__ackDelay||30);return s},timeout(){return s},io:{on(){}}};window.__socket=s;return s}`;
 const server=http.createServer((req,res)=>{let pathname=new URL(req.url,'http://local').pathname;
+ if(pathname.startsWith('/uploads/')){res.setHeader('Content-Type','image/png');return res.end(PNG)}
  if(pathname==='/socket.io/socket.io.js'){res.setHeader('Content-Type','text/javascript');return res.end(mock)}
  if(pathname==='/')pathname='/index.html';const file=path.join(root,pathname);if(!file.startsWith(root+path.sep)){res.statusCode=403;return res.end()}
  const type=file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html';res.setHeader('Content-Type',type);
@@ -22,7 +23,7 @@ const server=http.createServer((req,res)=>{let pathname=new URL(req.url,'http://
 const tests=[];async function check(name,fn){await fn();tests.push(name);console.log('PASS',name)}
 (async()=>{
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin=`http://127.0.0.1:${server.address().port}`;
- const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+ const browser=await chromium.launch({channel:'chromium',headless:true,args:['--no-sandbox']});
  try {
  const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
  let historyDelay=0, searchDelay=0;
@@ -34,17 +35,132 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
   else if(u.pathname==='/api/me')data=me;
   else if(u.pathname==='/api/groups')data=[group];
   else if(u.pathname==='/api/search'){if(searchDelay)await new Promise(r=>setTimeout(r,searchDelay));data=[{id:'david',nickname:'Даня',online:true}]}
-  else if(u.pathname==='/api/profile/update')data={success:true,user:{...me,avatar:'/uploads/11111111-1111-1111-1111-111111111111.webp'}};
+  else if(u.pathname==='/api/profile/update')data={success:true,user:{...me,...route.request().postDataJSON()}};
   else if(u.pathname.startsWith('/api/profile/'))data=u.pathname.endsWith('bob')?bob:carol;
   else if(u.pathname.endsWith('/messages')||u.pathname.startsWith('/api/messages/')){if(historyDelay)await new Promise(r=>setTimeout(r,historyDelay));data=u.searchParams.has('before')?[{_id:'00000000-0000-0000-0000-000000000000',from:'bob',text:'Самое первое сообщение',time:'2026-09-04T12:00:00.000Z'}]:messages}
   await route.fulfill({json:data});
  });
  await page.goto(origin);await page.waitForLoadState('load');
  await check('clean initial boot',async()=>assert.deepEqual(errors,[]));
+ await check('noise suppression stays disabled',async()=>assert.equal(await page.evaluate(()=>getCallAudioConstraints().noiseSuppression),false));
  await check('dark theme and no desktop overflow',async()=>{assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).colorScheme),'dark');assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth))});
  await page.screenshot({path:path.join(screenshotDir,'auth-desktop.png'),fullPage:true});
  await page.fill('#login-id','alice');await page.fill('#login-pw','password123');await page.click('#btn-login');await page.waitForSelector('#app-screen.active');await page.waitForTimeout(200);
  await check('single connection after login',async()=>assert.equal(await page.evaluate(()=>window.__connections),1));
+
+
+ await check('profile cards and settings fit desktop and mobile',async()=>{
+   for(const width of [390,1440]) {
+     await page.setViewportSize({width,height:900});
+     await page.evaluate(()=>showUserProfile('bob'));
+     await page.waitForSelector('#profile-modal',{state:'visible'});
+     await page.waitForTimeout(350);
+     const geometry=await page.locator('#profile-modal .modal-box').evaluate(el=>({fits:el.scrollWidth<=el.clientWidth,legacy:getComputedStyle(el.querySelector('.modal-profile-header'),'::before').content}));
+     assert.equal(geometry.fits,true);assert.equal(geometry.legacy,'none');
+     await page.screenshot({path:path.join(screenshotDir,'profile-view-'+width+'.png')});
+     await page.keyboard.press('Escape');
+     await page.evaluate(()=>openGroupInfoModal('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'));
+     await page.waitForTimeout(350);
+     assert.ok(await page.locator('#group-info-modal .modal-box').evaluate(el=>el.scrollWidth<=el.clientWidth));
+     await page.screenshot({path:path.join(screenshotDir,'group-info-'+width+'.png')});
+     await page.keyboard.press('Escape');
+     await page.evaluate(()=>{state.me.bio='Очень длинное описание '.repeat(30);openSettings()});
+     await page.waitForTimeout(250);
+     assert.ok(await page.locator('.settings-shell').evaluate(el=>el.scrollWidth<=el.clientWidth));
+     assert.equal(await page.locator('#settings-user-avatar').evaluate(el=>getComputedStyle(el).justifyContent),'center');
+     await page.screenshot({path:path.join(screenshotDir,'settings-account-'+width+'.png')});
+     await page.keyboard.press('Escape');
+   }
+   await page.setViewportSize({width:1440,height:1000});
+ });
+ await check('microphone check responds to audio level, threshold and mute', async()=>{
+   await page.click('#btn-settings');
+   await page.click('[data-settings-section="voice"]');
+   await page.evaluate(()=>{
+     const constraintsOverride = async () => {
+       const ctx = new AudioContext();
+       const oscillator = ctx.createOscillator();
+       const gain = ctx.createGain();
+       const dest = ctx.createMediaStreamDestination();
+       gain.gain.value = .04472;
+       oscillator.connect(gain).connect(dest);
+       oscillator.start();
+       await ctx.resume();
+       window.voiceFixture = {ctx, track:dest.stream.getAudioTracks()[0]};
+       return dest.stream;
+     };
+     window.oldGetUserMedia = navigator.mediaDevices.getUserMedia;
+     navigator.mediaDevices.getUserMedia = constraintsOverride;
+   });
+   try {
+     await page.click('#voice-check-toggle');
+     await page.waitForFunction(()=>{
+       const value = document.getElementById('voice-meter-value').textContent;
+       return /−(29|30|31) dBFS/.test(value) && document.getElementById('voice-meter').classList.contains('is-active');
+     });
+     await page.screenshot({path:path.join(screenshotDir,'settings-voice-desktop.png'),animations:'disabled'});
+     await page.locator('#voice-threshold').fill('-20');
+     await page.waitForFunction(()=>!document.getElementById('voice-meter').classList.contains('is-active'));
+     await page.locator('#voice-threshold').fill('-48');
+     await page.waitForFunction(()=>document.getElementById('voice-meter').classList.contains('is-active'));
+     await page.evaluate(()=>{voiceFixture.track.enabled=false});
+     await page.waitForFunction(()=>document.getElementById('voice-meter-value').textContent==='—' && !document.getElementById('voice-meter').classList.contains('is-active'));
+     await page.setViewportSize({width:390,height:700});
+     assert.ok(await page.locator('.settings-shell').evaluate(el=>el.scrollWidth<=el.clientWidth));
+     await page.screenshot({path:path.join(screenshotDir,'settings-voice-mobile.png'),animations:'disabled'});
+     await page.keyboard.press('Escape');
+     await page.waitForFunction(()=>voiceFixture.track.readyState==='ended');
+   } finally {
+     await page.evaluate(async()=>{
+       navigator.mediaDevices.getUserMedia=window.oldGetUserMedia;
+       if(window.voiceFixture) await voiceFixture.ctx.close();
+     });
+     await page.setViewportSize({width:1440,height:1000});
+   }
+ });
+ await check('settings navigation and profile customization work', async()=>{
+   await page.click('#btn-settings');
+   await page.click('.settings-subitem[data-settings-section="account"]');
+   assert.equal(await page.locator('[data-settings-section="account"].active').count(),2);
+   await page.fill('#settings-search-input','пароль');
+   await page.press('#settings-search-input','Enter');
+   assert.equal(await page.locator('[data-settings-panel="security"]').isVisible(),true);
+   await page.fill('#settings-search-input','');
+   await page.click('.settings-nav-item[data-settings-section="account"]');
+   await page.click('#btn-settings-profile');
+   assert.equal(await page.locator('#settings-modal').isVisible(),false);
+   await page.click('[data-profile-colors="#176b87,#64ccc5"]');
+   assert.equal(await page.inputValue('#edit-profile-color'),'#176b87');
+   await page.fill('#edit-nick','Новое имя');
+   await page.fill('#edit-pronouns','она / её');
+   await page.fill('#edit-bio','<script>текст</script>');
+   await page.locator('#edit-profile-color').fill('#123456');
+   assert.equal(await page.locator('#profile-preview-name').textContent(),'Новое имя');
+   assert.equal(await page.locator('#profile-preview-bio script').count(),0);
+   assert.match(await page.locator('#profile-preview-banner').getAttribute('style'),/18, 52, 86/);
+   await page.click('#btn-save-profile');
+   await page.waitForFunction(()=>document.getElementById('edit-profile-modal').style.display==='none');
+   await page.evaluate(()=>openEditProfileModal());
+   assert.equal(await page.inputValue('#edit-pronouns'),'она / её');
+   assert.equal(await page.inputValue('#edit-profile-color'),'#123456');
+   await page.waitForTimeout(400);
+   await page.screenshot({path:path.join(screenshotDir,'profile-customization.png'),fullPage:true});
+   await page.setViewportSize({width:390,height:844});
+   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+   await page.screenshot({path:path.join(screenshotDir,'profile-mobile.png'),fullPage:true});
+   await page.keyboard.press('Escape');
+   assert.equal(await page.locator('#edit-profile-modal').isVisible(),false);
+   await page.setViewportSize({width:1440,height:1000});
+ });
+ await check('voice latency badge does not overlap the avatar', async()=>{
+   const result = await page.evaluate(()=>{
+     const overlay=document.createElement('div');overlay.className='call-overlay voice-mode';overlay.style.cssText='display:block;position:fixed;top:100px;left:100px';
+     const tile=document.createElement('div');tile.className='call-tile';overlay.append(tile);document.body.append(overlay);
+     cplQuality.set('layout-test',{level:'good',rtt:42,loss:0});cplRenderTileQuality(tile,'layout-test');
+     const badge=tile.querySelector('.call-tile-quality');const result={text:badge.textContent,separate:badge.getBoundingClientRect().bottom<=tile.getBoundingClientRect().top};
+     overlay.remove();cplQuality.delete('layout-test');return result;
+   });assert.equal(result.separate,true);assert.match(result.text,/42 мс/);
+ });
  await page.evaluate(()=>openEditProfileModal());
  await page.setInputFiles('#avatar-input',{name:'avatar.jpg',mimeType:'image/jpeg',buffer:Buffer.alloc(6*1024*1024,7)});
  await page.waitForTimeout(120);
@@ -74,9 +190,25 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
   assert.match(await page.evaluate(()=>document.querySelector('#my-avatar img')?.src||''),/11111111-1111-1111-1111-111111111111/);
  });
  await page.evaluate(()=>openChat('bob'));await page.waitForTimeout(100);
+ await check('consecutive short messages stay compact', async()=>{
+   const heights = await page.evaluate(()=>{
+     const container = document.querySelector('#messages');
+     const rows = Array.from({length: 12},()=>{
+       const row = document.createElement('div');
+       row.className = 'g-msg grouped';
+       row.innerHTML = '<div class="g-msg-av-slot"><span class="g-msg-hover-time">12:03</span></div><div class="g-msg-body"><div class="g-msg-text">Сообщение</div></div>';
+       container.append(row);
+       return row;
+     });
+     const result = rows.map(row=>row.getBoundingClientRect().height);
+     rows.forEach(row=>row.remove());
+     return result;
+   });
+   assert.ok(heights.every(height=>height <= 28), `Grouped row heights: ${heights}`);
+ });
  await page.setInputFiles('#msg-image-input',{name:'photo.png',mimeType:'image/png',buffer:Buffer.from('png')});
  await page.waitForSelector('#msg-attach-preview.show');
- await page.click('#btn-send');await page.waitForTimeout(100);
+ await page.click('#btn-send');await page.waitForFunction(()=>__sent.some(x=>x.event==='sendMessage'&&x.payload.toId==='bob'));
  await check('PNG attachment sends in a DM',async()=>{const sent=await page.evaluate(()=>__sent.find(x=>x.event==='sendMessage'&&x.payload.toId==='bob'));assert.equal(sent.payload.image,'/uploads/22222222-2222-2222-2222-222222222222.webp')});
  await page.evaluate(()=>openGroupChat('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'));await page.waitForTimeout(150);
  await page.setInputFiles('#group-image-input',{name:'group.jpg',mimeType:'image/jpeg',buffer:Buffer.from('jpg')});
@@ -95,7 +227,7 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
    document.querySelector('#msg-input').dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true}));
  });
  await page.waitForSelector('#msg-attach-preview.show');
- await check('Ctrl+V screenshot attaches in a DM',async()=>assert.match(await page.locator('#transient-notice').textContent(),/Скриншот добавлен/));
+ await check('Ctrl+V screenshot attaches in a DM',async()=>assert.match(await page.locator('#transient-notice').textContent(),/Файл добавлен к сообщению/));
  await page.click('#btn-send');await page.waitForTimeout(120);
  await page.evaluate(()=>openGroupChat('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'));await page.waitForTimeout(120);
  await page.evaluate(()=>{
@@ -104,25 +236,25 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
    document.querySelector('#group-msg-input').dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true}));
  });
  await page.waitForSelector('#group-attach-preview.show');
- await check('Ctrl+V screenshot attaches in a group',async()=>assert.match(await page.locator('#transient-notice').textContent(),/группы/));
+ await check('Ctrl+V screenshot attaches in a group',async()=>assert.match(await page.locator('#transient-notice').textContent(),/Файл добавлен/));
  await page.click('#btn-group-send');await page.waitForTimeout(120);
  await page.fill('#search-input','@david');await page.waitForSelector('.s-item .btn-add');await page.click('.s-item .btn-add');await page.waitForTimeout(100);
  await check('friend addition waits for ack and shows success',async()=>{assert.equal(await page.locator('.s-item .btn-add').textContent(),'Заявка отправлена');const sent=await page.evaluate(()=>__sent.find(x=>x.event==='sendFriendRequest'));assert.equal(sent.payload,'david')});
- await page.evaluate(()=>{__response={ok:false,reason:'blocked',error:'Заблокирован'};closeDrop();});
+ await page.evaluate(()=>{__response={ok:false,reason:'blocked',error:'Заблокирован'};sentFriendRequests.delete('david');closeDrop();});
  await page.fill('#search-input','david');await page.waitForSelector('.s-item .btn-add');await page.click('.s-item .btn-add');await page.waitForTimeout(100);
  await check('friend errors restore the button and explain reason',async()=>{assert.equal(await page.locator('.s-item .btn-add').isDisabled(),false);assert.match(await page.locator('#transient-notice').textContent(),/Невозможно/)});
  await page.evaluate(()=>{__response={ok:true,status:'friends'};});await page.click('.s-item .btn-add');await page.waitForTimeout(100);
- await check('cross-request success has a friends state',async()=>assert.equal(await page.locator('.s-item .btn-add').textContent(),'В друзьях'));
+ await check('cross-request success has a friends state',async()=>assert.equal(await page.locator('.s-item .btn-add').textContent(),'✓ В друзьях'));
  await page.evaluate(()=>closeDrop());await page.evaluate(()=>openChat('bob'));await page.waitForSelector('#messages .history-more');
  await check('first history page renders 50 messages',async()=>assert.equal(await page.locator('#messages [data-msgid]').count(),50));
  await page.click('#messages .history-more');await page.waitForSelector('[data-msgid="00000000-0000-0000-0000-000000000000"]');
  await check('cursor pagination preserves existing messages',async()=>assert.equal(await page.locator('#messages [data-msgid]').count(),51));
- await page.evaluate(()=>{__socket.connected=false});await page.fill('#msg-input','Не потеряй меня');await page.click('#btn-send');
+ await page.evaluate(()=>{__socket.connected=false});await page.fill('#msg-input','Не потеряй меня');await page.keyboard.press('Enter');
  await check('disconnected send preserves text',async()=>assert.equal(await page.inputValue('#msg-input'),'Не потеряй меня'));
- await page.evaluate(()=>{__socket.connected=true;__response={ok:false,reason:'busy',error:'Сервер занят'}});await page.click('#btn-send');await page.waitForTimeout(100);
+ await page.evaluate(()=>{__socket.connected=true;__response={ok:false,reason:'busy',error:'Сервер занят'};refreshComposer(false)});await page.click('#btn-send');await page.waitForTimeout(100);
  await check('rejected send preserves text',async()=>assert.equal(await page.inputValue('#msg-input'),'Не потеряй меня'));
  await page.evaluate(()=>{__response={ok:true};__ackDelay=180});await page.click('#btn-send');
- await check('send does not clear text before acknowledgement',async()=>assert.equal(await page.inputValue('#msg-input'),'Не потеряй меня'));
+ await check('send retains a retry attempt until acknowledgement',async()=>{assert.equal(await page.inputValue('#msg-input'),'');assert.equal(await page.evaluate(()=>retryMessages.get('dm:bob')?.text),'Не потеряй меня')});
  await page.waitForTimeout(240);
  await check('confirmed send clears text and retries reuse id',async()=>{assert.equal(await page.inputValue('#msg-input'),'');const s=await page.evaluate(()=>__sent.filter(x=>x.event==='sendMessage'));assert.equal(s.at(-1).payload.clientId,s.at(-2).payload.clientId)});
  await page.fill('#msg-input','Черновик Максу');await page.evaluate(()=>openChat('carol'));assert.equal(await page.inputValue('#msg-input'),'');await page.fill('#msg-input','Черновик Саше');await page.evaluate(()=>openChat('bob'));
@@ -202,14 +334,14 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
    assert.equal(await page.locator('#call-video-grid video').count(),1);
  });
  await page.evaluate(()=>{__socket.fire('callPeerLeft',{callId:'screen-test',peerId:'bob'});});
- await check('leaving peer starts a one-minute wait instead of ending immediately',async()=>{
+ await check('leaving peer keeps the voice room open',async()=>{
    assert.equal(await page.evaluate(()=>callState.active),true);
-   assert.match(await page.locator('#call-overlay-status').textContent(),/ждём участника/);
+   assert.match(await page.locator('#call-overlay-status').textContent(),/ожидание участников/);
  });
  await page.evaluate(()=>hangupCall());
  await page.setViewportSize({width:1440,height:900});await page.evaluate(()=>{openGroupChat('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');document.activeElement?.blur()});await page.waitForTimeout(200);
  await page.screenshot({path:path.join(screenshotDir,'group-desktop.png')});
- const authPage=await browser.newPage({viewport:{width:390,height:480}});await authPage.goto(origin);await authPage.waitForLoadState('load');await authPage.click('[data-action="0"]');
+ const authPage=await browser.newPage({viewport:{width:390,height:480}});await authPage.goto(origin);await authPage.waitForLoadState('load');await authPage.click('[data-action="nav-register"]');
  await check('registration remains reachable on short screens',async()=>{
    await authPage.locator('#btn-register').scrollIntoViewIfNeeded();const button=await authPage.locator('#btn-register').boundingBox();assert.ok(button.y>=0&&button.y+button.height<=481);
    assert.equal(await authPage.locator('#app-screen').isVisible(),false);
@@ -262,7 +394,8 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
  });
  await page.evaluate(()=>{
    window.__response={ok:true};window.__socket.connected=true;
-   Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>({getTracks:()=>[],getAudioTracks:()=>[],getVideoTracks:()=>[]})}});
+   const audio = new AudioContext(); const stream = audio.createMediaStreamDestination().stream;
+   Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>stream}});
  });
  await page.click('#btn-join-group-voice');await page.waitForTimeout(100);
  await check('join action reuses the retained voice call',async()=>{

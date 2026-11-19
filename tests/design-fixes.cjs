@@ -31,7 +31,7 @@ test('touch actions are usable and narrow screens retain audio calls', () => {
 
 test('voice threshold explanation matches its scale', () => {
   const html = read('public/index.html');
-  assert.match(html, /Ближе к −60 dB индикатор загорается от тихого голоса/);
+  assert.match(html, /−60 dBFS · Чувствительнее.*−10 dBFS · Нужно громче/);
 });
 
 test('configured database pool size is respected', () => {
