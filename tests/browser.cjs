@@ -190,6 +190,41 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
   assert.match(await page.evaluate(()=>document.querySelector('#my-avatar img')?.src||''),/11111111-1111-1111-1111-111111111111/);
  });
  await page.evaluate(()=>openChat('bob'));await page.waitForTimeout(100);
+ await check('screen sharing stays compact when changing chats', async()=>{
+   await page.evaluate(()=>{
+     callState.active=true; callState.peerFriendId='bob'; callState.isGroup=false; screenShareTrack={readyState:'live'};
+     const overlay=document.getElementById('call-overlay');
+     overlay.style.display='flex'; overlay.classList.add('video-mode','screen-share-mini');
+     syncVoiceOverlayPosition();
+   });
+   try {
+     const result=await page.evaluate(()=>{
+       const overlay=document.getElementById('call-overlay');
+       const activeHeight=overlay.getBoundingClientRect().height;
+       state.activeFriend='carol'; syncCallDetached();
+       const detached=overlay.classList.contains('detached');
+       const detachedWidth=overlay.getBoundingClientRect().width;
+       return {activeHeight,detached,detachedWidth,active:callState.active};
+     });
+     assert.ok(result.activeHeight<=420, JSON.stringify(result));
+     assert.equal(result.detached,true);
+     assert.ok(result.detachedWidth<=300, JSON.stringify(result));
+     assert.equal(result.active,true);
+   } finally {
+     await page.evaluate(()=>{
+       callState.active=false; screenShareTrack=null; state.activeFriend='bob';
+       const overlay=document.getElementById('call-overlay');
+       overlay.style.display='none'; overlay.classList.remove('video-mode','screen-share-mini','detached');
+     });
+   }
+ });
+ await check('admin badge belongs to the specified account ID', async()=>{
+   const result=await page.evaluate(()=>{
+     const badge=uiAdminBadge();
+     return {label:badge.getAttribute('aria-label'),svg:!!badge.querySelector('svg')};
+   });
+   assert.deepEqual(result,{label:'Администратор',svg:true});
+ });
  await check('two screen share tiles use the available width', async()=>{
    const sizes = await page.evaluate(()=>{
      const overlay=document.getElementById('call-overlay');

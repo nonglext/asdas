@@ -426,9 +426,6 @@ document.addEventListener('keydown', event => {
   if (event.repeat || !callState.active) return;
 
   const key = typeof event.key === 'string' ? event.key.toLowerCase() : '';
-  const typing = event.target instanceof Element &&
-    event.target.closest('input, textarea, select, [contenteditable="true"]');
-
   if ((event.ctrlKey || event.metaKey) && event.shiftKey && (key === 'd' || event.code === 'KeyD')) {
     event.preventDefault();
     cplToggleDeafen();
@@ -441,13 +438,6 @@ document.addEventListener('keydown', event => {
     return;
   }
 
-  if (!typing && !event.ctrlKey && !event.metaKey && !event.altKey && (key === 'f' || event.code === 'KeyF')) {
-    const overlay = document.getElementById('call-overlay');
-    if (overlay && overlay.style.display !== 'none' && !overlay.classList.contains('detached')) {
-      event.preventDefault();
-      void cplToggleFullscreen();
-    }
-  }
 });
 
 whenDomReady(() => {

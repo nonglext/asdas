@@ -1483,12 +1483,6 @@ function updateCallVisualMode() {
   if (compactButton) compactButton.hidden = !screenVisible;
   if (!screenVisible) overlay.classList.remove('call-compact');
   syncCallCompactButton();
-  if (screenVisible) {
-    requestAnimationFrame(() => {
-      if (currentSessionMatches(captureCallSession())) renderCallGrid();
-    });
-  }
-
   const detached = overlay.classList.contains('detached');
 
   setText(
