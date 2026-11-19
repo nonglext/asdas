@@ -137,15 +137,6 @@ function uiNode(tag, className, text) {
   return element;
 }
 
-function uiAdminBadge() {
-  const badge = uiNode('span', 'admin-badge');
-  badge.setAttribute('role', 'img');
-  badge.setAttribute('aria-label', 'Администратор');
-  badge.title = 'Администратор';
-  badge.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2 3 6v5c0 5.5 3.8 9.6 9 11 5.2-1.4 9-5.5 9-11V6l-9-4Zm0 4 1.4 3 3.2.4-2.3 2.3.5 3.3-2.8-1.5-2.8 1.5.5-3.3-2.3-2.3 3.2-.4L12 6Z"/></svg>';
-  return badge;
-}
-
 function uiActivate(element, action) {
   element.setAttribute('role', 'button');
   element.tabIndex = 0;
@@ -781,7 +772,6 @@ async function openChat(value) {
 
   renderAv($('chat-avatar'), friend.nickname, friend.avatar);
   setText('chat-nick', friend.nickname);
-  if (id === 'nongl') $('chat-nick')?.appendChild(uiAdminBadge());
 
   const status = $('chat-status');
 
@@ -956,7 +946,6 @@ function appendChatMsg(msg, containerId, ctx = {}, doScroll = true) {
     );
 
     head.appendChild(nickElement);
-    if (senderId === 'nongl') head.appendChild(uiAdminBadge());
 
     if (ctx.isOwner) {
       const crown = uiNode('span');
@@ -1450,6 +1439,7 @@ async function showUserProfile(value) {
   const modalSequence = ++profileModalSequence;
 
   profileVisibleUserId = userId;
+  $('profile-admin-badge').hidden = true;
 
   profileLoadController?.abort();
   const controller = new AbortController();
@@ -1492,7 +1482,7 @@ async function showUserProfile(value) {
     );
 
     setText('profile-modal-nick', user.nickname || userId);
-    if (userId === 'nongl') $('profile-modal-nick')?.appendChild(uiAdminBadge());
+    $('profile-admin-badge').hidden = userId !== 'rock';
     setText('profile-modal-id', `@${userId}`);
     renderProfileDecoration(user);
 

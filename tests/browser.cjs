@@ -218,12 +218,18 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
      });
    }
  });
- await check('admin badge belongs to the specified account ID', async()=>{
-   const result=await page.evaluate(()=>{
-     const badge=uiAdminBadge();
-     return {label:badge.getAttribute('aria-label'),svg:!!badge.querySelector('svg')};
+ await check('profile badge is shown only for rock account ID', async()=>{
+   await page.route('**/api/profile/{rock,nongl}', route=>{
+     const id=new URL(route.request().url()).pathname.split('/').pop();
+     return route.fulfill({json:{id,nickname:'Одинаковое имя',online:true}});
    });
-   assert.deepEqual(result,{label:'Администратор',svg:true});
+   await page.evaluate(()=>showUserProfile('rock'));
+   await page.waitForFunction(()=>document.querySelector('#profile-modal-id').textContent==='@rock');
+   assert.equal(await page.locator('#profile-admin-badge').isVisible(),true);
+   await page.evaluate(()=>showUserProfile('nongl'));
+   await page.waitForFunction(()=>document.querySelector('#profile-modal-id').textContent==='@nongl');
+   assert.equal(await page.locator('#profile-admin-badge').isVisible(),false);
+   await page.keyboard.press('Escape');
  });
  await check('two screen share tiles use the available width', async()=>{
    const sizes = await page.evaluate(()=>{

@@ -160,11 +160,13 @@ function openSettings() {
   const avatar = document.getElementById('settings-user-avatar');
   const name = document.getElementById('settings-user-name');
   const accountName = document.getElementById('settings-account-name');
+  const accountId = document.getElementById('settings-account-id');
   const accountStatus = document.getElementById('settings-account-status');
   const accountBio = document.getElementById('settings-account-bio');
   if (user) {
     if (name) name.textContent = user.nickname || user.id || 'Профиль';
     if (accountName) accountName.textContent = user.nickname || user.id || '—';
+    if (accountId) accountId.textContent = user.id ? `@${user.id}` : '—';
     if (accountStatus) accountStatus.textContent = user.status || 'Активен';
     if (accountBio) accountBio.textContent = user.bio || 'Не заполнено';
     if (avatar && typeof renderAv === 'function') renderAv(avatar, user.nickname || user.id, user.avatar || null);
