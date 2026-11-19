@@ -206,7 +206,7 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
        const detachedWidth=overlay.getBoundingClientRect().width;
        return {activeHeight,detached,detachedWidth,active:callState.active};
      });
-     assert.ok(result.activeHeight<=420, JSON.stringify(result));
+     assert.ok(result.activeHeight<=500, JSON.stringify(result));
      assert.equal(result.detached,true);
      assert.ok(result.detachedWidth<=300, JSON.stringify(result));
      assert.equal(result.active,true);
@@ -232,26 +232,30 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
    await page.keyboard.press('Escape');
  });
  await check('two screen share tiles use the available width', async()=>{
+   await page.setViewportSize({width:1920,height:1000});
    const sizes = await page.evaluate(()=>{
      const overlay=document.getElementById('call-overlay');
      const grid=document.getElementById('call-video-grid');
-     overlay.style.display='flex'; overlay.classList.add('screen-share-mini');
+     overlay.style.display='flex'; overlay.classList.remove('voice-mode'); overlay.classList.add('screen-share-mini','video-mode');
      grid.dataset.count='2';
      const tiles=Array.from({length:2},()=>{const tile=document.createElement('div');tile.className='call-tile';grid.append(tile);return tile;});
      const box=grid.getBoundingClientRect();
      const first=tiles[0].getBoundingClientRect(); const last=tiles[1].getBoundingClientRect();
      const result={left:first.left-box.left,right:box.right-last.right,width:box.width};
-     tiles.forEach(tile=>tile.remove()); overlay.style.display='none'; overlay.classList.remove('screen-share-mini'); delete grid.dataset.count;
+     tiles.forEach(tile=>tile.remove()); overlay.style.display='none'; overlay.classList.remove('screen-share-mini','video-mode'); delete grid.dataset.count;
      return result;
    });
    assert.ok(sizes.left < 50 && sizes.right < 50, JSON.stringify(sizes));
+   await page.setViewportSize({width:1440,height:1000});
  });
  await check('screen share can be collapsed while the message input remains accessible', async()=>{
    await page.evaluate(()=>{
      callState.active = true;
+     screenShareTrack = {readyState:'live'};
      const overlay = document.getElementById('call-overlay');
      overlay.style.display = 'flex';
-     overlay.classList.add('screen-share-mini');
+     overlay.classList.remove('voice-mode');
+     overlay.classList.add('screen-share-mini','video-mode');
      document.getElementById('btn-call-compact').hidden = false;
    });
    try {
@@ -265,9 +269,10 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
    } finally {
      await page.evaluate(()=>{
        callState.active = false;
+       screenShareTrack = null;
        const overlay = document.getElementById('call-overlay');
        overlay.style.display = 'none';
-       overlay.classList.remove('screen-share-mini','call-compact');
+       overlay.classList.remove('screen-share-mini','video-mode','call-compact');
      });
    }
  });

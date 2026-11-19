@@ -1942,14 +1942,14 @@ body { -webkit-font-smoothing: antialiased; }
 .profile-admin-badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 7px; background: rgb(237 66 69 / .14); color: #ff777a; font-size: 12px; font-weight: 700; }
 .profile-admin-badge svg { width: 16px; height: 16px; flex: none; }
 #btn-call-fullscreen { display: none; }
-.call-overlay.video-mode:not(.detached):not(.call-compact):not(:fullscreen) { inset: var(--call-top, 56px) 0 auto var(--call-left, 312px); height: min(42dvh, 400px); max-height: 42dvh; }
+.call-overlay.video-mode:not(.detached):not(.call-compact):not(:fullscreen) { inset: var(--call-top, 56px) 0 auto var(--call-left, 312px); height: min(50dvh, 500px); max-height: 50dvh; }
 .call-overlay.screen-share-mini:not(.detached):not(.call-compact):not(:fullscreen) .call-overlay-top { padding: 6px 12px; }
 .call-overlay.screen-share-mini:not(.detached):not(.call-compact):not(:fullscreen) .call-video-grid { min-height: 0; padding: 6px 14px; }
 .call-overlay.screen-share-mini:not(.detached):not(.call-compact):not(:fullscreen) .call-tile { min-height: 0; }
 .call-overlay.screen-share-mini:not(.detached):not(.call-compact):not(:fullscreen) .call-overlay-controls { position: static; margin: 2px auto 6px; padding: 4px; }
 .call-overlay.screen-share-mini:not(.detached):not(.call-compact):not(:fullscreen) .call-round-btn { width: 36px; height: 36px; min-width: 36px; min-height: 36px; }
 body:has(.call-overlay.video-mode:not(.detached):not(.call-compact):not(:fullscreen)[style*="display: flex"]) .chat-window .messages,
-body:has(.call-overlay.video-mode:not(.detached):not(.call-compact):not(:fullscreen)[style*="display: flex"]) .chat-window .group-messages { margin-top: min(42dvh, 400px); }
+body:has(.call-overlay.video-mode:not(.detached):not(.call-compact):not(:fullscreen)[style*="display: flex"]) .chat-window .group-messages { margin-top: min(50dvh, 500px); }
 .call-overlay.screen-share-mini.detached:not(.call-compact) { inset: auto 16px 16px auto; width: min(300px, calc(100vw - 32px)); height: auto; max-height: 220px; padding: 6px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg2); box-shadow: var(--shadow-lg); }
 .call-overlay.screen-share-mini.detached:not(.call-compact) .call-video-grid { display: none; }
 .call-overlay.screen-share-mini.detached:not(.call-compact) .call-overlay-controls { position: static; width: auto; margin: 4px auto 0; padding: 4px; gap: 4px; }
@@ -1961,10 +1961,10 @@ body:has(.call-overlay.video-mode:not(.detached):not(.call-compact):not(:fullscr
 .call-overlay.screen-share-mini.call-compact .call-overlay-title, .call-overlay.screen-share-mini.call-compact .call-overlay-status { display: none; }
 .call-overlay.screen-share-mini.call-compact .call-overlay-tools { margin-left: auto; }
 .call-overlay.screen-share-mini.call-compact .call-video-grid { min-height: 0; padding: 4px 8px; gap: 4px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr)); }
-.call-overlay.screen-share-mini:not(.call-compact) .call-video-grid[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
-.call-overlay.screen-share-mini:not(.call-compact) .call-video-grid[data-count="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.call-overlay.screen-share-mini.video-mode:not(.detached):not(.call-compact) .call-video-grid[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
+.call-overlay.screen-share-mini.video-mode:not(.detached):not(.call-compact) .call-video-grid[data-count="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 600px) {
-  .call-overlay.screen-share-mini:not(.call-compact) .call-video-grid[data-count="2"] { grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(2, minmax(0, 1fr)); }
+  .call-overlay.screen-share-mini.video-mode:not(.detached):not(.call-compact) .call-video-grid[data-count="2"] { grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(2, minmax(0, 1fr)); }
 }
 .call-overlay.screen-share-mini.call-compact .call-tile { min-height: 0; }
 .call-overlay.screen-share-mini.call-compact .call-overlay-controls { position: static; transform: none; margin: 0 auto 6px; padding: 3px; gap: 4px; }
