@@ -172,7 +172,7 @@ function openSettings() {
   syncThemeControls();
   syncVoiceThresholdControl();
   const processing = document.getElementById('voice-processing');
-  if (processing) processing.checked = window.voiceProcessingEnabled?.() ?? true;
+  if (processing) processing.checked = window.voiceProcessingEnabled?.() ?? false;
   syncSoundsControl();
   const search = document.getElementById('settings-search-input');
   if (search) {

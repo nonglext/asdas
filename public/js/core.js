@@ -75,8 +75,8 @@ const RAW_AUDIO_CONSTRAINTS = Object.freeze({
 
 const VOICE_PROCESSING_KEY = 'chatapp_voice_processing';
 function voiceProcessingEnabled() {
-  try { return localStorage.getItem(VOICE_PROCESSING_KEY) !== 'false'; }
-  catch (_) { return true; }
+  try { return localStorage.getItem(VOICE_PROCESSING_KEY) === 'true'; }
+  catch (_) { return false; }
 }
 function getCallAudioConstraints() {
   return voiceProcessingEnabled() ? {
