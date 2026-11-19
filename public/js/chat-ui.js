@@ -3128,9 +3128,9 @@ function refreshComposer(group) {
     delete input.dataset.sending;
     input.style.height = 'auto';
 
-    const maxHeight = Math.max(54, Math.min(216, window.innerHeight * 0.30));
+    const maxHeight = Math.max(46, Math.min(216, window.innerHeight * 0.30));
 
-    input.style.height = `${Math.max(54, Math.min(input.scrollHeight, maxHeight))}px`;
+    input.style.height = `${Math.max(46, Math.min(input.scrollHeight, maxHeight))}px`;
     input.style.overflowY = input.scrollHeight > maxHeight ? 'auto' : 'hidden';
   }
 
