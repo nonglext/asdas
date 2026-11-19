@@ -399,6 +399,26 @@ document.addEventListener('fullscreenchange', cplSyncFullscreen);
 
 /* ── Кнопки и клавиши ────────────────────────────────────────────────────── */
 
+function syncCallCompactButton() {
+  const overlay = document.getElementById('call-overlay');
+  const button = document.getElementById('btn-call-compact');
+  if (!overlay || !button) return;
+  const compact = overlay.classList.contains('call-compact');
+  const label = compact ? 'Развернуть демонстрацию' : 'Свернуть демонстрацию';
+  button.setAttribute('aria-pressed', String(compact));
+  button.setAttribute('aria-label', label);
+  button.title = label;
+}
+
+on('btn-call-compact', 'click', async () => {
+  const overlay = document.getElementById('call-overlay');
+  if (!overlay || !callState.active) return;
+  if (document.fullscreenElement) {
+    try { await document.exitFullscreen(); } catch (_) { return; }
+  }
+  overlay.classList.toggle('call-compact');
+  syncCallCompactButton();
+});
 on('btn-call-deafen', 'click', cplToggleDeafen);
 on('btn-call-fullscreen', 'click', () => void cplToggleFullscreen());
 

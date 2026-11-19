@@ -951,7 +951,7 @@ function closeCallOverlay() {
 
   if (overlay) {
     overlay.style.display = 'none';
-    overlay.classList.remove('voice-mode', 'video-mode', 'idle', 'detached', 'screen-share-mini');
+    overlay.classList.remove('voice-mode', 'video-mode', 'idle', 'detached', 'screen-share-mini', 'call-compact');
     overlay.style.removeProperty('--call-left');
     overlay.style.removeProperty('--call-top');
     overlay.title = '';
@@ -1479,6 +1479,10 @@ function updateCallVisualMode() {
   overlay.classList.toggle('video-mode', videoVisible);
   // При демонстрации оставляем звонок плавающим, чтобы чат под ним оставался доступен.
   overlay.classList.toggle('screen-share-mini', screenVisible);
+  const compactButton = $('btn-call-compact');
+  if (compactButton) compactButton.hidden = !screenVisible;
+  if (!screenVisible) overlay.classList.remove('call-compact');
+  syncCallCompactButton();
   if (screenVisible) {
     requestAnimationFrame(() => {
       if (currentSessionMatches(captureCallSession())) renderCallGrid();

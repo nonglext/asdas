@@ -190,6 +190,46 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
   assert.match(await page.evaluate(()=>document.querySelector('#my-avatar img')?.src||''),/11111111-1111-1111-1111-111111111111/);
  });
  await page.evaluate(()=>openChat('bob'));await page.waitForTimeout(100);
+ await check('two screen share tiles use the available width', async()=>{
+   const sizes = await page.evaluate(()=>{
+     const overlay=document.getElementById('call-overlay');
+     const grid=document.getElementById('call-video-grid');
+     overlay.style.display='flex'; overlay.classList.add('screen-share-mini');
+     grid.dataset.count='2';
+     const tiles=Array.from({length:2},()=>{const tile=document.createElement('div');tile.className='call-tile';grid.append(tile);return tile;});
+     const box=grid.getBoundingClientRect();
+     const first=tiles[0].getBoundingClientRect(); const last=tiles[1].getBoundingClientRect();
+     const result={left:first.left-box.left,right:box.right-last.right,width:box.width};
+     tiles.forEach(tile=>tile.remove()); overlay.style.display='none'; overlay.classList.remove('screen-share-mini'); delete grid.dataset.count;
+     return result;
+   });
+   assert.ok(sizes.left < 50 && sizes.right < 50, JSON.stringify(sizes));
+ });
+ await check('screen share can be collapsed while the message input remains accessible', async()=>{
+   await page.evaluate(()=>{
+     callState.active = true;
+     const overlay = document.getElementById('call-overlay');
+     overlay.style.display = 'flex';
+     overlay.classList.add('screen-share-mini');
+     document.getElementById('btn-call-compact').hidden = false;
+   });
+   try {
+     await page.click('#btn-call-compact');
+     assert.equal(await page.getAttribute('#btn-call-compact','aria-pressed'),'true');
+     await page.click('#msg-input');
+     assert.equal(await page.evaluate(()=>document.activeElement.id),'msg-input');
+     assert.equal(await page.evaluate(()=>callState.active),true);
+     await page.click('#btn-call-compact');
+     assert.equal(await page.getAttribute('#btn-call-compact','aria-pressed'),'false');
+   } finally {
+     await page.evaluate(()=>{
+       callState.active = false;
+       const overlay = document.getElementById('call-overlay');
+       overlay.style.display = 'none';
+       overlay.classList.remove('screen-share-mini','call-compact');
+     });
+   }
+ });
  await check('consecutive short messages stay compact', async()=>{
    const heights = await page.evaluate(()=>{
      const container = document.querySelector('#messages');
