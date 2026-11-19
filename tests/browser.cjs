@@ -190,6 +190,20 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
   assert.match(await page.evaluate(()=>document.querySelector('#my-avatar img')?.src||''),/11111111-1111-1111-1111-111111111111/);
  });
  await page.evaluate(()=>openChat('bob'));await page.waitForTimeout(100);
+ await check('profile editor uses one fallback avatar color in its preview', async()=>{
+   await page.evaluate(()=>openEditProfileModal());
+   const colors = await page.evaluate(()=>{
+     const source=document.getElementById('edit-avatar');
+     const preview=document.getElementById('profile-preview-avatar');
+     renderAv(source,'people',null);
+     return new Promise(resolve=>requestAnimationFrame(()=>resolve([
+       getComputedStyle(source).backgroundColor,
+       getComputedStyle(preview).backgroundColor,
+     ])));
+   });
+   assert.equal(colors[0], colors[1]);
+   await page.keyboard.press('Escape');
+ });
  await check('one account keeps the same fallback avatar color everywhere', async()=>{
    const colors = await page.evaluate(()=>{
      const classes=['f-av','chat-head-avatar','modal-avatar','chat-welcome-av'];

@@ -395,4 +395,5 @@ if (previewAvatarSource) new MutationObserver(() => {
   const target = document.getElementById('profile-preview-avatar');
   target.replaceChildren(...[...previewAvatarSource.childNodes].map(node => node.cloneNode(true)));
   target.style.background = previewAvatarSource.style.background;
+  target.style.setProperty('--avatar-color', previewAvatarSource.style.getPropertyValue('--avatar-color'));
 }).observe(previewAvatarSource, { childList: true, subtree: true, attributes: true });
