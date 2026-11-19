@@ -1647,7 +1647,7 @@ body { -webkit-font-smoothing: antialiased; }
   font-size: 15px;
   line-height: 1.45;
 }
-.g-msg.grouped { padding-top: 1px; padding-bottom: 1px; }
+.messages .g-msg.grouped, .group-messages .g-msg.grouped { min-height: 0; padding-top: 1px; padding-bottom: 1px; }
 .g-msg.grouped .g-msg-hover-time {
   display: block;
   padding-top: 2px;
@@ -1925,7 +1925,7 @@ body { -webkit-font-smoothing: antialiased; }
 /* Unified profile and settings geometry */
 #profile-modal .modal-profile-header::before { content: none; }
 #profile-modal .modal-profile-header { padding: 0 0 20px; margin-top: -40px; }
-#profile-modal .modal-profile-header .modal-avatar { box-sizing: border-box; width: 88px; height: 88px; }
+#profile-modal .modal-profile-header .modal-avatar { box-sizing: border-box; width: 88px; height: 88px; border: 0; }
 .modal-profile .modal-profile-name, .modal-profile .modal-profile-id { max-width: 100%; overflow-wrap: anywhere; }
 .modal-profile .profile-info-value { white-space: pre-wrap; overflow-wrap: anywhere; }
 .modal-profile .modal-close-btn { z-index: 5; background: rgb(20 20 26 / .65); color: white; }
