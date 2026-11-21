@@ -313,13 +313,40 @@ function paintProfileBanner(element, user) {
 
 function renderProfileDecoration(user) {
   paintProfileBanner(document.getElementById('profile-modal-banner'), user);
+  document.getElementById('profile-joined-date').textContent = formatProfileJoinedDate(user.createdAt);
+  renderProfileBadges(document.getElementById('profile-rare-badges'), user);
   const pronouns = document.getElementById('profile-modal-pronouns');
   if (pronouns) pronouns.textContent = typeof user.pronouns === 'string' ? user.pronouns : '';
+}
+
+function renderProfileBadges(badges, user) {
+  badges.replaceChildren();
+  badges.hidden = !Array.isArray(user.badges) || !user.badges.includes('early_supporter');
+  if (!badges.hidden) {
+    const badge = document.createElement('span');
+    badge.className = 'profile-rare-badge';
+    badge.title = 'Редкий бейдж участника раннего сообщества';
+    badge.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="m7 3-5 6 10 13L22 9l-5-6H7Zm1 2h8l3 4h-5l-2-4-2 4H5l3-4Zm-3 6h5l2 7-7-7Zm9 0h5l-7 7 2-7Z"/></svg><span>Первопроходец<small>Редкий бейдж</small></span>';
+    badges.append(badge);
+  }
+}
+
+function formatProfileJoinedDate(value) {
+  if (!value) return 'Дата недоступна';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return 'Дата недоступна';
+  return new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }).format(date);
 }
 
 function updateProfilePreview() {
   const user = readProfileCustomization();
   paintProfileBanner(document.getElementById('profile-preview-banner'), user);
+  document.querySelectorAll('[data-profile-colors]').forEach(button => {
+    const [primary, accent] = button.dataset.profileColors.split(',');
+    const selected = primary.toLowerCase() === user.profileColor.toLowerCase()
+      && accent.toLowerCase() === user.profileAccent.toLowerCase();
+    button.setAttribute('aria-pressed', String(selected));
+  });
   for (const [target, value] of Object.entries({
     'profile-preview-name': document.getElementById('edit-nick').value || 'Ваше имя',
     'profile-preview-pronouns': user.pronouns,
@@ -329,6 +356,8 @@ function updateProfilePreview() {
 }
 
 function initProfileCustomization(user) {
+  renderProfileBadges(document.getElementById('profile-preview-badges'), user);
+  document.getElementById('profile-preview-joined').textContent = 'В ChatApp с ' + formatProfileJoinedDate(user.createdAt);
   document.getElementById('edit-pronouns').value = user.pronouns || '';
   document.getElementById('edit-profile-color').value = profileColor(user.profileColor, '#5865f2');
   document.getElementById('edit-profile-accent').value = profileColor(user.profileAccent, '#9b59b6');

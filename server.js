@@ -765,6 +765,8 @@ function online(userId) {
 
 function publicUser(user) {
   return {
+    createdAt: user.createdAt,
+    badges: user.id === '111' ? ['early_supporter'] : [],
     pronouns: user.pronouns || '',
     profileColor: user.profileColor || '#5865f2',
     profileAccent: user.profileAccent || '#9b59b6',

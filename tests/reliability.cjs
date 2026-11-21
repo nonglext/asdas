@@ -49,6 +49,17 @@ test('authentication cache expires idle users and stays bounded', () => {
   context.pruneUserCache(34_000);
   assert.equal(cache.size, 0);
 });
+test('rare profile badge is assigned by account ID on the server', () => {
+  const source = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  const context = vm.createContext({ online: () => false });
+  vm.runInContext(extract(source, 'publicUser'), context);
+  const registered = new Date('2026-01-15T12:00:00Z');
+  const special = context.publicUser({ id: '111', createdAt: registered });
+  assert.deepEqual([...special.badges], ['early_supporter']);
+  assert.equal(special.createdAt, registered);
+  const ordinary = context.publicUser({ id: 'other', nickname: '111', badges: ['early_supporter'] });
+  assert.deepEqual([...ordinary.badges], []);
+});
 test('voice defaults tolerate absent, corrupted and inaccessible preferences', () => {
   const source = fs.readFileSync(path.join(root, 'public/js/core.js'), 'utf8');
   let raw = null;

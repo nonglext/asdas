@@ -1440,6 +1440,8 @@ async function showUserProfile(value) {
 
   profileVisibleUserId = userId;
   $('profile-admin-badge').hidden = true;
+  $('profile-rare-badges').hidden = true;
+  $('profile-joined-date').textContent = '—';
 
   profileLoadController?.abort();
   const controller = new AbortController();

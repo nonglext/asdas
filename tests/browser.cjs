@@ -263,6 +263,22 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
    assert.equal(await page.locator('#profile-admin-badge').isVisible(),false);
    await page.keyboard.press('Escape');
  });
+ await check('profile shows registration date and server-issued rare badge', async()=>{
+   await page.route('**/api/profile/{111,plain}', route=>{
+     const id=new URL(route.request().url()).pathname.split('/').pop();
+     return route.fulfill({json:{id,nickname:'111',createdAt:'2026-01-15T12:00:00.000Z',badges:id==='111'?['early_supporter']:[]}});
+   });
+   await page.evaluate(()=>showUserProfile('111'));
+   await page.waitForFunction(()=>document.querySelector('#profile-modal-id').textContent==='@111');
+   assert.match(await page.locator('#profile-joined-date').innerText(),/15 января 2026/);
+   assert.equal(await page.locator('#profile-rare-badges').isVisible(),true);
+   assert.match(await page.locator('#profile-rare-badges').innerText(),/Первопроходец/);
+   await page.evaluate(()=>showUserProfile('plain'));
+   await page.waitForFunction(()=>document.querySelector('#profile-modal-id').textContent==='@plain');
+   assert.equal(await page.locator('#profile-rare-badges').isVisible(),false);
+   assert.equal(await page.evaluate(()=>formatProfileJoinedDate('invalid')),'Дата недоступна');
+   await page.keyboard.press('Escape');
+ });
  await check('two screen share tiles use the available width', async()=>{
    await page.setViewportSize({width:1920,height:1000});
    const sizes = await page.evaluate(()=>{

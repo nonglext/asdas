@@ -12,15 +12,15 @@
 <meta content="default" name="apple-mobile-web-app-status-bar-style"/>
 <link href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%235865f2'/%3E%3Cpath fill='%23fff' d='M18 14.5a1.5 1.5 0 0 1-1.5 1.5H8.3L5 19V7.5A1.5 1.5 0 0 1 6.5 6h10A1.5 1.5 0 0 1 18 7.5z'/%3E%3C/svg%3E" rel="icon"/>
 <style>html:not(.theme-ready) { visibility: hidden; } html.theme-ready { visibility: visible; }</style>
-<script src="/js/runtime-guard.js?v=2.0.26"></script>
-<script src="/js/document-0.js?v=2.0.26"></script>
+<script src="/js/runtime-guard.js?v=2.0.27"></script>
+<script src="/js/document-0.js?v=2.0.27"></script>
 <!-- Каркас: base → layout → chat → calls → утилиты/адаптив. Всё оформление — в theme.css -->
-<link href="/css/base.css?v=2.0.26" rel="stylesheet"/>
-<link href="/css/layout.css?v=2.0.26" rel="stylesheet"/>
-<link href="/css/chat.css?v=2.0.26" rel="stylesheet"/>
-<link href="/css/calls-responsive.css?v=2.0.26" rel="stylesheet"/>
-<link href="/css/style.css?v=2.0.26" rel="stylesheet"/>
-<link href="/css/theme.css?v=2.0.26" rel="stylesheet"/>
+<link href="/css/base.css?v=2.0.27" rel="stylesheet"/>
+<link href="/css/layout.css?v=2.0.27" rel="stylesheet"/>
+<link href="/css/chat.css?v=2.0.27" rel="stylesheet"/>
+<link href="/css/calls-responsive.css?v=2.0.27" rel="stylesheet"/>
+<link href="/css/style.css?v=2.0.27" rel="stylesheet"/>
+<link href="/css/theme.css?v=2.0.27" rel="stylesheet"/>
 </head>
 <body>
 <a class="skip-link" href="#chat-main">Перейти к чату</a>
@@ -307,8 +307,10 @@
 <div class="modal-profile-id" id="profile-modal-id">—</div><div id="profile-modal-pronouns" class="profile-pronouns"></div>
 <div id="profile-admin-badge" class="profile-badges" hidden><span class="profile-admin-badge"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2 3 6v5c0 5.5 3.8 9.6 9 11 5.2-1.4 9-5.5 9-11V6l-9-4Zm0 4 1.4 3 3.2.4-2.3 2.3.5 3.3-2.8-1.5-2.8 1.5.5-3.3-2.3-2.3 3.2-.4L12 6Z"/></svg><span>Администратор</span></span></div>
 <div class="modal-online-badge" id="profile-modal-online"></div>
+<div class="profile-badges" id="profile-rare-badges" hidden></div>
 </div>
 <div class="modal-profile-body" id="profile-modal-body">
+<div class="profile-info-row"><span class="profile-info-label">В ChatApp с</span><span class="profile-info-value" id="profile-joined-date">—</span></div>
 <div class="profile-info-row" id="profile-modal-status-row">
 <span class="profile-info-label">Статус</span>
 <span class="profile-info-value" id="profile-modal-status">—</span>
@@ -332,7 +334,7 @@
 </button>
 <h2 class="modal-title" id="edit-profile-title">Мой профиль</h2>
 <p class="settings-section-note">Изменения видны друзьям после сохранения.</p>
-<div class="profile-preview" aria-label="Предпросмотр профиля"><div class="profile-banner" id="profile-preview-banner" aria-hidden="true"></div><div class="profile-preview-copy"><div id="profile-preview-avatar" class="edit-avatar" aria-hidden="true"></div><strong id="profile-preview-name"></strong><span id="profile-preview-pronouns"></span><p id="profile-preview-status"></p><p id="profile-preview-bio"></p></div></div>
+<div class="profile-preview" aria-label="Предпросмотр профиля"><div class="profile-banner" id="profile-preview-banner" aria-hidden="true"></div><div class="profile-preview-copy"><div id="profile-preview-avatar" class="edit-avatar" aria-hidden="true"></div><strong id="profile-preview-name"></strong><span id="profile-preview-pronouns"></span><div class="profile-badges" id="profile-preview-badges" hidden></div><p id="profile-preview-status"></p><p id="profile-preview-bio"></p><small class="profile-preview-joined" id="profile-preview-joined"></small></div></div>
 <div class="edit-avatar-block">
 <div class="edit-avatar-wrap">
 <div aria-hidden="true" class="edit-avatar" id="edit-avatar"></div>
@@ -565,17 +567,17 @@
      Не требует правок chat-ui.js: следит за открытием чата и прячет сайдбар на ≤640px,
      закрывает панель участников по тапу на щиток.
      ═════════════════════════════════════════════════════════════════════════ -->
-<script src="/js/document-1.js?v=2.0.26"></script>
+<script src="/js/document-1.js?v=2.0.27"></script>
 <script src="/socket.io/socket.io.js"></script>
 
-<script defer="" src="/js/core.js?v=2.0.26"></script>
-<script defer="" src="/js/auth-ui.js?v=2.0.26"></script>
-<script defer="" src="/js/chat-ui.js?v=2.0.26"></script>
-<script defer="" src="/js/calls.js?v=2.0.26"></script>
-<script defer="" src="/js/chat-plus.js?v=2.0.26"></script>
-<script defer="" src="/js/calls-plus.js?v=2.0.26"></script>
-<script defer="" src="/js/document-actions.js?v=2.0.26"></script>
-<script defer="" src="/js/settings.js?v=2.0.26"></script>
-<script defer="" src="/js/accessibility.js?v=2.0.26"></script>
+<script defer="" src="/js/core.js?v=2.0.27"></script>
+<script defer="" src="/js/auth-ui.js?v=2.0.27"></script>
+<script defer="" src="/js/chat-ui.js?v=2.0.27"></script>
+<script defer="" src="/js/calls.js?v=2.0.27"></script>
+<script defer="" src="/js/chat-plus.js?v=2.0.27"></script>
+<script defer="" src="/js/calls-plus.js?v=2.0.27"></script>
+<script defer="" src="/js/document-actions.js?v=2.0.27"></script>
+<script defer="" src="/js/settings.js?v=2.0.27"></script>
+<script defer="" src="/js/accessibility.js?v=2.0.27"></script>
 </body>
 </html>
