@@ -1885,7 +1885,7 @@ on('avatar-input', 'change', event => {
   pendingAvatar.file = file;
   pendingAvatar.previewUrl = preview;
 
-  renderAv($('edit-avatar'), state.me.nickname, preview);
+  renderAv($('edit-avatar'), $('edit-nick').value.trim() || state.me.id, preview);
   syncAvatarPendingUi();
 });
 
@@ -1895,7 +1895,7 @@ on('btn-avatar-remove', 'click', () => {
   releaseAvatarPreview();
   pendingAvatar.remove = true;
 
-  renderAv($('edit-avatar'), state.me.nickname, null);
+  renderAv($('edit-avatar'), $('edit-nick').value.trim() || state.me.id, null);
   syncAvatarPendingUi();
 });
 
@@ -3059,7 +3059,7 @@ for (const group of [false, true]) {
     const input = $(group ? 'group-msg-input' : 'msg-input');
 
     if (key && input) composerDrafts.set(key, input.value);
-    refreshComposer(group);
+    refreshComposer(group, { updateAttachment: false });
   });
 }
 
@@ -3116,7 +3116,7 @@ document.addEventListener('paste', event => {
   }
 });
 
-function refreshComposer(group) {
+function refreshComposer(group, { updateAttachment = true } = {}) {
   uiEnsureSession();
 
   const key = composerKey(group);
@@ -3136,10 +3136,12 @@ function refreshComposer(group) {
     input.style.overflowY = input.scrollHeight > maxHeight ? 'auto' : 'hidden';
   }
 
-  renderAttachmentPreview(group);
+  if (updateAttachment) renderAttachmentPreview(group);
 
   if (button) {
-    button.disabled = busy || !state.me || !key || !socket.connected;
+    const attempt = retryMessages.get(key);
+    const hasContent = Boolean(input?.value.trim() || composerAttachments.get(key) || (attempt?.imageUrl && !attempt.file && !attempt.text));
+    button.disabled = busy || !state.me || !key || !socket.connected || !hasContent;
     button.setAttribute('aria-busy', String(busy));
   }
 

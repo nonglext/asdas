@@ -337,6 +337,11 @@ function initProfileCustomization(user) {
 for (const id of ['edit-nick', 'edit-status', 'edit-bio', 'edit-pronouns', 'edit-profile-color', 'edit-profile-accent']) {
   on(id, 'input', updateProfilePreview);
 }
+on('edit-nick', 'input', event => {
+  if (!state.me) return;
+  const photo = pendingAvatar.remove ? null : pendingAvatar.previewUrl || state.me.avatar;
+  renderAv($('edit-avatar'), event.target.value.trim() || state.me.id, photo);
+});
 
 
 function showPasswordMessage(text, good = false) {
