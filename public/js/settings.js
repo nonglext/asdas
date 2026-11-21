@@ -251,6 +251,7 @@ document.querySelectorAll('[data-settings-section]').forEach(button => {
   button.addEventListener('click', () => {
     const section = button.dataset.settingsSection;
     if (section !== 'voice') stopVoiceCheck();
+    document.querySelector('#settings-modal .settings-content')?.scrollTo(0, 0);
     document.querySelectorAll('[data-settings-section]').forEach(item => {
       const selected = item.dataset.settingsSection === section;
       item.classList.toggle('active', selected);

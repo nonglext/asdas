@@ -24,6 +24,31 @@ test('signaling accepts WebRTC descriptions, ICE and typed media state only', ()
   assert.equal(validCallSignal({ type: 'state', micOn: true, camOn: false, screenOn: false }), true);
   for (const data of [null, [], { type: 'unknown' }, { type: 'state', micOn: 'false' }]) assert.equal(validCallSignal(data), false);
 });
+test('authentication cache expires idle users and stays bounded', () => {
+  const source = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  const cache = new Map();
+  const context = vm.createContext({
+    tokenUserCache: cache,
+    TOKEN_USER_CACHE_LIMIT: 2,
+    TOKEN_USER_CACHE_TTL: 30_000,
+    Date,
+  });
+  for (const name of ['pruneUserCache', 'cacheVerifiedUser']) {
+    vm.runInContext(extract(source, name), context);
+  }
+  context.cacheVerifiedUser({ id: 'alice' }, 1000);
+  context.cacheVerifiedUser({ id: 'bob' }, 2000);
+  context.cacheVerifiedUser({ id: 'carol' }, 3000);
+  assert.equal(cache.size, 2);
+  assert.equal(cache.has('alice'), false);
+  context.cacheVerifiedUser({ id: 'bob', tokenVersion: 2 }, 4000);
+  assert.equal(cache.get('bob').user.tokenVersion, 2);
+  context.pruneUserCache(33_000);
+  assert.equal(cache.has('carol'), false);
+  assert.equal(cache.has('bob'), true);
+  context.pruneUserCache(34_000);
+  assert.equal(cache.size, 0);
+});
 test('voice defaults tolerate absent, corrupted and inaccessible preferences', () => {
   const source = fs.readFileSync(path.join(root, 'public/js/core.js'), 'utf8');
   let raw = null;

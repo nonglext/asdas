@@ -1482,7 +1482,7 @@ async function showUserProfile(value) {
     );
 
     setText('profile-modal-nick', user.nickname || userId);
-    $('profile-admin-badge').hidden = userId !== 'rock';
+    $('profile-admin-badge').hidden = userId !== 'people';
     setText('profile-modal-id', `@${userId}`);
     renderProfileDecoration(user);
 

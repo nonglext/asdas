@@ -580,6 +580,27 @@ function signToken(
 
 const tokenUserCache = new Map();
 const TOKEN_USER_CACHE_TTL = 30_000;
+const TOKEN_USER_CACHE_LIMIT = 1000;
+
+function pruneUserCache(now = Date.now()) {
+  for (const [id, entry] of tokenUserCache) {
+    if (entry.expiresAt <= now) tokenUserCache.delete(id);
+  }
+}
+
+function cacheVerifiedUser(user, now) {
+  tokenUserCache.delete(user.id);
+  if (tokenUserCache.size >= TOKEN_USER_CACHE_LIMIT) {
+    pruneUserCache(now);
+    if (tokenUserCache.size >= TOKEN_USER_CACHE_LIMIT) {
+      tokenUserCache.delete(tokenUserCache.keys().next().value);
+    }
+  }
+  tokenUserCache.set(user.id, {
+    user,
+    expiresAt: now + TOKEN_USER_CACHE_TTL
+  });
+}
 
 function invalidateUserCache(userId) {
   if (userId) tokenUserCache.delete(userId);
@@ -626,10 +647,7 @@ async function verifyToken(token, audience = 'chatapp-api') {
     return null;
   }
 
-  tokenUserCache.set(payload.id, {
-    user,
-    expiresAt: now + TOKEN_USER_CACHE_TTL
-  });
+  cacheVerifiedUser(user, now);
 
   return { payload, user };
 }
@@ -4677,6 +4695,7 @@ async function startInternal() {
   });
 
   const cleanup = () => {
+    pruneUserCache();
     if (stopping || queueSize > 16) return;
 
     cleanupUploads().catch(error => {

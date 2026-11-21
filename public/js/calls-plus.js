@@ -369,34 +369,6 @@ function ensureStatsLoop() {
 
 /* ── Полноэкранный режим ─────────────────────────────────────────────────── */
 
-function cplSyncFullscreen() {
-  const button = document.getElementById('btn-call-fullscreen');
-  const overlay = document.getElementById('call-overlay');
-  if (!button || !overlay) return;
-
-  const active = document.fullscreenElement === overlay;
-
-  button.setAttribute('aria-pressed', String(active));
-  button.title = active ? 'Выйти из полноэкранного режима (F)' : 'Во весь экран (F)';
-  button.setAttribute('aria-label', active ? 'Выйти из полноэкранного режима' : 'Во весь экран');
-  button.hidden = !document.fullscreenEnabled;
-  overlay.classList.toggle('is-fullscreen', active);
-}
-
-async function cplToggleFullscreen() {
-  const overlay = document.getElementById('call-overlay');
-  if (!overlay || !callState.active || !document.fullscreenEnabled) return;
-
-  try {
-    if (document.fullscreenElement) await document.exitFullscreen();
-    else await overlay.requestFullscreen();
-  } catch (_) {
-    if (typeof showTransientNotice === 'function') showTransientNotice('Полноэкранный режим недоступен');
-  }
-}
-
-document.addEventListener('fullscreenchange', cplSyncFullscreen);
-
 /* ── Кнопки и клавиши ────────────────────────────────────────────────────── */
 
 function syncCallCompactButton() {
@@ -420,7 +392,6 @@ on('btn-call-compact', 'click', async () => {
   syncCallCompactButton();
 });
 on('btn-call-deafen', 'click', cplToggleDeafen);
-on('btn-call-fullscreen', 'click', () => void cplToggleFullscreen());
 
 document.addEventListener('keydown', event => {
   if (event.repeat || !callState.active) return;
@@ -442,14 +413,12 @@ document.addEventListener('keydown', event => {
 
 whenDomReady(() => {
   cplApplyDeafen();
-  cplSyncFullscreen();
 
   const overlay = document.getElementById('call-overlay');
 
   if (overlay && 'MutationObserver' in window) {
     new MutationObserver(() => {
       cplApplyDeafen();
-      cplSyncFullscreen();
       if (callState.active) ensureStatsLoop();
     }).observe(overlay, { attributes: true, attributeFilter: ['style', 'class'] });
   }

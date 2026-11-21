@@ -1900,6 +1900,11 @@ body { -webkit-font-smoothing: antialiased; }
 #profile-modal .modal-box { overflow-x: hidden; overflow-y: auto; }
 #profile-modal-banner { margin: -24px -24px 0; border-radius: 0; height: 108px; }
 #edit-profile-modal .modal-box { max-height: calc(100dvh - 32px); overflow-y: auto; }
+#edit-profile-modal .modal-title { margin-bottom: 0; padding-right: 36px; }
+#edit-profile-modal .settings-section-note { margin: 0 0 6px; line-height: 1.5; }
+#edit-profile-modal .form-stack { gap: 16px; }
+#edit-profile-modal .profile-preview { margin-bottom: 0; }
+#edit-profile-modal .edit-avatar-block { margin: 0; padding: 14px; border: 1px solid var(--border-subtle); border-radius: 12px; }
 .settings-nav [hidden], .settings-sidebar [hidden] { display: none !important; }
 .settings-info-row strong { overflow-wrap: anywhere; min-width: 0; }
 
@@ -1942,7 +1947,6 @@ body { -webkit-font-smoothing: antialiased; }
 .profile-badges[hidden] { display: none; }
 .profile-admin-badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 7px; background: rgb(237 66 69 / .14); color: #ff777a; font-size: 12px; font-weight: 700; }
 .profile-admin-badge svg { width: 16px; height: 16px; flex: none; }
-#btn-call-fullscreen { display: none; }
 .call-overlay.video-mode:not(.detached):not(.call-compact):not(:fullscreen) { inset: var(--call-top, 56px) 0 auto var(--call-left, 312px); height: min(50dvh, 500px); max-height: 50dvh; }
 .call-overlay.screen-share-mini:not(.detached):not(.call-compact):not(:fullscreen) .call-overlay-top {
   display: grid;

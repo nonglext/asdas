@@ -247,14 +247,17 @@ const tests=[];async function check(name,fn){await fn();tests.push(name);console
      });
    }
  });
- await check('profile badge is shown only for rock account ID', async()=>{
-   await page.route('**/api/profile/{rock,nongl}', route=>{
+ await check('profile badge is shown only for people account ID', async()=>{
+   await page.route('**/api/profile/{people,rock,nongl}', route=>{
      const id=new URL(route.request().url()).pathname.split('/').pop();
      return route.fulfill({json:{id,nickname:'Одинаковое имя',online:true}});
    });
+   await page.evaluate(()=>showUserProfile('people'));
+   await page.waitForFunction(()=>document.querySelector('#profile-modal-id').textContent==='@people');
+   assert.equal(await page.locator('#profile-admin-badge').isVisible(),true);
    await page.evaluate(()=>showUserProfile('rock'));
    await page.waitForFunction(()=>document.querySelector('#profile-modal-id').textContent==='@rock');
-   assert.equal(await page.locator('#profile-admin-badge').isVisible(),true);
+   assert.equal(await page.locator('#profile-admin-badge').isVisible(),false);
    await page.evaluate(()=>showUserProfile('nongl'));
    await page.waitForFunction(()=>document.querySelector('#profile-modal-id').textContent==='@nongl');
    assert.equal(await page.locator('#profile-admin-badge').isVisible(),false);
